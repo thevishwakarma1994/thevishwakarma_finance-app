@@ -4,6 +4,7 @@ import { newId } from "../ids.js";
 import { assertConservation } from "../conservation/validate.js";
 import type { IsoDate } from "../calendar/isoDate.js";
 import type { Paise } from "../money/paise.js";
+import { requireAvailable } from "../engine/liquidity.js";
 import {
   DomainError,
   type ConsequencePreview,
@@ -50,12 +51,7 @@ export function recordExpense(
   }
 
   const total = sumPaise(input.allocations.map((item) => item.amountPaise));
-  if (total > account.balancePaise) {
-    throw new DomainError(
-      "insufficient_balance",
-      "This expense exceeds the money currently in the account",
-    );
-  }
+  requireAvailable(snapshot, account.id, total, "This expense");
 
   const eventId = newId();
   const headerCategoryId =

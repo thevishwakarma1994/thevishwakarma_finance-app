@@ -12,8 +12,10 @@ import {
   fetchCategories,
   fetchComingCardPayments,
   fetchMonth,
+  fetchPendingSurplus,
   fetchPeople,
   previewOrCommitOpening,
+  previewOrCommitResolveSurplus,
   signOut,
   updateAccount,
   updateCategory,
@@ -22,6 +24,7 @@ import {
   type Category,
   type ComingCardPayment,
   type MonthSpend,
+  type PendingSurplus,
   type PersonListItem,
 } from "../apiClient.js";
 
@@ -54,6 +57,11 @@ export function Money({ onSignedOut, onOpenMonth, onOpenCard, onOpenCycle }: Pro
   const [newCardPaymentAccountId, setNewCardPaymentAccountId] = useState("");
   const [newCardOwnerPersonId, setNewCardOwnerPersonId] = useState("");
   const [people, setPeople] = useState<PersonListItem[]>([]);
+  const [surplus, setSurplus] = useState<PendingSurplus[]>([]);
+  const [surplusId, setSurplusId] = useState<string | null>(null);
+  const [surplusResolution, setSurplusResolution] = useState("");
+  const [surplusClaimId, setSurplusClaimId] = useState("");
+  const [surplusCycleId, setSurplusCycleId] = useState("");
   const [renameAccountId, setRenameAccountId] = useState<string | null>(null);
   const [renameAccountName, setRenameAccountName] = useState("");
   const [renameCategoryId, setRenameCategoryId] = useState<string | null>(null);
@@ -67,13 +75,15 @@ export function Money({ onSignedOut, onOpenMonth, onOpenCard, onOpenCycle }: Pro
       fetchCards(),
       fetchComingCardPayments(),
       fetchPeople(),
-    ]).then(([accountData, monthData, categoryData, cardData, comingData, peopleData]) => {
+      fetchPendingSurplus(),
+    ]).then(([accountData, monthData, categoryData, cardData, comingData, peopleData, surplusData]) => {
       setAccounts(accountData.accounts);
       setMonth(monthData);
       setCategories(categoryData.categories);
       setCards(cardData.cards);
       setComing(comingData.items);
       setPeople(peopleData.people);
+      setSurplus(surplusData.items);
     });
   }
 
@@ -85,14 +95,16 @@ export function Money({ onSignedOut, onOpenMonth, onOpenCard, onOpenCycle }: Pro
       fetchCards(),
       fetchComingCardPayments(),
       fetchPeople(),
+      fetchPendingSurplus(),
     ])
-      .then(([accountData, monthData, categoryData, cardData, comingData, peopleData]) => {
+      .then(([accountData, monthData, categoryData, cardData, comingData, peopleData, surplusData]) => {
         setAccounts(accountData.accounts);
         setMonth(monthData);
         setCategories(categoryData.categories);
         setCards(cardData.cards);
         setComing(comingData.items);
         setPeople(peopleData.people);
+        setSurplus(surplusData.items);
         if (accountData.accounts[0]) {
           setNewCardPaymentAccountId(accountData.accounts[0].id);
         }
@@ -220,6 +232,116 @@ export function Money({ onSignedOut, onOpenMonth, onOpenCard, onOpenCycle }: Pro
             ))}
           </section>
         ) : null}
+        {surplus.length > 0 ? (
+          <section className="card stack">
+            <p>Needs review {formatInr(paise(surplus.reduce((sum, item) => sum + item.amountPaise, 0)))}</p>
+            {surplus.map((item) => (
+              <article key={item.id}>
+                <p>{item.explanation}</p>
+                <p className="muted">
+                  {formatInr(paise(item.amountPaise))}
+                  {item.accountName ? ` · ${item.accountName}` : ""}
+                  {item.personName ? ` · ${item.personName}` : ""}
+                </p>
+                <button
+                  className="secondary"
+                  type="button"
+                  onClick={() => {
+                    setSurplusId(item.id);
+                    setSurplusResolution(item.resolutions[0] ?? "");
+                    setSurplusClaimId(item.openClaims[0]?.id ?? "");
+                    setSurplusCycleId(item.unpaidCycles[0]?.id ?? "");
+                  }}
+                >
+                  Resolve
+                </button>
+              </article>
+            ))}
+          </section>
+        ) : null}
+        {surplusId ? (
+          <form
+            className="card stack"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const item = surplus.find((row) => row.id === surplusId);
+              if (!item || !surplusResolution) return;
+              void previewOrCommitResolveSurplus({
+                surplusCaseId: item.id,
+                resolution: surplusResolution as
+                  | "apply_to_other_claim"
+                  | "convert_to_payable"
+                  | "treat_as_mine_correction"
+                  | "reassign_reservation",
+                claimId: surplusResolution === "apply_to_other_claim" ? surplusClaimId : undefined,
+                billingCycleId: surplusResolution === "reassign_reservation" ? surplusCycleId : undefined,
+                confirmed: surplusResolution === "treat_as_mine_correction" ? true : undefined,
+                commit: true,
+              })
+                .then(() => {
+                  setSurplusId(null);
+                  return load();
+                })
+                .catch((caught: unknown) => {
+                  setError(caught instanceof ApiError ? caught.message : "Could not resolve");
+                });
+            }}
+          >
+            <p>Resolve surplus</p>
+            <label>
+              Action
+              <select
+                value={surplusResolution}
+                onChange={(event) => setSurplusResolution(event.target.value)}
+              >
+                {(surplus.find((item) => item.id === surplusId)?.resolutions ?? []).map((resolution) => (
+                  <option key={resolution} value={resolution}>
+                    {resolution === "apply_to_other_claim"
+                      ? "Apply to another claim"
+                      : resolution === "convert_to_payable"
+                        ? "Convert to payable"
+                        : resolution === "treat_as_mine_correction"
+                          ? "Treat as mine"
+                          : "Reassign reservation"}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {surplusResolution === "apply_to_other_claim" ? (
+              <label>
+                Claim
+                <select value={surplusClaimId} onChange={(event) => setSurplusClaimId(event.target.value)}>
+                  {(surplus.find((item) => item.id === surplusId)?.openClaims ?? []).map((claim) => (
+                    <option key={claim.id} value={claim.id}>
+                      {claim.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            {surplusResolution === "reassign_reservation" ? (
+              <label>
+                Cycle
+                <select value={surplusCycleId} onChange={(event) => setSurplusCycleId(event.target.value)}>
+                  {(surplus.find((item) => item.id === surplusId)?.unpaidCycles ?? []).map((cycle) => (
+                    <option key={cycle.id} value={cycle.id}>
+                      {cycle.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            {surplusResolution === "treat_as_mine_correction" ? (
+              <p className="danger">This will treat this amount as your money. It is not recorded as income.</p>
+            ) : null}
+            <button className="primary" type="submit">
+              Confirm resolution
+            </button>
+            <button className="secondary" type="button" onClick={() => setSurplusId(null)}>
+              Cancel
+            </button>
+          </form>
+        ) : null}
         {accounts.map((account) => (
           <section className="card" key={account.id}>
             <div className="row">
@@ -231,7 +353,18 @@ export function Money({ onSignedOut, onOpenMonth, onOpenCard, onOpenCycle }: Pro
               </strong>
               <span>{formatInr(paise(account.balancePaise))}</span>
             </div>
-            <p className="muted">Derived from opening + account movements</p>
+            <p className="muted">
+              Balance {formatInr(paise(account.balancePaise))} · Reserved{" "}
+              {formatInr(paise(account.reservedPaise ?? 0))} · Available{" "}
+              {formatInr(paise(account.availablePaise ?? account.balancePaise))}
+            </p>
+            {(account.reservedDetails ?? []).map((detail) => (
+              <p className="muted" key={detail.reservationId}>
+                {formatInr(paise(detail.amountPaise))} reserved for {detail.cardLabel}
+                {detail.dueOn ? ` due ${detail.dueOn}` : ""}
+                {detail.personName ? ` · ${detail.personName}` : ""}
+              </p>
+            ))}
             <div className="actions">
               {!account.hasOpening ? (
                 <button className="secondary" type="button" onClick={() => setOpeningAccountId(account.id)}>

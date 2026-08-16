@@ -14,6 +14,7 @@ export const EVENT_MEANINGS = [
   "refund",
   "borrow",
   "settlement_out",
+  "surplus_resolution",
 ] as const;
 
 export type EventMeaning = (typeof EVENT_MEANINGS)[number];
@@ -125,6 +126,105 @@ export type SettlementAllocation = {
 export type ClaimStatusUpdate = {
   id: EntityId;
   status: ClaimStatus;
+};
+
+export const OBLIGATION_REF_TYPES = ["billing_cycle", "obligation_instance"] as const;
+export type ObligationRefType = (typeof OBLIGATION_REF_TYPES)[number];
+
+export type ObligationRef = {
+  type: ObligationRefType;
+  id: EntityId;
+};
+
+export const RESERVATION_STATUSES = [
+  "active",
+  "consumed",
+  "released",
+  "surplus_pending",
+  "reassigned",
+  "cancelled",
+] as const;
+export type ReservationStatus = (typeof RESERVATION_STATUSES)[number];
+
+export type ReservationRecord = {
+  id: EntityId;
+  sourceAccountId: EntityId;
+  amountOriginalPaise: Paise;
+  amountConsumedPaise: Paise;
+  amountReleasedPaise: Paise;
+  amountReassignedPaise: Paise;
+  amountSurplusHeldPaise: Paise;
+  status: ReservationStatus;
+  obligationRef: ObligationRef;
+  originatingEventId: EntityId | null;
+  originatingClaimId: EntityId | null;
+  createdOn: IsoDate;
+};
+
+export type LedgerReservation = ReservationRecord & {
+  remainingPaise: Paise;
+};
+
+export type ReservationLedgerEntry = {
+  id: EntityId;
+  reservationId: EntityId;
+  eventId: EntityId;
+  deltaConsumedPaise: Paise;
+  deltaReleasedPaise: Paise;
+  deltaReassignedPaise: Paise;
+  deltaSurplusHeldPaise: Paise;
+  createdAt: string;
+};
+
+export type ReservationMutation = {
+  id: EntityId;
+  amountConsumedPaise: Paise;
+  amountReleasedPaise: Paise;
+  amountReassignedPaise: Paise;
+  amountSurplusHeldPaise: Paise;
+  status: ReservationStatus;
+};
+
+export const SURPLUS_KINDS = [
+  "reservation_excess",
+  "unallocated_settlement",
+  "claim_overpayment",
+] as const;
+export type SurplusKind = (typeof SURPLUS_KINDS)[number];
+
+export const SURPLUS_STATUSES = ["pending", "resolved"] as const;
+export type SurplusStatus = (typeof SURPLUS_STATUSES)[number];
+
+export const SURPLUS_RESOLUTIONS = [
+  "apply_to_other_claim",
+  "convert_to_payable",
+  "treat_as_mine_correction",
+  "reassign_reservation",
+] as const;
+export type SurplusResolution = (typeof SURPLUS_RESOLUTIONS)[number];
+
+export type SurplusCaseRecord = {
+  id: EntityId;
+  amountPaise: Paise;
+  kind: SurplusKind;
+  sourceAccountId: EntityId | null;
+  personId: EntityId | null;
+  reservationId: EntityId | null;
+  eventId: EntityId | null;
+  explanation: string;
+  status: SurplusStatus;
+  resolution: SurplusResolution | null;
+  resolvedAt: string | null;
+  resolvedByEventId: EntityId | null;
+};
+
+export type SurplusCaseUpdate = {
+  id: EntityId;
+  amountPaise: Paise;
+  status: SurplusStatus;
+  resolution: SurplusResolution | null;
+  resolvedAt: string | null;
+  resolvedByEventId: EntityId | null;
 };
 
 export const BILLING_CYCLE_STATUSES = [
@@ -246,13 +346,16 @@ export type LedgerSnapshot = {
   claims: LedgerClaim[];
   eventShares: EventShare[];
   settlementAllocations: SettlementAllocation[];
+  reservations: LedgerReservation[];
+  reservationLedger: ReservationLedgerEntry[];
+  surplusCases: SurplusCaseRecord[];
   events: FinancialEvent[];
   postings: Posting[];
   openings: OpeningPosition[];
 };
 
 export type ConsequenceEffect = {
-  kind: "account" | "income" | "expense" | "opening" | "card" | "claim";
+  kind: "account" | "income" | "expense" | "opening" | "card" | "claim" | "reserved" | "surplus";
   label: string;
   deltaPaise: Paise;
 };
@@ -278,6 +381,11 @@ export type ProposedBatch = {
   eventShares?: EventShare[];
   settlementAllocations?: SettlementAllocation[];
   claimStatusUpdates?: ClaimStatusUpdate[];
+  reservations?: ReservationRecord[];
+  reservationLedger?: ReservationLedgerEntry[];
+  reservationUpdates?: ReservationMutation[];
+  surplusCases?: SurplusCaseRecord[];
+  surplusCaseUpdates?: SurplusCaseUpdate[];
 };
 
 export class DomainError extends Error {

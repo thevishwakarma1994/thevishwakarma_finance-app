@@ -10,6 +10,7 @@ import { lendMoney } from "../../app/lendMoney.js";
 import { borrowMoney } from "../../app/borrowMoney.js";
 import { receiveSettlement } from "../../app/receiveSettlement.js";
 import { paySettlement } from "../../app/paySettlement.js";
+import { resolveSurplus } from "../../app/resolveSurplus.js";
 import { payCard } from "../../app/payCard.js";
 import { confirmStatement } from "../../app/confirmStatement.js";
 import { createAccount, updateAccount } from "../../app/accounts.js";
@@ -262,6 +263,17 @@ commandRoutes.post("/commands/pay-settlement", async (c) => {
       ...body,
       capturedAt: typeof body.capturedAt === "string" ? body.capturedAt : utcNowIso(),
     });
+    return c.json(result);
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+commandRoutes.post("/commands/resolve-surplus", async (c) => {
+  try {
+    const body = await c.req.json();
+    const result = resolveSurplus(c.get("handles"), { workspaceId: c.get("workspaceId") }, body);
     return c.json(result);
   } catch (error) {
     const mapped = mapError(error);

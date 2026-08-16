@@ -12,6 +12,7 @@ import {
   monthReview,
   personDetail,
   suggestPersonAllocations,
+  listPendingSurplus,
 } from "../../db/reads.js";
 import type { SqliteHandles } from "../../db/client.js";
 import { isoDate } from "../../domain/calendar/isoDate.js";
@@ -152,6 +153,15 @@ readRoutes.get("/people/:id/suggest-allocations", (c) => {
         direction,
       ),
     );
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+readRoutes.get("/surplus", (c) => {
+  try {
+    return c.json({ items: listPendingSurplus(c.get("handles"), c.get("workspaceId")) });
   } catch (error) {
     const mapped = mapError(error);
     return c.json(mapped.body, mapped.status);

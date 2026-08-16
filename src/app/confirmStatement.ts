@@ -4,8 +4,13 @@ import { isoDate } from "../domain/calendar/isoDate.js";
 import { paise } from "../domain/money/paise.js";
 import { DomainError } from "../domain/ledger/types.js";
 import { formatInr } from "../domain/money/inr.js";
+import { payablePaise, statementRemaining } from "../domain/cycle/lifecycle.js";
+import { parkCycleReservationExcess } from "../domain/reservations/parkExcess.js";
+import { utcNowIso } from "../domain/calendar/kolkata.js";
 import { billingCycles } from "../db/schema.js";
 import { loadSnapshot } from "../db/loadSnapshot.js";
+import { persistBatch } from "../db/persistBatch.js";
+import { withTransaction } from "../db/tx.js";
 import type { SqliteHandles } from "../db/client.js";
 import type { WorkspaceContext } from "./context.js";
 
@@ -30,17 +35,35 @@ export function confirmStatement(
 
   const actualAmount = paise(input.actualStatementAmountPaise);
   const mismatch = actualAmount !== cycle.expectedAmountPaise;
+  const remainingAfter = payablePaise(
+    cycle.ledgerRemainingPaise,
+    statementRemaining(actualAmount, cycle.expectedAmountPaise, cycle.amountPaidPaise),
+  );
+  const excessBatch = parkCycleReservationExcess(
+    snapshot,
+    cycle.id,
+    remainingAfter,
+    utcNowIso(),
+  );
 
-  handles.db
-    .update(billingCycles)
-    .set({
-      actualStatementAmountPaise: actualAmount,
-      actualStatementOn: isoDate(input.actualStatementOn),
-      actualDueOn: isoDate(input.actualDueOn),
-      status: "statement_confirmed",
-    })
-    .where(eq(billingCycles.id, cycle.id))
-    .run();
+  withTransaction(handles, () => {
+    handles.db
+      .update(billingCycles)
+      .set({
+        actualStatementAmountPaise: actualAmount,
+        actualStatementOn: isoDate(input.actualStatementOn),
+        actualDueOn: isoDate(input.actualDueOn),
+        status: "statement_confirmed",
+      })
+      .where(eq(billingCycles.id, cycle.id))
+      .run();
+    persistBatch(handles, context.workspaceId, {
+      events: [],
+      postings: [],
+      openings: [],
+      ...excessBatch,
+    });
+  });
 
   return {
     cycleId: cycle.id,

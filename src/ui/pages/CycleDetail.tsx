@@ -111,6 +111,18 @@ export function CycleDetail({ cycleId, onBack }: Props) {
             <span>Statement remaining</span>
             <strong>{formatInr(paise(cycle.statementRemainingPaise))}</strong>
           </div>
+          <div className="row">
+            <span>Issuer remaining</span>
+            <strong>{formatInr(paise(cycle.remainingPaise))}</strong>
+          </div>
+          <div className="row">
+            <span>Reserved toward cycle</span>
+            <strong>{formatInr(paise(cycle.reservedTowardCyclePaise ?? 0))}</strong>
+          </div>
+          <div className="row">
+            <span>Still unfunded</span>
+            <strong>{formatInr(paise(cycle.unfundedPaise ?? cycle.remainingPaise))}</strong>
+          </div>
           <p className="muted">
             Due {cycle.dueOn} · {cycle.lifecycle.replaceAll("_", " ")}
           </p>

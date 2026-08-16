@@ -123,6 +123,11 @@ export function Activity() {
                   </p>
                 ))
               : null}
+            {event.consequences?.map((consequence) => (
+              <p className="muted" key={`${event.id}-${consequence.kind}-${consequence.label}`}>
+                {formatInr(paise(consequence.amountPaise))} {consequence.label}
+              </p>
+            ))}
             {event.meaning === "spend_card" ||
             event.meaning === "pay_obligation" ||
             event.meaning === "split" ||

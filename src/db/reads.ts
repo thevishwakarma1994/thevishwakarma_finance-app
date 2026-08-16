@@ -11,6 +11,9 @@ import { DomainError, type ClaimDirection, type LedgerBillingCycle } from "../do
 import { personPosition } from "../domain/people/position.js";
 import { suggestAllocations, suggestableClaimsFor } from "../domain/commands/suggestAllocations.js";
 import { claimLabel } from "../domain/commands/settle.js";
+import { accountAvailability } from "../domain/engine/liquidity.js";
+import { reservedTowardCycle } from "../domain/reservations/derive.js";
+import { cycleCardLabel } from "../domain/reservations/create.js";
 import { loadSnapshot } from "./loadSnapshot.js";
 import { loadCardRule } from "./config.js";
 import { categories, financialEvents, postings } from "./schema.js";
@@ -20,17 +23,49 @@ export function listAccounts(handles: SqliteHandles, workspaceId: string) {
   const snapshot = loadSnapshot(handles, workspaceId);
   return snapshot.accounts
     .filter((account) => account.status === "active")
-    .map((account) => ({
-      id: account.id,
-      displayName: account.displayName,
-      kind: account.kind,
-      mask: account.mask,
-      isPrimarySalary: account.isPrimarySalary,
-      balancePaise: account.balancePaise,
-      hasOpening: snapshot.openings.some(
-        (opening) => opening.kind === "account" && opening.subjectId === account.id,
-      ),
-    }));
+    .map((account) => {
+      const availability = accountAvailability(snapshot, account.id);
+      const reservedDetails = snapshot.reservations
+        .filter((reservation) => reservation.sourceAccountId === account.id && reservation.remainingPaise > 0)
+        .map((reservation) => {
+          const cycle =
+            reservation.obligationRef.type === "billing_cycle"
+              ? snapshot.billingCycles.find((item) => item.id === reservation.obligationRef.id)
+              : undefined;
+          const claim = reservation.originatingClaimId
+            ? snapshot.claims.find((item) => item.id === reservation.originatingClaimId)
+            : undefined;
+          const person = claim
+            ? snapshot.people.find((item) => item.id === claim.personId)
+            : undefined;
+          return {
+            reservationId: reservation.id,
+            amountPaise: reservation.remainingPaise,
+            cardLabel:
+              reservation.obligationRef.type === "billing_cycle"
+                ? cycleCardLabel(snapshot, reservation.obligationRef.id)
+                : "Obligation",
+            dueOn: cycle ? (cycle.actualDueOn ?? cycle.expectedDueOn) : null,
+            personName: person?.name ?? null,
+            claimId: claim?.id ?? null,
+          };
+        });
+      return {
+        id: account.id,
+        displayName: account.displayName,
+        kind: account.kind,
+        mask: account.mask,
+        isPrimarySalary: account.isPrimarySalary,
+        balancePaise: availability.balancePaise,
+        reservedPaise: availability.reservedActivePaise,
+        pendingSurplusPaise: availability.pendingSurplusHeldPaise,
+        availablePaise: availability.availablePaise,
+        reservedDetails,
+        hasOpening: snapshot.openings.some(
+          (opening) => opening.kind === "account" && opening.subjectId === account.id,
+        ),
+      };
+    });
 }
 
 export function listCategories(handles: SqliteHandles, workspaceId: string, includeArchived = false) {
@@ -139,6 +174,21 @@ export function listActivity(
         userShare !== undefined &&
         userShare.amountPaise === 0 &&
         shares.some((share) => !share.isUser);
+      const reservedForEvent = settlementRows
+        .filter((row) => row.createsReservation)
+        .reduce((sum, row) => {
+          const reservation = row.reservationId
+            ? snapshot.reservations.find((item) => item.id === row.reservationId)
+            : undefined;
+          return sum + (reservation?.amountOriginalPaise ?? row.amountPaise);
+        }, 0);
+      const surplusForEvent = snapshot.surplusCases
+        .filter((item) => item.eventId === event.id && item.status === "pending")
+        .reduce((sum, item) => sum + item.amountPaise, 0);
+      const availableForEvent =
+        event.meaning === "settlement_in"
+          ? Math.max(0, event.amountPaise - reservedForEvent - surplusForEvent)
+          : 0;
       return {
         id: event.id,
         meaning: event.meaning,
@@ -168,12 +218,58 @@ export function listActivity(
         personalAmountPaise: expensePostings.reduce((sum, posting) => sum + posting.amountPaise, 0),
         allocations: settlementRows.map((row) => {
           const allocatedClaim = snapshot.claims.find((item) => item.id === row.claimId);
+          const reservation = row.reservationId
+            ? snapshot.reservations.find((item) => item.id === row.reservationId)
+            : undefined;
           return {
             claimId: row.claimId,
             amountPaise: row.amountPaise,
             label: allocatedClaim ? claimLabel(allocatedClaim, snapshot) : "Claim",
+            createsReservation: row.createsReservation,
+            reservedPaise: reservation?.amountOriginalPaise ?? 0,
+            cardLabel:
+              reservation?.obligationRef.type === "billing_cycle"
+                ? cycleCardLabel(snapshot, reservation.obligationRef.id)
+                : null,
           };
         }),
+        surplusPaise: snapshot.surplusCases
+          .filter((item) => item.eventId === event.id && item.status === "pending")
+          .reduce((sum, item) => sum + item.amountPaise, 0),
+        consequences: [
+          ...settlementRows
+            .filter((row) => row.createsReservation)
+            .map((row) => {
+              const reservation = row.reservationId
+                ? snapshot.reservations.find((item) => item.id === row.reservationId)
+                : undefined;
+              const cardLabel =
+                reservation?.obligationRef.type === "billing_cycle"
+                  ? cycleCardLabel(snapshot, reservation.obligationRef.id)
+                  : "card";
+              return {
+                kind: "reserved" as const,
+                amountPaise: reservation?.amountOriginalPaise ?? row.amountPaise,
+                label: `reserved for ${cardLabel}`,
+              };
+            }),
+          ...snapshot.surplusCases
+            .filter((item) => item.eventId === event.id && item.status === "pending")
+            .map((item) => ({
+              kind: "needs_review" as const,
+              amountPaise: item.amountPaise,
+              label: "needs review",
+            })),
+          ...(availableForEvent > 0
+            ? [
+                {
+                  kind: "available" as const,
+                  amountPaise: availableForEvent,
+                  label: "available",
+                },
+              ]
+            : []),
+        ],
       };
     });
 }
@@ -254,7 +350,10 @@ export function monthReview(handles: SqliteHandles, workspaceId: string, asOf = 
   };
 }
 
-function cycleView(cycle: LedgerBillingCycle) {
+function cycleView(cycle: LedgerBillingCycle, snapshot?: ReturnType<typeof loadSnapshot>) {
+  const reservedTowardCyclePaise = snapshot
+    ? reservedTowardCycle(snapshot.reservations, cycle.id)
+    : paise(0);
   return {
     id: cycle.id,
     creditCardId: cycle.creditCardId,
@@ -271,6 +370,8 @@ function cycleView(cycle: LedgerBillingCycle) {
     ledgerRemainingPaise: cycle.ledgerRemainingPaise,
     statementRemainingPaise: cycle.statementRemainingPaise,
     remainingPaise: cycle.remainingPaise,
+    reservedTowardCyclePaise,
+    unfundedPaise: paise(Math.max(0, cycle.remainingPaise - reservedTowardCyclePaise)),
     mismatch: cycle.mismatch,
     status: cycle.status,
     lifecycle: cycle.lifecycle,
@@ -308,7 +409,7 @@ export function listCards(handles: SqliteHandles, workspaceId: string, asOf = to
           : null,
         status: card.status,
         outstandingPaise,
-        currentCycle: current ? cycleView(current) : null,
+        currentCycle: current ? cycleView(current, snapshot) : null,
         nextDueOn: nextDue ?? current?.actualDueOn ?? current?.expectedDueOn ?? null,
         statementDay: rule.statementDay,
         dueDaysAfterStatement: rule.dueDaysAfterStatement,
@@ -353,7 +454,7 @@ export function cardDetail(
     outstandingPaise,
     statementDay: rule.statementDay,
     dueDaysAfterStatement: rule.dueDaysAfterStatement,
-    cycles: cycles.map(cycleView),
+    cycles: cycles.map((cycle) => cycleView(cycle, snapshot)),
     transactions: activity,
   };
 }
@@ -408,7 +509,7 @@ export function cycleDetail(
         snapshot.accounts.find((account) => account.id === event.accountId)?.displayName ?? null,
     }));
   return {
-    ...cycleView(cycle),
+    ...cycleView(cycle, snapshot),
     card: {
       id: card.id,
       label: formatCardLabel(card.displayName, card.mask),
@@ -494,6 +595,14 @@ export function personDetail(handles: SqliteHandles, workspaceId: string, person
         ? snapshot.creditCards.find((item) => item.id === cycle.creditCardId)
         : undefined;
       const settledAmountPaise = paise(claim.originalAmountPaise - claim.openAmountPaise);
+      const linkedReservations = snapshot.reservations.filter(
+        (reservation) => reservation.originatingClaimId === claim.id,
+      );
+      const reservation = linkedReservations[0];
+      const reservationCycle =
+        reservation?.obligationRef.type === "billing_cycle"
+          ? snapshot.billingCycles.find((item) => item.id === reservation.obligationRef.id)
+          : undefined;
       return {
         id: claim.id,
         kind: claim.kind,
@@ -510,6 +619,13 @@ export function personDetail(handles: SqliteHandles, workspaceId: string, person
         cycleStatementOn: cycle?.expectedStatementOn ?? null,
         cardLabel: card ? formatCardLabel(card.displayName, card.mask) : null,
         note: claim.note,
+        reservationAmountPaise: reservation?.amountOriginalPaise ?? null,
+        reservationCardLabel: reservation
+          ? cycleCardLabel(snapshot, reservation.obligationRef.id)
+          : null,
+        reservationDueOn: reservationCycle
+          ? (reservationCycle.actualDueOn ?? reservationCycle.expectedDueOn)
+          : null,
       };
     });
   const openClaims = claimViews.filter((claim) => claim.status === "open");
@@ -566,4 +682,66 @@ export function suggestPersonAllocations(
         label: claimLabel(claim, snapshot),
       })),
   };
+}
+
+export function listPendingSurplus(handles: SqliteHandles, workspaceId: string) {
+  const snapshot = loadSnapshot(handles, workspaceId);
+  return snapshot.surplusCases
+    .filter((item) => item.status === "pending")
+    .map((item) => {
+      const person = item.personId
+        ? snapshot.people.find((row) => row.id === item.personId)
+        : undefined;
+      const account = item.sourceAccountId
+        ? snapshot.accounts.find((row) => row.id === item.sourceAccountId)
+        : undefined;
+      const openClaims = item.personId
+        ? snapshot.claims
+            .filter(
+              (claim) =>
+                claim.personId === item.personId &&
+                claim.status === "open" &&
+                claim.openAmountPaise > 0 &&
+                (item.sourceAccountId
+                  ? claim.direction === "they_owe_user"
+                  : claim.direction === "user_owes_them"),
+            )
+            .map((claim) => ({
+              id: claim.id,
+              label: claimLabel(claim, snapshot),
+              openAmountPaise: claim.openAmountPaise,
+            }))
+        : [];
+      const unpaidCycles =
+        item.kind === "reservation_excess"
+          ? snapshot.billingCycles
+              .filter((cycle) => cycle.remainingPaise > 0)
+              .map((cycle) => ({
+                id: cycle.id,
+                label: cycleCardLabel(snapshot, cycle.id),
+                remainingPaise: cycle.remainingPaise,
+              }))
+          : [];
+      return {
+        id: item.id,
+        amountPaise: item.amountPaise,
+        kind: item.kind,
+        explanation: item.explanation,
+        personId: item.personId,
+        personName: person?.name ?? null,
+        accountId: item.sourceAccountId,
+        accountName: account?.displayName ?? null,
+        cashSittingInAccount: Boolean(item.sourceAccountId),
+        openClaims,
+        unpaidCycles,
+        resolutions: [
+          ...(openClaims.length > 0 ? (["apply_to_other_claim"] as const) : []),
+          ...(item.personId ? (["convert_to_payable"] as const) : []),
+          ...(item.sourceAccountId ? (["treat_as_mine_correction"] as const) : []),
+          ...(item.kind === "reservation_excess" && unpaidCycles.length > 0
+            ? (["reassign_reservation"] as const)
+            : []),
+        ],
+      };
+    });
 }

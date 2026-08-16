@@ -16,6 +16,7 @@ import {
   requireActivePerson,
   type PersonShareInput,
 } from "./shares.js";
+import { requireAvailable } from "../engine/liquidity.js";
 import {
   DomainError,
   type ConsequencePreview,
@@ -90,6 +91,7 @@ export function recordSplit(
         "This split exceeds the money currently in the account",
       );
     }
+    requireAvailable(snapshot, account.id, input.amountPaise, "This split");
 
     const event: FinancialEvent = {
       id: eventId,

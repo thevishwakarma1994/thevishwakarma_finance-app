@@ -192,4 +192,51 @@ describe("expense conservation", () => {
     };
     expect(() => assertConservation("spend_account", batch)).toThrow(/sum of personal expense/);
   });
+
+  it("surplus resolution does not move cash, income, expense, or card liability", () => {
+    const eventId = newId();
+    const batch: ProposedBatch = {
+      events: [
+        {
+          id: eventId,
+          meaning: "surplus_resolution",
+          occurredOn,
+          capturedAt,
+          amountPaise: paiseOf(50_000),
+          accountId: newId(),
+          creditCardId: null,
+          loanId: null,
+          billingCycleId: null,
+          fundingCycleId: null,
+          categoryId: null,
+          channel: null,
+          merchant: null,
+          notes: "Treat surplus as mine",
+          reversalOfEventId: null,
+        },
+      ],
+      postings: [],
+      openings: [],
+    };
+    expect(() => assertConservation("surplus_resolution", batch)).not.toThrow();
+    expect(() =>
+      assertConservation("surplus_resolution", {
+        ...batch,
+        postings: [
+          {
+            id: newId(),
+            eventId,
+            amountPaise: paise(50_000),
+            accountId: newId(),
+            creditCardId: null,
+            loanId: null,
+            pnl: "income_other",
+            categoryId: null,
+            claimId: null,
+            billingCycleId: null,
+          },
+        ],
+      }),
+    ).toThrow(/not income|does not move cash/);
+  });
 });

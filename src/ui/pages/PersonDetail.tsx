@@ -144,6 +144,12 @@ export function PersonDetail({ personId, onBack }: Props) {
                 {claim.cycleStatementOn ? ` · cycle ${claim.cycleStatementOn}` : ""}
                 {claim.occurredOn ? ` · ${claim.occurredOn}` : ""}
               </p>
+              {claim.reservationAmountPaise && claim.reservationCardLabel ? (
+                <p className="muted">
+                  {formatInr(paise(claim.reservationAmountPaise))} reserved for {claim.reservationCardLabel}
+                  {claim.reservationDueOn ? ` due ${claim.reservationDueOn}` : ""}
+                </p>
+              ) : null}
             </article>
           ))}
         </section>

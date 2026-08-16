@@ -4,6 +4,13 @@ import { newId } from "../ids.js";
 import { assertConservation } from "../conservation/validate.js";
 import type { IsoDate } from "../calendar/isoDate.js";
 import { claimIncreasePosting } from "./shares.js";
+import { requireAvailable } from "../engine/liquidity.js";
+import {
+  buildReservation,
+  buildUnallocatedSurplus,
+  cycleCardLabel,
+  reservationAmountForAllocation,
+} from "../reservations/create.js";
 import {
   DomainError,
   type ClaimDirection,
@@ -14,7 +21,9 @@ import {
   type LedgerSnapshot,
   type PersonRecord,
   type ProposedBatch,
+  type ReservationRecord,
   type SettlementAllocation,
+  type SurplusCaseRecord,
 } from "../ledger/types.js";
 
 export type ConfirmedAllocation = {
@@ -60,6 +69,7 @@ export function claimLabel(claim: LedgerClaim, snapshot: LedgerSnapshot): string
   if (claim.kind === "direct_loan") return "Loan";
   if (claim.kind === "borrowing") return "Borrowing";
   if (claim.kind === "opening") return "Opening";
+  if (claim.kind === "surplus_payable") return "Surplus payable";
   return claim.kind;
 }
 
@@ -105,13 +115,8 @@ export function assertConfirmedAllocations(
     matched.push(claim);
   }
   const allocatedTotal = sumPaise(allocations.map((item) => item.amountPaise));
-  if (allocatedTotal !== amountPaise) {
-    throw new DomainError(
-      "allocation_mismatch",
-      allocatedTotal < amountPaise
-        ? "Allocations must sum exactly to the settlement amount"
-        : "Allocations cannot exceed the settlement amount",
-    );
+  if (allocatedTotal > amountPaise) {
+    throw new DomainError("allocation_mismatch", "Allocations cannot exceed the settlement amount");
   }
   return matched;
 }
@@ -128,11 +133,8 @@ export function buildSettlementBatch(input: {
   }
   const person = requirePerson(input.snapshot, input.settle.personId);
   const incoming = input.meaning === "settlement_in";
-  if (!incoming && input.settle.amountPaise > account.balancePaise) {
-    throw new DomainError(
-      "insufficient_balance",
-      "This payment exceeds the money currently in the account",
-    );
+  if (!incoming) {
+    requireAvailable(input.snapshot, account.id, input.settle.amountPaise, "This payment");
   }
 
   const eventId = newId();
@@ -154,14 +156,50 @@ export function buildSettlementBatch(input: {
     reversalOfEventId: null,
   };
 
-  const settlementAllocations: SettlementAllocation[] = input.settle.allocations.map((allocation) => ({
-    id: newId(),
-    eventId,
-    claimId: allocation.claimId,
-    amountPaise: allocation.amountPaise,
-    createsReservation: false,
-    reservationId: null,
-  }));
+  const reservedThisBatchByCycle = new Map<string, Paise>();
+  const reservations: ReservationRecord[] = [];
+  const settlementAllocations: SettlementAllocation[] = input.settle.allocations.map((allocation, index) => {
+    const claim = input.claims[index];
+    if (!claim) {
+      throw new DomainError("claim_not_found", "Claim not found");
+    }
+    let reservationId: string | null = null;
+    let createsReservation = false;
+    if (incoming && claim.billingCycleId) {
+      const reserveAmount = reservationAmountForAllocation(
+        input.snapshot,
+        claim,
+        allocation.amountPaise,
+        reservedThisBatchByCycle,
+      );
+      if (reserveAmount > 0) {
+        const obligation = { type: "billing_cycle" as const, id: claim.billingCycleId };
+        const reservation = buildReservation({
+          sourceAccountId: account.id,
+          amountPaise: reserveAmount,
+          obligation,
+          originatingEventId: eventId,
+          originatingClaimId: claim.id,
+          createdOn: input.settle.occurredOn,
+        });
+        reservations.push(reservation);
+        reservationId = reservation.id;
+        createsReservation = true;
+        reservedThisBatchByCycle.set(
+          obligation.id,
+          paise((reservedThisBatchByCycle.get(obligation.id) ?? paise(0)) + reserveAmount),
+        );
+      }
+    }
+    return {
+      id: newId(),
+      eventId,
+      claimId: allocation.claimId,
+      amountPaise: allocation.amountPaise,
+      createsReservation,
+      reservationId,
+    };
+  });
 
   const claimStatusUpdates: ClaimStatusUpdate[] = input.settle.allocations.map((allocation, index) => {
     const claim = input.claims[index];
@@ -174,6 +212,22 @@ export function buildSettlementBatch(input: {
       status: remaining === paise(0) ? "settled" : "open",
     };
   });
+
+  const allocatedTotal = sumPaise(input.settle.allocations.map((item) => item.amountPaise));
+  const unallocated = paise(input.settle.amountPaise - allocatedTotal);
+  const surplusCases: SurplusCaseRecord[] = [];
+  if (unallocated > 0) {
+    surplusCases.push(
+      buildUnallocatedSurplus({
+        amountPaise: unallocated,
+        accountId: account.id,
+        personId: person.id,
+        eventId,
+        personName: person.name,
+        cashSittingInAccount: incoming,
+      }),
+    );
+  }
 
   const accountDelta = incoming ? input.settle.amountPaise : paise(-input.settle.amountPaise);
   const batch: ProposedBatch = {
@@ -198,14 +252,26 @@ export function buildSettlementBatch(input: {
     openings: [],
     settlementAllocations,
     claimStatusUpdates,
+    reservations,
+    surplusCases,
   };
   assertConservation(input.meaning, batch);
 
+  const reservedTotal = paise(
+    reservations.reduce((sum, reservation) => sum + reservation.amountOriginalPaise, 0),
+  );
   const claimLines = input.settle.allocations.map((allocation, index) => {
     const claim = input.claims[index];
     const label = claim ? claimLabel(claim, input.snapshot) : "Claim";
+    const allocationRow = settlementAllocations[index];
+    if (allocationRow?.createsReservation && claim?.billingCycleId) {
+      return `${formatInr(allocation.amountPaise)} → ${label} · reserved for ${cycleCardLabel(input.snapshot, claim.billingCycleId)}`;
+    }
     return `${formatInr(allocation.amountPaise)} → ${label}`;
   });
+  const availableIncrease = incoming
+    ? paise(input.settle.amountPaise - reservedTotal - unallocated)
+    : paise(0);
 
   const preview: ConsequencePreview = {
     effects: [
@@ -213,8 +279,14 @@ export function buildSettlementBatch(input: {
       {
         kind: "claim",
         label: incoming ? `${person.name} owes you` : `You owe ${person.name}`,
-        deltaPaise: paise(-input.settle.amountPaise),
+        deltaPaise: paise(-allocatedTotal),
       },
+      ...(reservedTotal > 0
+        ? [{ kind: "reserved" as const, label: account.displayName, deltaPaise: reservedTotal }]
+        : []),
+      ...(unallocated > 0
+        ? [{ kind: "surplus" as const, label: "Needs review", deltaPaise: unallocated }]
+        : []),
     ],
     classifications: {
       spent: paise(0),
@@ -222,20 +294,24 @@ export function buildSettlementBatch(input: {
       invested: paise(0),
       moved: paise(0),
     },
-    warnings: [],
+    warnings: unallocated > 0 ? [`${formatInr(unallocated)} needs review`] : [],
     narrative: incoming
       ? [
           `${account.displayName} ${formatInrDelta(accountDelta)}`,
-          `${person.name} owes you ${formatInr(input.settle.amountPaise)} less`,
+          `${person.name} owes you ${formatInr(allocatedTotal)} less`,
+          reservedTotal > 0 ? `${formatInr(reservedTotal)} reserved` : null,
+          availableIncrease > 0 ? `${formatInr(availableIncrease)} available` : null,
+          unallocated > 0 ? `${formatInr(unallocated)} needs review` : null,
           "Income ₹0",
           ...claimLines,
-        ]
+        ].filter((line): line is string => Boolean(line))
       : [
           `${account.displayName} ${formatInrDelta(accountDelta)}`,
-          `You owe ${person.name} ${formatInr(input.settle.amountPaise)} less`,
+          `You owe ${person.name} ${formatInr(allocatedTotal)} less`,
+          unallocated > 0 ? `${formatInr(unallocated)} needs review` : null,
           "Personal spending ₹0",
           ...claimLines,
-        ],
+        ].filter((line): line is string => Boolean(line)),
   };
 
   return { batch, preview };

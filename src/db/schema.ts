@@ -256,6 +256,87 @@ export const settlementAllocations = sqliteTable(
     uniqueIndex("settlement_event_claim").on(table.eventId, table.claimId),
     index("settlement_allocations_claim").on(table.claimId),
     index("settlement_allocations_workspace").on(table.workspaceId),
+    index("settlement_allocations_reservation").on(table.reservationId),
+  ],
+);
+
+export const reservations = sqliteTable(
+  "reservations",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id),
+    sourceAccountId: text("source_account_id")
+      .notNull()
+      .references(() => accounts.id),
+    amountOriginalPaise: integer("amount_original_paise").notNull(),
+    amountConsumedPaise: integer("amount_consumed_paise").notNull().default(0),
+    amountReleasedPaise: integer("amount_released_paise").notNull().default(0),
+    amountReassignedPaise: integer("amount_reassigned_paise").notNull().default(0),
+    amountSurplusHeldPaise: integer("amount_surplus_held_paise").notNull().default(0),
+    status: text("status").notNull(),
+    obligationRefType: text("obligation_ref_type").notNull(),
+    obligationRefId: text("obligation_ref_id").notNull(),
+    originatingEventId: text("originating_event_id").references(() => financialEvents.id),
+    originatingClaimId: text("originating_claim_id").references(() => claims.id),
+    createdOn: text("created_on").notNull(),
+  },
+  (table) => [
+    index("reservations_account_status").on(table.sourceAccountId, table.status),
+    index("reservations_obligation").on(table.obligationRefType, table.obligationRefId),
+    index("reservations_workspace").on(table.workspaceId),
+  ],
+);
+
+export const reservationLedger = sqliteTable(
+  "reservation_ledger",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id),
+    reservationId: text("reservation_id")
+      .notNull()
+      .references(() => reservations.id),
+    eventId: text("event_id")
+      .notNull()
+      .references(() => financialEvents.id),
+    deltaConsumedPaise: integer("delta_consumed_paise").notNull().default(0),
+    deltaReleasedPaise: integer("delta_released_paise").notNull().default(0),
+    deltaReassignedPaise: integer("delta_reassigned_paise").notNull().default(0),
+    deltaSurplusHeldPaise: integer("delta_surplus_held_paise").notNull().default(0),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    index("reservation_ledger_reservation_created").on(table.reservationId, table.createdAt),
+    index("reservation_ledger_workspace").on(table.workspaceId),
+  ],
+);
+
+export const surplusCases = sqliteTable(
+  "surplus_cases",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id),
+    amountPaise: integer("amount_paise").notNull(),
+    kind: text("kind").notNull(),
+    sourceAccountId: text("source_account_id").references(() => accounts.id),
+    personId: text("person_id").references(() => people.id),
+    reservationId: text("reservation_id").references(() => reservations.id),
+    eventId: text("event_id").references(() => financialEvents.id),
+    explanation: text("explanation").notNull(),
+    status: text("status").notNull(),
+    resolution: text("resolution"),
+    resolvedAt: text("resolved_at"),
+    resolvedByEventId: text("resolved_by_event_id").references(() => financialEvents.id),
+  },
+  (table) => [
+    index("surplus_cases_status").on(table.status),
+    index("surplus_cases_person_status").on(table.personId, table.status),
+    index("surplus_cases_workspace").on(table.workspaceId),
   ],
 );
 
@@ -292,4 +373,7 @@ export const schema = {
   claims,
   eventShares,
   settlementAllocations,
+  reservations,
+  reservationLedger,
+  surplusCases,
 };

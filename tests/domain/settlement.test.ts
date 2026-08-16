@@ -147,7 +147,7 @@ describe("receiveSettlement and paySettlement", () => {
         { ...base, amountPaise: paiseOf(2_000), allocations: [{ claimId: receivable.id, amountPaise: paiseOf(1_000) }] },
         snapshot,
       ),
-    ).toThrow(DomainError);
+    ).not.toThrow();
     expect(() =>
       receiveSettlement(
         { ...base, amountPaise: paiseOf(1_000), allocations: [{ claimId: payable.id, amountPaise: paiseOf(1_000) }] },

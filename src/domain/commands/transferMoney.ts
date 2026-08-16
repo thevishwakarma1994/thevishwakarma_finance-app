@@ -4,6 +4,7 @@ import { newId } from "../ids.js";
 import { assertConservation } from "../conservation/validate.js";
 import type { IsoDate } from "../calendar/isoDate.js";
 import type { Paise } from "../money/paise.js";
+import { requireAvailable } from "../engine/liquidity.js";
 import {
   DomainError,
   type ConsequencePreview,
@@ -48,6 +49,7 @@ export function transferMoney(
       "This transfer exceeds the money currently in the source account",
     );
   }
+  requireAvailable(snapshot, source.id, input.amountPaise, "This transfer");
 
   const eventId = newId();
   // Transfer convention: event.accountId is the source account.

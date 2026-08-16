@@ -29,6 +29,10 @@ function cardDeltas(batch: ProposedBatch): Paise {
   );
 }
 
+function surplusPortion(batch: ProposedBatch): Paise {
+  return sumPaise((batch.surplusCases ?? []).map((item) => item.amountPaise));
+}
+
 function claimPortion(batch: ProposedBatch): Paise {
   return sumPaise(
     batch.postings
@@ -227,10 +231,11 @@ export function assertConservation(
   if (meaning === "settlement_in") {
     const accountIncrease = accountDeltas(batch);
     const claimDecrease = paise(-claimPortion(batch));
-    if (accountIncrease !== claimDecrease || accountIncrease <= 0) {
+    const surplus = surplusPortion(batch);
+    if (accountIncrease !== paise(claimDecrease + surplus) || accountIncrease <= 0) {
       throw new DomainError(
         "conservation_settlement_in",
-        "Account increase must equal confirmed claim reductions",
+        "Account increase must equal confirmed claim reductions plus unallocated surplus",
       );
     }
     if (expenseSum(batch) !== paise(0)) {
@@ -248,10 +253,11 @@ export function assertConservation(
   if (meaning === "settlement_out") {
     const accountDecrease = paise(-accountDeltas(batch));
     const claimDecrease = paise(-claimPortion(batch));
-    if (accountDecrease !== claimDecrease || accountDecrease <= 0) {
+    const surplus = surplusPortion(batch);
+    if (accountDecrease !== paise(claimDecrease + surplus) || accountDecrease <= 0) {
       throw new DomainError(
         "conservation_settlement_out",
-        "Account decrease must equal confirmed payable claim reductions",
+        "Account decrease must equal confirmed payable reductions plus unallocated surplus",
       );
     }
     if (expenseSum(batch) !== paise(0)) {
@@ -263,6 +269,26 @@ export function assertConservation(
     if (cardDeltas(batch) !== paise(0)) {
       throw new DomainError("conservation_settlement_out", "Paying someone does not change card liability");
     }
+    return;
+  }
+
+  if (meaning === "surplus_resolution") {
+    if (accountDeltas(batch) !== paise(0)) {
+      throw new DomainError(
+        "conservation_surplus_resolution",
+        "Surplus resolution does not move cash unless a later supported resolution requires it",
+      );
+    }
+    if (expenseSum(batch) !== paise(0)) {
+      throw new DomainError("conservation_surplus_resolution", "Surplus resolution is not personal spending");
+    }
+    if (incomeSum(batch) !== paise(0)) {
+      throw new DomainError("conservation_surplus_resolution", "Surplus resolution is not income");
+    }
+    if (cardDeltas(batch) !== paise(0)) {
+      throw new DomainError("conservation_surplus_resolution", "Surplus resolution does not change card liability");
+    }
+    return;
   }
 }
 
@@ -275,6 +301,9 @@ export function assertBatchConservation(batch: ProposedBatch): void {
         sliceEventIds(batch, meaning).has(posting.eventId),
       ),
       openings: [],
+      surplusCases: (batch.surplusCases ?? []).filter((item) =>
+        item.eventId ? sliceEventIds(batch, meaning).has(item.eventId) : false,
+      ),
     };
     assertConservation(meaning, slice);
   }

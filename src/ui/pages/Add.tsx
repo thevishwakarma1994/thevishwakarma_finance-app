@@ -551,7 +551,7 @@ export function Add({ onDone }: Props) {
                   />
                 </label>
               ))}
-              <p className="muted">Review which claims this will reduce before continuing.</p>
+              <p className="muted">Review which claims this will reduce before continuing. Leftover amount needs review.</p>
             </>
           ) : null}
           {intent === "pay_card" ? (

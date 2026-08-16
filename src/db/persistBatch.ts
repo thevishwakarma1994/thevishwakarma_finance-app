@@ -9,7 +9,10 @@ import {
   financialEvents,
   openingPositions,
   postings,
+  reservationLedger,
+  reservations,
   settlementAllocations,
+  surplusCases,
 } from "./schema.js";
 import type { SqliteHandles } from "./client.js";
 import { withTransaction } from "./tx.js";
@@ -140,6 +143,31 @@ export function persistBatch(
         .run();
     }
 
+    const nextReservations = batch.reservations ?? [];
+    if (nextReservations.length > 0) {
+      handles.db
+        .insert(reservations)
+        .values(
+          nextReservations.map((reservation) => ({
+            id: reservation.id,
+            workspaceId,
+            sourceAccountId: reservation.sourceAccountId,
+            amountOriginalPaise: reservation.amountOriginalPaise,
+            amountConsumedPaise: reservation.amountConsumedPaise,
+            amountReleasedPaise: reservation.amountReleasedPaise,
+            amountReassignedPaise: reservation.amountReassignedPaise,
+            amountSurplusHeldPaise: reservation.amountSurplusHeldPaise,
+            status: reservation.status,
+            obligationRefType: reservation.obligationRef.type,
+            obligationRefId: reservation.obligationRef.id,
+            originatingEventId: reservation.originatingEventId,
+            originatingClaimId: reservation.originatingClaimId,
+            createdOn: reservation.createdOn,
+          })),
+        )
+        .run();
+    }
+
     const allocations = batch.settlementAllocations ?? [];
     if (allocations.length > 0) {
       handles.db
@@ -160,6 +188,78 @@ export function persistBatch(
 
     for (const patch of batch.claimStatusUpdates ?? []) {
       handles.db.update(claims).set({ status: patch.status }).where(eq(claims.id, patch.id)).run();
+    }
+
+    for (const patch of batch.reservationUpdates ?? []) {
+      handles.db
+        .update(reservations)
+        .set({
+          amountConsumedPaise: patch.amountConsumedPaise,
+          amountReleasedPaise: patch.amountReleasedPaise,
+          amountReassignedPaise: patch.amountReassignedPaise,
+          amountSurplusHeldPaise: patch.amountSurplusHeldPaise,
+          status: patch.status,
+        })
+        .where(eq(reservations.id, patch.id))
+        .run();
+    }
+
+    const ledger = batch.reservationLedger ?? [];
+    if (ledger.length > 0) {
+      handles.db
+        .insert(reservationLedger)
+        .values(
+          ledger.map((entry) => ({
+            id: entry.id,
+            workspaceId,
+            reservationId: entry.reservationId,
+            eventId: entry.eventId,
+            deltaConsumedPaise: entry.deltaConsumedPaise,
+            deltaReleasedPaise: entry.deltaReleasedPaise,
+            deltaReassignedPaise: entry.deltaReassignedPaise,
+            deltaSurplusHeldPaise: entry.deltaSurplusHeldPaise,
+            createdAt: entry.createdAt,
+          })),
+        )
+        .run();
+    }
+
+    const nextSurplus = batch.surplusCases ?? [];
+    if (nextSurplus.length > 0) {
+      handles.db
+        .insert(surplusCases)
+        .values(
+          nextSurplus.map((item) => ({
+            id: item.id,
+            workspaceId,
+            amountPaise: item.amountPaise,
+            kind: item.kind,
+            sourceAccountId: item.sourceAccountId,
+            personId: item.personId,
+            reservationId: item.reservationId,
+            eventId: item.eventId,
+            explanation: item.explanation,
+            status: item.status,
+            resolution: item.resolution,
+            resolvedAt: item.resolvedAt,
+            resolvedByEventId: item.resolvedByEventId,
+          })),
+        )
+        .run();
+    }
+
+    for (const patch of batch.surplusCaseUpdates ?? []) {
+      handles.db
+        .update(surplusCases)
+        .set({
+          amountPaise: patch.amountPaise,
+          status: patch.status,
+          resolution: patch.resolution,
+          resolvedAt: patch.resolvedAt,
+          resolvedByEventId: patch.resolvedByEventId,
+        })
+        .where(eq(surplusCases.id, patch.id))
+        .run();
     }
 
     if (batch.postings.length > 0) {

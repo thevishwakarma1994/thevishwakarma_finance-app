@@ -12,6 +12,17 @@ export type Account = {
   mask: string | null;
   isPrimarySalary: boolean;
   balancePaise: number;
+  reservedPaise: number;
+  pendingSurplusPaise: number;
+  availablePaise: number;
+  reservedDetails: {
+    reservationId: string;
+    amountPaise: number;
+    cardLabel: string;
+    dueOn: string | null;
+    personName: string | null;
+    claimId: string | null;
+  }[];
   hasOpening: boolean;
 };
 
@@ -48,7 +59,16 @@ export type ActivityEvent = {
   counterpartyName: string | null;
   otherOwned: boolean;
   personalAmountPaise: number;
-  allocations: { claimId: string; amountPaise: number; label: string }[];
+  allocations: {
+    claimId: string;
+    amountPaise: number;
+    label: string;
+    createsReservation?: boolean;
+    reservedPaise?: number;
+    cardLabel?: string | null;
+  }[];
+  surplusPaise?: number;
+  consequences?: { kind: "reserved" | "available" | "needs_review"; amountPaise: number; label: string }[];
 };
 
 export type CardCycleView = {
@@ -67,6 +87,8 @@ export type CardCycleView = {
   ledgerRemainingPaise: number;
   statementRemainingPaise: number;
   remainingPaise: number;
+  reservedTowardCyclePaise?: number;
+  unfundedPaise?: number;
   mismatch: boolean;
   status: string;
   lifecycle: string;
@@ -149,6 +171,9 @@ export type PersonClaim = {
   cycleStatementOn: string | null;
   cardLabel: string | null;
   note: string | null;
+  reservationAmountPaise?: number | null;
+  reservationCardLabel?: string | null;
+  reservationDueOn?: string | null;
 };
 
 export type PersonDetail = PersonListItem & {
@@ -562,6 +587,44 @@ export function previewOrCommitPaySettlement(body: {
   commit: boolean;
 }) {
   return request<CommandResult>("/api/commands/pay-settlement", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export type PendingSurplus = {
+  id: string;
+  amountPaise: number;
+  kind: string;
+  explanation: string;
+  personId: string | null;
+  personName: string | null;
+  accountId: string | null;
+  accountName: string | null;
+  cashSittingInAccount: boolean;
+  openClaims: { id: string; label: string; openAmountPaise: number }[];
+  unpaidCycles: { id: string; label: string; remainingPaise: number }[];
+  resolutions: string[];
+};
+
+export function fetchPendingSurplus() {
+  return request<{ items: PendingSurplus[] }>("/api/surplus");
+}
+
+export function previewOrCommitResolveSurplus(body: {
+  surplusCaseId: string;
+  resolution:
+    | "apply_to_other_claim"
+    | "convert_to_payable"
+    | "treat_as_mine_correction"
+    | "reassign_reservation";
+  amountPaise?: number;
+  claimId?: string;
+  billingCycleId?: string;
+  confirmed?: boolean;
+  commit: boolean;
+}) {
+  return request<CommandResult>("/api/commands/resolve-surplus", {
     method: "POST",
     body: JSON.stringify(body),
   });

@@ -3,15 +3,28 @@ import { formatInr, formatInrDelta } from "../money/inr.js";
 import { newId } from "../ids.js";
 import { assertConservation } from "../conservation/validate.js";
 import { formatCardLabel, payablePaise } from "../cycle/lifecycle.js";
+import { accountAvailability } from "../engine/liquidity.js";
+import {
+  applyReservationDelta,
+  reservationsForCycle,
+} from "../reservations/derive.js";
+import {
+  buildReservationExcess,
+  cycleCardLabel,
+} from "../reservations/create.js";
 import type { IsoDate } from "../calendar/isoDate.js";
 import type { Paise } from "../money/paise.js";
 import {
   DomainError,
   type ConsequencePreview,
   type FinancialEvent,
+  type LedgerReservation,
   type LedgerSnapshot,
   type Posting,
   type ProposedBatch,
+  type ReservationLedgerEntry,
+  type ReservationMutation,
+  type SurplusCaseRecord,
 } from "../ledger/types.js";
 
 export type PayCardInput = {
@@ -24,6 +37,11 @@ export type PayCardInput = {
   notes?: string | null;
   channel?: string | null;
 };
+
+function byCreatedThenId(left: LedgerReservation, right: LedgerReservation): number {
+  if (left.createdOn === right.createdOn) return left.id.localeCompare(right.id);
+  return left.createdOn.localeCompare(right.createdOn);
+}
 
 export function payCard(
   input: PayCardInput,
@@ -60,6 +78,21 @@ export function payCard(
     );
   }
 
+  const linked = reservationsForCycle(snapshot.reservations, cycle.id);
+  const linkedHere = linked
+    .filter((reservation) => reservation.sourceAccountId === account.id && reservation.remainingPaise > 0)
+    .sort(byCreatedThenId);
+  const linkedRemaining = paise(
+    linkedHere.reduce((sum, reservation) => sum + reservation.remainingPaise, 0),
+  );
+  const availability = accountAvailability(snapshot, account.id);
+  const usable = paise(availability.availablePaise + linkedRemaining);
+  if (input.amountPaise > usable) {
+    throw new DomainError(
+      "insufficient_available",
+      "This payment exceeds available money plus the reservation for this cycle",
+    );
+  }
   if (input.amountPaise > account.balancePaise) {
     throw new DomainError(
       "insufficient_balance",
@@ -69,6 +102,7 @@ export function payCard(
 
   const eventId = newId();
   const label = formatCardLabel(card.displayName, card.mask);
+  const cycleLabel = cycleCardLabel(snapshot, cycle.id);
 
   const event: FinancialEvent = {
     id: eventId,
@@ -115,16 +149,121 @@ export function payCard(
     },
   ];
 
-  const batch: ProposedBatch = { events: [event], postings, openings: [] };
+  const working = new Map(snapshot.reservations.map((reservation) => [reservation.id, reservation]));
+  const reservationUpdates: ReservationMutation[] = [];
+  const reservationLedger: ReservationLedgerEntry[] = [];
+  const surplusCases: SurplusCaseRecord[] = [];
+  let consumedTotal = paise(0);
+
+  let toConsume = paise(Math.min(input.amountPaise, linkedRemaining));
+  for (const reservation of linkedHere) {
+    if (toConsume <= 0) break;
+    const current = working.get(reservation.id);
+    if (!current || current.remainingPaise <= 0) continue;
+    const take = paise(Math.min(current.remainingPaise, toConsume));
+    const mutated = applyReservationDelta(current, eventId, input.capturedAt, { consumed: take });
+    working.set(reservation.id, mutated.next);
+    reservationUpdates.push(mutated.update);
+    reservationLedger.push(mutated.ledger);
+    consumedTotal = paise(consumedTotal + take);
+    toConsume = paise(toConsume - take);
+  }
+
+  const remainingAfter = paise(cycle.remainingPaise - input.amountPaise);
+  const leftoverPaying = paise(
+    [...working.values()]
+      .filter(
+        (reservation) =>
+          reservation.obligationRef.type === "billing_cycle" &&
+          reservation.obligationRef.id === cycle.id &&
+          reservation.sourceAccountId === account.id,
+      )
+      .reduce((sum, reservation) => sum + reservation.remainingPaise, 0),
+  );
+  const keepOnPaying = paise(Math.min(leftoverPaying, remainingAfter));
+  let surplusOnPaying = paise(leftoverPaying - keepOnPaying);
+  const neededFromOthers = paise(Math.max(0, remainingAfter - keepOnPaying));
+  const others = [...working.values()]
+    .filter(
+      (reservation) =>
+        reservation.obligationRef.type === "billing_cycle" &&
+        reservation.obligationRef.id === cycle.id &&
+        reservation.sourceAccountId !== account.id &&
+        reservation.remainingPaise > 0,
+    )
+    .sort(byCreatedThenId);
+  const othersRemaining = paise(
+    others.reduce((sum, reservation) => sum + reservation.remainingPaise, 0),
+  );
+  let toRelease = paise(Math.max(0, othersRemaining - neededFromOthers));
+
+  for (const reservation of others) {
+    if (toRelease <= 0) break;
+    const current = working.get(reservation.id);
+    if (!current || current.remainingPaise <= 0) continue;
+    const take = paise(Math.min(current.remainingPaise, toRelease));
+    const mutated = applyReservationDelta(current, eventId, input.capturedAt, { released: take });
+    working.set(reservation.id, mutated.next);
+    reservationUpdates.push(mutated.update);
+    reservationLedger.push(mutated.ledger);
+    toRelease = paise(toRelease - take);
+  }
+
+  if (surplusOnPaying > 0) {
+    const payingLeftovers = [...working.values()]
+      .filter(
+        (reservation) =>
+          reservation.obligationRef.type === "billing_cycle" &&
+          reservation.obligationRef.id === cycle.id &&
+          reservation.sourceAccountId === account.id &&
+          reservation.remainingPaise > 0,
+      )
+      .sort(byCreatedThenId);
+    for (const reservation of payingLeftovers) {
+      if (surplusOnPaying <= 0) break;
+      const current = working.get(reservation.id);
+      if (!current || current.remainingPaise <= 0) continue;
+      const take = paise(Math.min(current.remainingPaise, surplusOnPaying));
+      const mutated = applyReservationDelta(current, eventId, input.capturedAt, { surplusHeld: take });
+      working.set(reservation.id, mutated.next);
+      reservationUpdates.push(mutated.update);
+      reservationLedger.push(mutated.ledger);
+      surplusCases.push(
+        buildReservationExcess({
+          amountPaise: take,
+          accountId: account.id,
+          reservationId: reservation.id,
+          eventId,
+          cycleLabel,
+        }),
+      );
+      surplusOnPaying = paise(surplusOnPaying - take);
+    }
+  }
+
+  const batch: ProposedBatch = {
+    events: [event],
+    postings,
+    openings: [],
+    reservationUpdates,
+    reservationLedger,
+    surplusCases,
+  };
   assertConservation("pay_obligation", batch);
 
   const ledgerAfter = paise(cycle.ledgerRemainingPaise - input.amountPaise);
   const statementAfter = paise(cycle.statementRemainingPaise - input.amountPaise);
   const stillMismatched = cycle.mismatch || ledgerAfter !== statementAfter;
+  const releasedTotal = paise(
+    reservationLedger.reduce((sum, entry) => sum + entry.deltaReleasedPaise, 0),
+  );
   const preview: ConsequencePreview = {
     effects: [
       { kind: "account", label: account.displayName, deltaPaise: paise(-input.amountPaise) },
       { kind: "card", label, deltaPaise: paise(-input.amountPaise) },
+      ...(consumedTotal > 0
+        ? [{ kind: "reserved" as const, label: `${label} reservation`, deltaPaise: paise(-consumedTotal) }]
+        : []),
     ],
     classifications: {
       spent: paise(0),
@@ -138,6 +277,10 @@ export function payCard(
     narrative: [
       `${account.displayName} ${formatInrDelta(paise(-input.amountPaise))}`,
       `${label} liability ${formatInrDelta(paise(-input.amountPaise))}`,
+      consumedTotal > 0 ? `Used ${formatInr(consumedTotal)} from the reservation for this cycle` : null,
+      releasedTotal > 0
+        ? `${formatInr(releasedTotal)} reserved elsewhere is now available because this cycle was paid from ${account.displayName}`
+        : null,
       `Paid ${formatInr(input.amountPaise)} to ${label}`,
       !stillMismatched && ledgerAfter === 0 && statementAfter === 0
         ? "This cycle is paid."
@@ -145,7 +288,7 @@ export function payCard(
           ? `Ledger remaining ${formatInr(ledgerAfter)}; statement remaining ${formatInr(statementAfter)}. Mismatch is unresolved.`
           : `Remaining on this cycle ${formatInr(ledgerAfter)}.`,
       "This is not personal spending.",
-    ],
+    ].filter((line): line is string => Boolean(line)),
   };
 
   return { batch, preview };

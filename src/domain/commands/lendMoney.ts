@@ -5,6 +5,7 @@ import { assertConservation } from "../conservation/validate.js";
 import type { IsoDate } from "../calendar/isoDate.js";
 import type { Paise } from "../money/paise.js";
 import { buildReceivableClaim, claimIncreasePosting, requireActivePerson } from "./shares.js";
+import { requireAvailable } from "../engine/liquidity.js";
 import {
   DomainError,
   type ConsequencePreview,
@@ -35,12 +36,7 @@ export function lendMoney(
   if (input.amountPaise <= 0) {
     throw new DomainError("invalid_amount", "Amount must be greater than zero");
   }
-  if (input.amountPaise > account.balancePaise) {
-    throw new DomainError(
-      "insufficient_balance",
-      "This loan exceeds the money currently in the account",
-    );
-  }
+  requireAvailable(snapshot, account.id, input.amountPaise, "This loan");
 
   const eventId = newId();
   const event: FinancialEvent = {

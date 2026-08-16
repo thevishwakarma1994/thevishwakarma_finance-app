@@ -13,11 +13,17 @@ import type {
   LedgerAccount,
   LedgerClaim,
   LedgerSnapshot,
+  ObligationRefType,
   OpeningPosition,
   PersonStatus,
+  ReservationStatus,
+  SurplusKind,
+  SurplusResolution,
+  SurplusStatus,
 } from "../domain/ledger/types.js";
 import { isAccountOpeningPayload } from "../domain/ledger/types.js";
 import { enrichClaim } from "../domain/claims/derive.js";
+import { enrichReservation } from "../domain/reservations/derive.js";
 import {
   accounts,
   billingCycles,
@@ -29,7 +35,10 @@ import {
   openingPositions,
   people,
   postings,
+  reservationLedger,
+  reservations,
   settlementAllocations,
+  surplusCases,
 } from "./schema.js";
 import type { SqliteHandles } from "./client.js";
 
@@ -92,6 +101,21 @@ export function loadSnapshot(
     .select()
     .from(settlementAllocations)
     .where(eq(settlementAllocations.workspaceId, workspaceId))
+    .all();
+  const reservationRows = handles.db
+    .select()
+    .from(reservations)
+    .where(eq(reservations.workspaceId, workspaceId))
+    .all();
+  const reservationLedgerRows = handles.db
+    .select()
+    .from(reservationLedger)
+    .where(eq(reservationLedger.workspaceId, workspaceId))
+    .all();
+  const surplusRows = handles.db
+    .select()
+    .from(surplusCases)
+    .where(eq(surplusCases.workspaceId, workspaceId))
     .all();
 
   const openings: OpeningPosition[] = openingRows.map((row) => {
@@ -225,6 +249,26 @@ export function loadSnapshot(
     ),
   );
 
+  const ledgerReservations = reservationRows.map((row) =>
+    enrichReservation({
+      id: row.id,
+      sourceAccountId: row.sourceAccountId,
+      amountOriginalPaise: paise(row.amountOriginalPaise),
+      amountConsumedPaise: paise(row.amountConsumedPaise),
+      amountReleasedPaise: paise(row.amountReleasedPaise),
+      amountReassignedPaise: paise(row.amountReassignedPaise),
+      amountSurplusHeldPaise: paise(row.amountSurplusHeldPaise),
+      status: row.status as ReservationStatus,
+      obligationRef: {
+        type: row.obligationRefType as ObligationRefType,
+        id: row.obligationRefId,
+      },
+      originatingEventId: row.originatingEventId,
+      originatingClaimId: row.originatingClaimId,
+      createdOn: isoDate(row.createdOn),
+    }),
+  );
+
   return {
     accounts: ledgerAccounts,
     categories: categoryRows.map((row) => ({
@@ -250,6 +294,31 @@ export function loadSnapshot(
       isUser: row.isUser === 1,
     })),
     settlementAllocations: loadedAllocations,
+    reservations: ledgerReservations,
+    reservationLedger: reservationLedgerRows.map((row) => ({
+      id: row.id,
+      reservationId: row.reservationId,
+      eventId: row.eventId,
+      deltaConsumedPaise: paise(row.deltaConsumedPaise),
+      deltaReleasedPaise: paise(row.deltaReleasedPaise),
+      deltaReassignedPaise: paise(row.deltaReassignedPaise),
+      deltaSurplusHeldPaise: paise(row.deltaSurplusHeldPaise),
+      createdAt: row.createdAt,
+    })),
+    surplusCases: surplusRows.map((row) => ({
+      id: row.id,
+      amountPaise: paise(row.amountPaise),
+      kind: row.kind as SurplusKind,
+      sourceAccountId: row.sourceAccountId,
+      personId: row.personId,
+      reservationId: row.reservationId,
+      eventId: row.eventId,
+      explanation: row.explanation,
+      status: row.status as SurplusStatus,
+      resolution: (row.resolution as SurplusResolution | null) ?? null,
+      resolvedAt: row.resolvedAt,
+      resolvedByEventId: row.resolvedByEventId,
+    })),
     events,
     postings: ledgerPostings,
     openings,

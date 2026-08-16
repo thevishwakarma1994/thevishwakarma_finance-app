@@ -304,25 +304,26 @@ describe("stage 10 settlements and claim allocation", () => {
     expect(tableCounts(ctx.handles, ctx.workspaceId)).toEqual(before);
   });
 
-  it("H — under-allocation rejected with no writes", () => {
+  it("H — under-allocation creates pending surplus", () => {
     const ctx = setup();
     contexts.push(ctx.handles);
     lend(ctx, ctx.rahulId, 200_000);
-    const before = tableCounts(ctx.handles, ctx.workspaceId);
     const claim = loadSnapshot(ctx.handles, ctx.workspaceId).claims[0];
     if (!claim) throw new Error("missing claim");
-    expect(() =>
-      receiveSettlement(ctx.handles, { workspaceId: ctx.workspaceId }, {
-        occurredOn: "2026-08-16",
-        capturedAt,
-        accountId: ctx.hdfcId,
-        personId: ctx.rahulId,
-        amountPaise: 200_000,
-        allocations: [{ claimId: claim.id, amountPaise: 150_000 }],
-        commit: true,
-      }),
-    ).toThrow(DomainError);
-    expect(tableCounts(ctx.handles, ctx.workspaceId)).toEqual(before);
+    receiveSettlement(ctx.handles, { workspaceId: ctx.workspaceId }, {
+      occurredOn: "2026-08-16",
+      capturedAt,
+      accountId: ctx.hdfcId,
+      personId: ctx.rahulId,
+      amountPaise: 200_000,
+      allocations: [{ claimId: claim.id, amountPaise: 150_000 }],
+      commit: true,
+    });
+    const snapshot = loadSnapshot(ctx.handles, ctx.workspaceId);
+    expect(snapshot.claims[0]?.openAmountPaise).toBe(50_000);
+    expect(snapshot.surplusCases).toHaveLength(1);
+    expect(snapshot.surplusCases[0]?.amountPaise).toBe(50_000);
+    expect(snapshot.surplusCases[0]?.status).toBe("pending");
   });
 
   it("I — incoming settlement cannot allocate to a payable", () => {
@@ -428,7 +429,7 @@ describe("stage 10 settlements and claim allocation", () => {
     expect(activity?.allocations[0]?.amountPaise).toBe(180_000);
   });
 
-  it("M — card-share receipt does not change card liability or create a reservation", () => {
+  it("M — card-share receipt does not change card liability", () => {
     const ctx = setup();
     contexts.push(ctx.handles);
     recordSplit(ctx.handles, { workspaceId: ctx.workspaceId }, {
@@ -464,10 +465,9 @@ describe("stage 10 settlements and claim allocation", () => {
     expect(after.claims[0]?.openAmountPaise).toBe(0);
     expect(liabilityAfter).toBe(liabilityBefore);
     expect(after.billingCycles[0]?.ledgerRemainingPaise).toBe(cycle.ledgerRemainingPaise);
-    expect(after.settlementAllocations[0]?.createsReservation).toBe(false);
-    expect(
-      ctx.handles.sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='reservations'").get(),
-    ).toBeUndefined();
+    expect(after.settlementAllocations[0]?.createsReservation).toBe(true);
+    expect(after.reservations).toHaveLength(1);
+    expect(after.reservations[0]?.remainingPaise).toBe(250_000);
   });
 
   it("N — person net updates from incoming and outgoing settlements", () => {
@@ -565,7 +565,7 @@ describe("stage 10 settlements and claim allocation", () => {
         accountId: ctx.hdfcId,
         personId: ctx.rahulId,
         amountPaise: 100_000,
-        allocations: [{ claimId: claim.id, amountPaise: 80_000 }],
+        allocations: [{ claimId: claim.id, amountPaise: 120_000 }],
         commit: true,
       }),
     ).toThrow(DomainError);

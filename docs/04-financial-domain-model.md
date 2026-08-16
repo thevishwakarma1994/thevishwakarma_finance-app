@@ -476,6 +476,7 @@ If two lines would represent the same rupee (e.g. subtract card remaining **and*
 | Refund | `refund` |
 | I borrowed | `borrow` |
 | I paid someone | `settlement_out` |
+| Surplus resolution (internal audit) | `surplus_resolution` |
 
 ### 3.3 Posting templates and conservation
 
@@ -499,6 +500,7 @@ Validate each event with the identity for its `meaning`. Amounts compared as abs
 | `pay_obligation` (card) | account decrease = card liability decrease |
 | `pay_obligation` (bill / EMI with no interest split) | account decrease = instance remaining decrease (EMI also reduces loan outstanding by the same amount in V1) |
 | `refund` | reverse the original meaning’s conservation for the refunded user share / claim / card |
+| `surplus_resolution` | no account cash movement, no income, no expense, no card liability change (holds/claims only) |
 | investment move (`transfer` onto `kind=investment`, or equivalent) | bank/cash decrease = investment account increase; expense = 0 |
 
 Reservations are holds, not postings. They do not participate in conservation identities. `settlement_in` that creates a hold still conserves **account increase = claim decrease**; the hold only restricts availability.
@@ -1203,6 +1205,8 @@ Plain-language explanation required, e.g. “Rahul sent ₹11,000 toward a ₹10
 | `treat_as_mine_correction` | **Guarded.** Only if person link is missing or user asserts mis-tag. Requires confirmation copy: “This will treat ₹X as your money.” Audit trail |
 
 There is no default “just keep it.” Closing a cycle with pending SurplusCase is **not allowed** (`closed` requires surplus resolved).
+
+Resolution is a later explicit decision. `resolveSurplus` writes a new `surplus_resolution` FinancialEvent (internal audit meaning: not income, not personal spending, not account cash movement unless a later supported resolution genuinely requires one). `SurplusCase.eventId` stays the creating event. `resolvedByEventId`, ReservationLedger rows from the resolution, and any new claim from `convert_to_payable` reference that resolution event. The originating settlement/card event is not rewritten.
 
 `convert_to_payable` increases STS because the cash is no longer purpose-bound **and** the user has acknowledged a debt. That is a real economic state, not a hidden gift.
 

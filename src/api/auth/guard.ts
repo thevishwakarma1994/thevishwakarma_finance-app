@@ -109,6 +109,7 @@ export function mapError(
   if (error instanceof DomainError) {
     const status =
       error.code === "insufficient_balance" ||
+      error.code === "insufficient_available" ||
       error.code === "duplicate_category" ||
       error.code === "payment_exceeds_outstanding"
         ? 409
@@ -117,7 +118,9 @@ export function mapError(
             error.code === "card_not_found" ||
             error.code === "cycle_not_found" ||
             error.code === "person_not_found" ||
-            error.code === "claim_not_found"
+            error.code === "claim_not_found" ||
+            error.code === "surplus_not_found" ||
+            error.code === "reservation_not_found"
           ? 404
           : 400;
     return { status, body: { error: error.code, message: error.message } };
