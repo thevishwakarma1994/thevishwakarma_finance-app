@@ -4,7 +4,7 @@ import { paise } from "../domain/money/paise.js";
 import { transferMoney as transferMoneyDomain } from "../domain/commands/transferMoney.js";
 import { loadSnapshot } from "../db/loadSnapshot.js";
 import { persistBatch } from "../db/persistBatch.js";
-import type { SqliteHandles } from "../db/client.js";
+import type { DbHandles } from "../db/client.js";
 import type { WorkspaceContext } from "./context.js";
 import { assertWorkspaceOwned } from "./ownership.js";
 
@@ -19,17 +19,17 @@ const inputSchema = z.object({
   commit: z.boolean().default(true),
 });
 
-export function transferMoney(
-  handles: SqliteHandles,
+export async function transferMoney(
+  handles: DbHandles,
   context: WorkspaceContext,
   raw: unknown,
 ) {
   const input = inputSchema.parse(raw);
-  assertWorkspaceOwned(handles, context.workspaceId, [
+  await assertWorkspaceOwned(handles, context.workspaceId, [
     { type: "account", id: input.fromAccountId },
     { type: "account", id: input.toAccountId },
   ]);
-  const snapshot = loadSnapshot(handles, context.workspaceId);
+  const snapshot = await loadSnapshot(handles, context.workspaceId);
   const result = transferMoneyDomain(
     {
       occurredOn: isoDate(input.occurredOn),
@@ -44,7 +44,7 @@ export function transferMoney(
   );
 
   if (input.commit) {
-    persistBatch(handles, context.workspaceId, result.batch);
+    await persistBatch(handles, context.workspaceId, result.batch);
   }
 
   return {

@@ -4,7 +4,7 @@ import { paise } from "../domain/money/paise.js";
 import { applyOpening as applyOpeningDomain } from "../domain/commands/applyOpening.js";
 import { loadSnapshot } from "../db/loadSnapshot.js";
 import { persistBatch } from "../db/persistBatch.js";
-import type { SqliteHandles } from "../db/client.js";
+import type { DbHandles } from "../db/client.js";
 import type { WorkspaceContext } from "./context.js";
 import { assertWorkspaceOwned } from "./ownership.js";
 
@@ -26,16 +26,16 @@ const personSchema = z.object({
 
 const inputSchema = z.union([accountSchema, personSchema]);
 
-export function applyOpening(
-  handles: SqliteHandles,
+export async function applyOpening(
+  handles: DbHandles,
   context: WorkspaceContext,
   raw: unknown,
 ) {
   const input = inputSchema.parse(raw);
-  assertWorkspaceOwned(handles, context.workspaceId, [
+  await assertWorkspaceOwned(handles, context.workspaceId, [
     "personId" in input ? { type: "person", id: input.personId } : { type: "account", id: input.accountId },
   ]);
-  const snapshot = loadSnapshot(handles, context.workspaceId);
+  const snapshot = await loadSnapshot(handles, context.workspaceId);
   const result =
     "personId" in input
       ? applyOpeningDomain(
@@ -58,7 +58,7 @@ export function applyOpening(
         );
 
   if (input.commit) {
-    persistBatch(handles, context.workspaceId, result.batch);
+    await persistBatch(handles, context.workspaceId, result.batch);
   }
 
   return {

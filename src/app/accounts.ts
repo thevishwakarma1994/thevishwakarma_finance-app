@@ -1,13 +1,11 @@
 import { z } from "zod";
-import { eq } from "drizzle-orm";
 import { newId } from "../domain/ids.js";
 import { utcNowIso } from "../domain/calendar/kolkata.js";
 import { DomainError } from "../domain/ledger/types.js";
-import { accounts } from "../db/schema.js";
-import { withTransaction } from "../db/tx.js";
 import { applyOpening } from "./applyOpening.js";
-import type { SqliteHandles } from "../db/client.js";
+import type { DbHandles } from "../db/client.js";
 import type { WorkspaceContext } from "./context.js";
+import { findAccount, insertAccount, updateAccountRow } from "../db/catalog.js";
 
 const createSchema = z.object({
   displayName: z.string().trim().min(1),
@@ -25,54 +23,41 @@ const updateSchema = z.object({
   status: z.enum(["active", "archived"]).optional(),
 });
 
-function requireAccount(handles: SqliteHandles, workspaceId: string, accountId: string) {
-  const row = handles.db.select().from(accounts).where(eq(accounts.id, accountId)).get();
+async function requireAccount(handles: DbHandles, workspaceId: string, accountId: string) {
+  const row = await findAccount(handles, accountId);
   if (!row || row.workspaceId !== workspaceId) {
     throw new DomainError("account_not_found", "Account not found");
   }
   return row;
 }
 
-function clearPrimarySalary(handles: SqliteHandles, workspaceId: string): void {
-  const rows = handles.db.select().from(accounts).where(eq(accounts.workspaceId, workspaceId)).all();
-  for (const row of rows) {
-    if (row.isPrimarySalary === 1) {
-      handles.db.update(accounts).set({ isPrimarySalary: 0 }).where(eq(accounts.id, row.id)).run();
-    }
-  }
-}
-
-export function createAccount(
-  handles: SqliteHandles,
+export async function createAccount(
+  handles: DbHandles,
   context: WorkspaceContext,
   raw: unknown,
 ) {
   const input = createSchema.parse(raw);
   const id = newId();
-  withTransaction(handles, () => {
-    if (input.isPrimarySalary) {
-      clearPrimarySalary(handles, context.workspaceId);
-    }
-    handles.db
-      .insert(accounts)
-      .values({
-        id,
-        workspaceId: context.workspaceId,
-        kind: input.kind,
-        displayName: input.displayName,
-        mask: input.mask || null,
-        isPrimarySalary: input.isPrimarySalary ? 1 : 0,
-        status: "active",
-        createdAt: utcNowIso(),
-      })
-      .run();
-  });
+  await insertAccount(
+    handles,
+    {
+      id,
+      workspaceId: context.workspaceId,
+      kind: input.kind,
+      displayName: input.displayName,
+      mask: input.mask || null,
+      isPrimarySalary: input.isPrimarySalary ? 1 : 0,
+      status: "active",
+      createdAt: utcNowIso(),
+    },
+    Boolean(input.isPrimarySalary),
+  );
 
   if (input.openingBalancePaise && input.openingBalancePaise > 0) {
     if (!input.openingEffectiveOn) {
       throw new DomainError("invalid_opening", "Opening date is required when setting an opening balance");
     }
-    applyOpening(handles, context, {
+    await applyOpening(handles, context, {
       accountId: id,
       effectiveOn: input.openingEffectiveOn,
       balancePaise: input.openingBalancePaise,
@@ -83,33 +68,32 @@ export function createAccount(
   return { id };
 }
 
-export function updateAccount(
-  handles: SqliteHandles,
+export async function updateAccount(
+  handles: DbHandles,
   context: WorkspaceContext,
   raw: unknown,
 ) {
   const input = updateSchema.parse(raw);
-  requireAccount(handles, context.workspaceId, input.accountId);
+  await requireAccount(handles, context.workspaceId, input.accountId);
 
-  withTransaction(handles, () => {
-    if (input.isPrimarySalary) {
-      clearPrimarySalary(handles, context.workspaceId);
-    }
-    const patch: {
-      displayName?: string;
-      isPrimarySalary?: number;
-      status?: "active" | "archived";
-    } = {};
-    if (input.displayName !== undefined) patch.displayName = input.displayName;
-    if (input.isPrimarySalary !== undefined) patch.isPrimarySalary = input.isPrimarySalary ? 1 : 0;
-    if (input.status !== undefined) {
-      patch.status = input.status;
-      if (input.status === "archived") patch.isPrimarySalary = 0;
-    }
-    if (Object.keys(patch).length > 0) {
-      handles.db.update(accounts).set(patch).where(eq(accounts.id, input.accountId)).run();
-    }
-  });
+  const patch: {
+    displayName?: string;
+    isPrimarySalary?: number;
+    status?: "active" | "archived";
+  } = {};
+  if (input.displayName !== undefined) patch.displayName = input.displayName;
+  if (input.isPrimarySalary !== undefined) patch.isPrimarySalary = input.isPrimarySalary ? 1 : 0;
+  if (input.status !== undefined) {
+    patch.status = input.status;
+    if (input.status === "archived") patch.isPrimarySalary = 0;
+  }
+  await updateAccountRow(
+    handles,
+    input.accountId,
+    context.workspaceId,
+    patch,
+    Boolean(input.isPrimarySalary),
+  );
 
   return { id: input.accountId };
 }

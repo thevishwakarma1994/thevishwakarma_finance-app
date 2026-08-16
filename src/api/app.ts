@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { secureHeaders } from "hono/secure-headers";
-import type { SqliteHandles } from "../db/client.js";
+import type { DbHandles } from "../db/client.js";
 import { authRoutes } from "./auth/routes.js";
 import { requireFirebaseAuth, requireOrigin, type VerifyIdToken } from "./auth/guard.js";
 import { verifyFirebaseIdToken } from "./auth/firebaseAdmin.js";
@@ -10,7 +10,7 @@ import { readRoutes } from "./routes/reads.js";
 
 export type AppEnv = {
   Variables: {
-    handles: SqliteHandles;
+    handles: DbHandles;
     workspaceId: string;
     userId: string;
     verifyIdToken: VerifyIdToken;
@@ -18,7 +18,7 @@ export type AppEnv = {
 };
 
 export function createApp(
-  handles: SqliteHandles,
+  handles: DbHandles,
   options: { verifyIdToken?: VerifyIdToken } = {},
 ) {
   const app = new Hono<AppEnv>();

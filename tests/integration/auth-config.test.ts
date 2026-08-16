@@ -21,7 +21,7 @@ afterEach(() => {
 });
 
 describe("Firebase Admin production config", () => {
-  it("allows missing admin credentials outside production", () => {
+  it("allows missing admin credentials outside production", async () => {
     process.env.NODE_ENV = "development";
     delete process.env.FIREBASE_PROJECT_ID;
     delete process.env.GOOGLE_APPLICATION_CREDENTIALS;
@@ -29,14 +29,14 @@ describe("Firebase Admin production config", () => {
     expect(() => assertFirebaseAdminConfig()).not.toThrow();
   });
 
-  it("refuses startup when production project id is missing", () => {
+  it("refuses startup when production project id is missing", async () => {
     process.env.NODE_ENV = "production";
     delete process.env.FIREBASE_PROJECT_ID;
     process.env.GOOGLE_APPLICATION_CREDENTIALS = "/tmp/unused.json";
     expect(() => assertFirebaseAdminConfig()).toThrow(/FIREBASE_PROJECT_ID/);
   });
 
-  it("refuses startup when production admin credentials are missing", () => {
+  it("refuses startup when production admin credentials are missing", async () => {
     process.env.NODE_ENV = "production";
     process.env.FIREBASE_PROJECT_ID = "thevishwakarmafinanceapp";
     delete process.env.GOOGLE_APPLICATION_CREDENTIALS;
@@ -46,7 +46,7 @@ describe("Firebase Admin production config", () => {
     expect(() => assertFirebaseAdminConfig()).toThrow(/Firebase Admin credentials/);
   });
 
-  it("allows production when a service-account path is configured", () => {
+  it("allows production when a service-account path is configured", async () => {
     process.env.NODE_ENV = "production";
     process.env.FIREBASE_PROJECT_ID = "thevishwakarmafinanceapp";
     process.env.GOOGLE_APPLICATION_CREDENTIALS = "/tmp/service-account.json";

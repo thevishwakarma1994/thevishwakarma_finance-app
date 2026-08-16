@@ -14,12 +14,12 @@ import { applyOpening } from "../../src/app/applyOpening.js";
 import { recordIncome } from "../../src/app/recordIncome.js";
 import { recordExpense } from "../../src/app/recordExpense.js";
 
-function setup() {
+async function setup() {
   const handles = openMemoryDatabase();
-  applyMigrations(handles);
-  const workspaceId = getSoleWorkspaceId(handles);
-  const accounts = listAccounts(handles, workspaceId);
-  const snapshot = loadSnapshot(handles, workspaceId);
+  await applyMigrations(handles);
+  const workspaceId = await getSoleWorkspaceId(handles);
+  const accounts = await listAccounts(handles, workspaceId);
+  const snapshot = await loadSnapshot(handles, workspaceId);
   const hdfc = accounts.find((account) => account.displayName === "HDFC");
   if (!hdfc) throw new Error("Expected seeded HDFC account");
   const grocery = snapshot.categories.find((category) => category.name === "Grocery");
@@ -51,16 +51,16 @@ function tableCounts(handles: SqliteHandles, workspaceId: string) {
   };
 }
 
-function incomeTotal(handles: SqliteHandles, workspaceId: string): number {
-  return loadSnapshot(handles, workspaceId)
+async function incomeTotal(handles: SqliteHandles, workspaceId: string): Promise<number> {
+  return (await loadSnapshot(handles, workspaceId))
     .postings.filter(
       (posting) => posting.pnl === "income_salary" || posting.pnl === "income_other",
     )
     .reduce((sum, posting) => sum + posting.amountPaise, 0);
 }
 
-function accountBalance(handles: SqliteHandles, workspaceId: string, accountId: string): number {
-  const account = loadSnapshot(handles, workspaceId).accounts.find((item) => item.id === accountId);
+async function accountBalance(handles: SqliteHandles, workspaceId: string, accountId: string): Promise<number> {
+  const account = (await loadSnapshot(handles, workspaceId)).accounts.find((item) => item.id === accountId);
   if (!account) throw new Error("Account missing");
   return account.balancePaise;
 }
@@ -73,31 +73,31 @@ describe("opening, income, and expense persistence", () => {
     handles?.sqlite.close();
   });
 
-  it("sets opening ₹50,000 without creating income", () => {
-    const ctx = setup();
+  it("sets opening ₹50,000 without creating income", async () => {
+    const ctx = await setup();
     handles = ctx.handles;
-    applyOpening(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    await applyOpening(ctx.handles, { workspaceId: ctx.workspaceId }, {
       accountId: ctx.hdfcId,
       effectiveOn: "2026-08-01",
       balancePaise: 5_000_000,
       commit: true,
     });
-    expect(accountBalance(ctx.handles, ctx.workspaceId, ctx.hdfcId)).toBe(5_000_000);
-    expect(incomeTotal(ctx.handles, ctx.workspaceId)).toBe(0);
-    expect(listActivity(ctx.handles, ctx.workspaceId)).toHaveLength(0);
+    expect(await accountBalance(ctx.handles, ctx.workspaceId, ctx.hdfcId)).toBe(5_000_000);
+    expect(await incomeTotal(ctx.handles, ctx.workspaceId)).toBe(0);
+    expect(await listActivity(ctx.handles, ctx.workspaceId)).toHaveLength(0);
   });
 
-  it("records ₹79,200 salary into HDFC", () => {
-    const ctx = setup();
+  it("records ₹79,200 salary into HDFC", async () => {
+    const ctx = await setup();
     handles = ctx.handles;
-    applyOpening(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    await applyOpening(ctx.handles, { workspaceId: ctx.workspaceId }, {
       accountId: ctx.hdfcId,
       effectiveOn: "2026-08-01",
       balancePaise: 5_000_000,
       commit: true,
     });
-    const before = accountBalance(ctx.handles, ctx.workspaceId, ctx.hdfcId);
-    recordIncome(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    const before = await accountBalance(ctx.handles, ctx.workspaceId, ctx.hdfcId);
+    await recordIncome(ctx.handles, { workspaceId: ctx.workspaceId }, {
       occurredOn: "2026-08-05",
       capturedAt,
       amountPaise: 7_920_000,
@@ -105,44 +105,44 @@ describe("opening, income, and expense persistence", () => {
       kind: "salary",
       commit: true,
     });
-    expect(accountBalance(ctx.handles, ctx.workspaceId, ctx.hdfcId) - before).toBe(7_920_000);
-    expect(incomeTotal(ctx.handles, ctx.workspaceId)).toBe(7_920_000);
+    expect((await accountBalance(ctx.handles, ctx.workspaceId, ctx.hdfcId)) - before).toBe(7_920_000);
+    expect(await incomeTotal(ctx.handles, ctx.workspaceId)).toBe(7_920_000);
   });
 
-  it("records ₹1,200 grocery as personal spending", () => {
-    const ctx = setup();
+  it("records ₹1,200 grocery as personal spending", async () => {
+    const ctx = await setup();
     handles = ctx.handles;
-    applyOpening(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    await applyOpening(ctx.handles, { workspaceId: ctx.workspaceId }, {
       accountId: ctx.hdfcId,
       effectiveOn: "2026-08-01",
       balancePaise: 5_000_000,
       commit: true,
     });
-    const before = accountBalance(ctx.handles, ctx.workspaceId, ctx.hdfcId);
-    recordExpense(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    const before = await accountBalance(ctx.handles, ctx.workspaceId, ctx.hdfcId);
+    await recordExpense(ctx.handles, { workspaceId: ctx.workspaceId }, {
       occurredOn: "2026-08-10",
       capturedAt,
       accountId: ctx.hdfcId,
       allocations: [{ categoryId: ctx.groceryId, amountPaise: 120_000 }],
       commit: true,
     });
-    expect(before - accountBalance(ctx.handles, ctx.workspaceId, ctx.hdfcId)).toBe(120_000);
-    expect(currentMonthSpend(ctx.handles, ctx.workspaceId, isoDate("2026-08-16")).spentPaise).toBe(
+    expect(before - (await accountBalance(ctx.handles, ctx.workspaceId, ctx.hdfcId))).toBe(120_000);
+    expect((await currentMonthSpend(ctx.handles, ctx.workspaceId, isoDate("2026-08-16"))).spentPaise).toBe(
       120_000,
     );
   });
 
-  it("conserves a ₹3,000 payment across two expense categories", () => {
-    const ctx = setup();
+  it("conserves a ₹3,000 payment across two expense categories", async () => {
+    const ctx = await setup();
     handles = ctx.handles;
-    applyOpening(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    await applyOpening(ctx.handles, { workspaceId: ctx.workspaceId }, {
       accountId: ctx.hdfcId,
       effectiveOn: "2026-08-01",
       balancePaise: 5_000_000,
       commit: true,
     });
-    const before = accountBalance(ctx.handles, ctx.workspaceId, ctx.hdfcId);
-    recordExpense(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    const before = await accountBalance(ctx.handles, ctx.workspaceId, ctx.hdfcId);
+    await recordExpense(ctx.handles, { workspaceId: ctx.workspaceId }, {
       occurredOn: "2026-08-12",
       capturedAt,
       accountId: ctx.hdfcId,
@@ -152,7 +152,7 @@ describe("opening, income, and expense persistence", () => {
       ],
       commit: true,
     });
-    const snapshot = loadSnapshot(ctx.handles, ctx.workspaceId);
+    const snapshot = await loadSnapshot(ctx.handles, ctx.workspaceId);
     const event = snapshot.events.find((item) => item.meaning === "spend_account");
     expect(event).toBeTruthy();
     const expensePostings = snapshot.postings.filter(
@@ -164,22 +164,22 @@ describe("opening, income, and expense persistence", () => {
     expect(expensePostings).toHaveLength(2);
     expect(accountDecrease).toBe(300_000);
     expect(expensePostings.reduce((sum, posting) => sum + posting.amountPaise, 0)).toBe(300_000);
-    expect(before - accountBalance(ctx.handles, ctx.workspaceId, ctx.hdfcId)).toBe(300_000);
+    expect(before - (await accountBalance(ctx.handles, ctx.workspaceId, ctx.hdfcId))).toBe(300_000);
   });
 
-  it("does not write events or postings when conservation fails", () => {
-    const ctx = setup();
+  it("does not write events or postings when conservation fails", async () => {
+    const ctx = await setup();
     handles = ctx.handles;
-    applyOpening(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    await applyOpening(ctx.handles, { workspaceId: ctx.workspaceId }, {
       accountId: ctx.hdfcId,
       effectiveOn: "2026-08-01",
       balancePaise: 5_000_000,
       commit: true,
     });
     const beforeCounts = tableCounts(ctx.handles, ctx.workspaceId);
-    const beforeBalance = accountBalance(ctx.handles, ctx.workspaceId, ctx.hdfcId);
+    const beforeBalance = await accountBalance(ctx.handles, ctx.workspaceId, ctx.hdfcId);
     const eventId = newId();
-    expect(() =>
+    await expect(
       persistBatch(ctx.handles, ctx.workspaceId, {
         events: [
           {
@@ -229,22 +229,22 @@ describe("opening, income, and expense persistence", () => {
         ],
         openings: [],
       }),
-    ).toThrow(DomainError);
+    ).rejects.toThrow(DomainError);
     expect(tableCounts(ctx.handles, ctx.workspaceId)).toEqual(beforeCounts);
-    expect(accountBalance(ctx.handles, ctx.workspaceId, ctx.hdfcId)).toBe(beforeBalance);
+    expect(await accountBalance(ctx.handles, ctx.workspaceId, ctx.hdfcId)).toBe(beforeBalance);
   });
 
-  it("rejects an expense that exceeds the currently available account balance", () => {
-    const ctx = setup();
+  it("rejects an expense that exceeds the currently available account balance", async () => {
+    const ctx = await setup();
     handles = ctx.handles;
-    applyOpening(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    await applyOpening(ctx.handles, { workspaceId: ctx.workspaceId }, {
       accountId: ctx.hdfcId,
       effectiveOn: "2026-08-01",
       balancePaise: 5_000_000,
       commit: true,
     });
     const beforeCounts = tableCounts(ctx.handles, ctx.workspaceId);
-    expect(() =>
+    await expect(
       recordExpense(ctx.handles, { workspaceId: ctx.workspaceId }, {
         occurredOn: "2026-08-10",
         capturedAt,
@@ -252,8 +252,8 @@ describe("opening, income, and expense persistence", () => {
         allocations: [{ categoryId: ctx.groceryId, amountPaise: 5_000_001 }],
         commit: true,
       }),
-    ).toThrow(/exceeds the money currently in the account/);
+    ).rejects.toThrow(/exceeds the money currently in the account/);
     expect(tableCounts(ctx.handles, ctx.workspaceId)).toEqual(beforeCounts);
-    expect(accountBalance(ctx.handles, ctx.workspaceId, ctx.hdfcId)).toBe(5_000_000);
+    expect(await accountBalance(ctx.handles, ctx.workspaceId, ctx.hdfcId)).toBe(5_000_000);
   });
 });

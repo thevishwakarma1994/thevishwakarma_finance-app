@@ -7,7 +7,7 @@ import {
   todayKolkata,
 } from "../domain/calendar/kolkata.js";
 import { formatCardLabel } from "../domain/cycle/lifecycle.js";
-import { DomainError, type ClaimDirection, type LedgerBillingCycle } from "../domain/ledger/types.js";
+import { DomainError, type ClaimDirection, type LedgerBillingCycle, type LedgerSnapshot } from "../domain/ledger/types.js";
 import { personPosition } from "../domain/people/position.js";
 import { suggestAllocations, suggestableClaimsFor } from "../domain/commands/suggestAllocations.js";
 import { claimLabel } from "../domain/commands/settle.js";
@@ -18,11 +18,12 @@ import { cycleCardLabel } from "../domain/reservations/create.js";
 import { reservedTowardCycle } from "../domain/reservations/derive.js";
 import { loadSnapshot } from "./loadSnapshot.js";
 import { loadCardRule } from "./config.js";
-import { categories, financialEvents, postings } from "./schema.js";
-import type { SqliteHandles } from "./client.js";
+import type { DbHandles } from "./handles.js";
+import { anyDb, queryAll, queryGet, tables } from "./exec.js"; 
+import { fromStoredPaise } from "./storedPaise.js"; 
 
-export function listAccounts(handles: SqliteHandles, workspaceId: string) {
-  const snapshot = loadSnapshot(handles, workspaceId);
+export async function listAccounts(handles: DbHandles, workspaceId: string) {
+  const snapshot = await loadSnapshot(handles, workspaceId);
   return snapshot.accounts
     .filter((account) => account.status === "active")
     .map((account) => {
@@ -70,12 +71,15 @@ export function listAccounts(handles: SqliteHandles, workspaceId: string) {
     });
 }
 
-export function listCategories(handles: SqliteHandles, workspaceId: string, includeArchived = false) {
-  return handles.db
-    .select()
-    .from(categories)
-    .where(eq(categories.workspaceId, workspaceId))
-    .all()
+export async function listCategories(handles: DbHandles, workspaceId: string, includeArchived = false) {
+  const t = tables(handles);
+  const all = await queryAll<{
+    id: string;
+    name: string;
+    parentId: string | null;
+    archivedAt: string | null;
+  }>(handles, anyDb(handles).select().from(t.categories).where(eq(t.categories.workspaceId, workspaceId)));
+  return all
     .filter((row) => includeArchived || !row.archivedAt)
     .map((row) => ({
       id: row.id,
@@ -90,12 +94,12 @@ export type ActivityFilter = {
   month?: string;
 };
 
-export function listActivity(
-  handles: SqliteHandles,
+export async function listActivity(
+  handles: DbHandles,
   workspaceId: string,
   filter: ActivityFilter = {},
 ) {
-  const snapshot = loadSnapshot(handles, workspaceId);
+  const snapshot = await loadSnapshot(handles, workspaceId);
   const accountName = new Map(snapshot.accounts.map((account) => [account.id, account.displayName]));
   const categoryName = new Map(snapshot.categories.map((category) => [category.id, category.name]));
 
@@ -276,46 +280,49 @@ export function listActivity(
     });
 }
 
-function expenseTotalForMonth(
-  handles: SqliteHandles,
+async function expenseTotalForMonth(
+  handles: DbHandles,
   workspaceId: string,
   start: string,
   end: string,
-): number {
-  const row = handles.db
-    .select({
-      total: sql<number>`coalesce(sum(${postings.amountPaise}), 0)`,
-    })
-    .from(postings)
-    .innerJoin(financialEvents, eq(postings.eventId, financialEvents.id))
-    .where(
-      and(
-        eq(postings.workspaceId, workspaceId),
-        eq(postings.pnl, "expense"),
-        gte(financialEvents.occurredOn, start),
-        lte(financialEvents.occurredOn, end),
+): Promise<number> {
+  const t = tables(handles);
+  const row = await queryGet<{ total: number | string }>(
+    handles,
+    anyDb(handles)
+      .select({
+        total: sql<number>`coalesce(sum(${t.postings.amountPaise}), 0)`,
+      })
+      .from(t.postings)
+      .innerJoin(t.financialEvents, eq(t.postings.eventId, t.financialEvents.id))
+      .where(
+        and(
+          eq(t.postings.workspaceId, workspaceId),
+          eq(t.postings.pnl, "expense"),
+          gte(t.financialEvents.occurredOn, start),
+          lte(t.financialEvents.occurredOn, end),
+        ),
       ),
-    )
-    .get();
-  return row?.total ?? 0;
+  );
+  return fromStoredPaise(row?.total ?? 0);
 }
 
-export function currentMonthSpend(handles: SqliteHandles, workspaceId: string, asOf = todayKolkata()) {
+export async function currentMonthSpend(handles: DbHandles, workspaceId: string, asOf = todayKolkata()) {
   const start = kolkataMonthStart(asOf);
   const end = kolkataMonthEnd(asOf);
   return {
     asOf,
     month: asOf.slice(0, 7),
-    spentPaise: paise(expenseTotalForMonth(handles, workspaceId, start, end)),
+    spentPaise: paise(await expenseTotalForMonth(handles, workspaceId, start, end)),
   };
 }
 
-export function monthReview(handles: SqliteHandles, workspaceId: string, asOf = todayKolkata()) {
+export async function monthReview(handles: DbHandles, workspaceId: string, asOf = todayKolkata()) {
   const start = kolkataMonthStart(asOf);
   const end = kolkataMonthEnd(asOf);
   const previousStart = kolkataMonthStart(kolkataAddMonths(start, -1));
   const previousEnd = kolkataMonthEnd(previousStart);
-  const snapshot = loadSnapshot(handles, workspaceId);
+  const snapshot = await loadSnapshot(handles, workspaceId);
   const categoryName = new Map(snapshot.categories.map((category) => [category.id, category.name]));
 
   const grouped = new Map<string, number>();
@@ -327,8 +334,8 @@ export function monthReview(handles: SqliteHandles, workspaceId: string, asOf = 
     grouped.set(posting.categoryId, (grouped.get(posting.categoryId) ?? 0) + posting.amountPaise);
   }
 
-  const spentPaise = expenseTotalForMonth(handles, workspaceId, start, end);
-  const previousSpentPaise = expenseTotalForMonth(
+  const spentPaise = await expenseTotalForMonth(handles, workspaceId, start, end);
+  const previousSpentPaise = await expenseTotalForMonth(
     handles,
     workspaceId,
     previousStart,
@@ -352,7 +359,7 @@ export function monthReview(handles: SqliteHandles, workspaceId: string, asOf = 
   };
 }
 
-function cycleView(cycle: LedgerBillingCycle, snapshot?: ReturnType<typeof loadSnapshot>) {
+function cycleView(cycle: LedgerBillingCycle, snapshot?: LedgerSnapshot) {
   const reservedTowardCyclePaise = snapshot
     ? reservedTowardCycle(snapshot.reservations, cycle.id)
     : paise(0);
@@ -381,51 +388,51 @@ function cycleView(cycle: LedgerBillingCycle, snapshot?: ReturnType<typeof loadS
   };
 }
 
-export function listCards(handles: SqliteHandles, workspaceId: string, asOf = todayKolkata()) {
-  const snapshot = loadSnapshot(handles, workspaceId, asOf);
-  return snapshot.creditCards
-    .filter((card) => card.status === "active")
-    .map((card) => {
-      const cycles = snapshot.billingCycles.filter((cycle) => cycle.creditCardId === card.id);
-      const outstandingPaise = sumPaise(cycles.map((cycle) => cycle.ledgerRemainingPaise));
-      const current =
-        cycles.find(
-          (cycle) => cycle.purchaseWindowStart <= asOf && asOf <= cycle.purchaseWindowEnd,
-        ) ?? null;
-      const nextDue = cycles
-        .filter((cycle) => cycle.ledgerRemainingPaise > 0 || cycle.statementRemainingPaise > 0)
-        .map((cycle) => cycle.actualDueOn ?? cycle.expectedDueOn)
-        .sort()[0];
-      const rule = loadCardRule(handles, workspaceId, card.id, asOf);
-      return {
-        id: card.id,
-        displayName: card.displayName,
-        issuer: card.issuer,
-        mask: card.mask,
-        label: formatCardLabel(card.displayName, card.mask),
-        creditLimitPaise: card.creditLimitPaise,
-        defaultPaymentAccountId: card.defaultPaymentAccountId,
-        defaultOwnerPersonId: card.defaultOwnerPersonId,
-        defaultOwnerName: card.defaultOwnerPersonId
-          ? (snapshot.people.find((person) => person.id === card.defaultOwnerPersonId)?.name ?? null)
-          : null,
-        status: card.status,
-        outstandingPaise,
-        currentCycle: current ? cycleView(current, snapshot) : null,
-        nextDueOn: nextDue ?? current?.actualDueOn ?? current?.expectedDueOn ?? null,
-        statementDay: rule.statementDay,
-        dueDaysAfterStatement: rule.dueDaysAfterStatement,
-      };
+export async function listCards(handles: DbHandles, workspaceId: string, asOf = todayKolkata()) {
+  const snapshot = await loadSnapshot(handles, workspaceId, asOf);
+  const cards = [];
+  for (const card of snapshot.creditCards.filter((item) => item.status === "active")) {
+    const cycles = snapshot.billingCycles.filter((cycle) => cycle.creditCardId === card.id);
+    const outstandingPaise = sumPaise(cycles.map((cycle) => cycle.ledgerRemainingPaise));
+    const current =
+      cycles.find(
+        (cycle) => cycle.purchaseWindowStart <= asOf && asOf <= cycle.purchaseWindowEnd,
+      ) ?? null;
+    const nextDue = cycles
+      .filter((cycle) => cycle.ledgerRemainingPaise > 0 || cycle.statementRemainingPaise > 0)
+      .map((cycle) => cycle.actualDueOn ?? cycle.expectedDueOn)
+      .sort()[0];
+    const rule = await loadCardRule(handles, workspaceId, card.id, asOf);
+    cards.push({
+      id: card.id,
+      displayName: card.displayName,
+      issuer: card.issuer,
+      mask: card.mask,
+      label: formatCardLabel(card.displayName, card.mask),
+      creditLimitPaise: card.creditLimitPaise,
+      defaultPaymentAccountId: card.defaultPaymentAccountId,
+      defaultOwnerPersonId: card.defaultOwnerPersonId,
+      defaultOwnerName: card.defaultOwnerPersonId
+        ? (snapshot.people.find((person) => person.id === card.defaultOwnerPersonId)?.name ?? null)
+        : null,
+      status: card.status,
+      outstandingPaise,
+      currentCycle: current ? cycleView(current, snapshot) : null,
+      nextDueOn: nextDue ?? current?.actualDueOn ?? current?.expectedDueOn ?? null,
+      statementDay: rule.statementDay,
+      dueDaysAfterStatement: rule.dueDaysAfterStatement,
     });
+  }
+  return cards;
 }
 
-export function cardDetail(
-  handles: SqliteHandles,
+export async function cardDetail(
+  handles: DbHandles,
   workspaceId: string,
   cardId: string,
   asOf = todayKolkata(),
 ) {
-  const snapshot = loadSnapshot(handles, workspaceId, asOf);
+  const snapshot = await loadSnapshot(handles, workspaceId, asOf);
   const card = snapshot.creditCards.find((item) => item.id === cardId);
   if (!card) {
     throw new DomainError("card_not_found", "Credit card not found");
@@ -434,8 +441,8 @@ export function cardDetail(
     .filter((cycle) => cycle.creditCardId === card.id)
     .sort((left, right) => right.expectedStatementOn.localeCompare(left.expectedStatementOn));
   const outstandingPaise = sumPaise(cycles.map((cycle) => cycle.ledgerRemainingPaise));
-  const rule = loadCardRule(handles, workspaceId, card.id, asOf);
-  const activity = listActivity(handles, workspaceId).filter((event) =>
+  const rule = await loadCardRule(handles, workspaceId, card.id, asOf);
+  const activity = (await listActivity(handles, workspaceId)).filter((event) =>
     snapshot.events.some(
       (item) => item.id === event.id && item.creditCardId === card.id,
     ),
@@ -461,13 +468,13 @@ export function cardDetail(
   };
 }
 
-export function cycleDetail(
-  handles: SqliteHandles,
+export async function cycleDetail(
+  handles: DbHandles,
   workspaceId: string,
   cycleId: string,
   asOf = todayKolkata(),
 ) {
-  const snapshot = loadSnapshot(handles, workspaceId, asOf);
+  const snapshot = await loadSnapshot(handles, workspaceId, asOf);
   const cycle = snapshot.billingCycles.find((item) => item.id === cycleId);
   if (!cycle) {
     throw new DomainError("cycle_not_found", "Billing cycle not found");
@@ -523,23 +530,23 @@ export function cycleDetail(
   };
 }
 
-export function comingUp(
-  handles: SqliteHandles,
+export async function comingUp(
+  handles: DbHandles,
   workspaceId: string,
   asOf = todayKolkata(),
   filter: ComingUpFilter = "all_open",
 ) {
-  const snapshot = loadSnapshot(handles, workspaceId, asOf);
+  const snapshot = await loadSnapshot(handles, workspaceId, asOf);
   const items = comingUpItems(snapshot, asOf);
   return filterComingUp(items, snapshot, asOf, filter);
 }
 
-export function comingUpPreview(handles: SqliteHandles, workspaceId: string, asOf = todayKolkata()) {
-  return comingUp(handles, workspaceId, asOf, "all_open").items.slice(0, 5);
+export async function comingUpPreview(handles: DbHandles, workspaceId: string, asOf = todayKolkata()) {
+  return (await comingUp(handles, workspaceId, asOf, "all_open")).items.slice(0, 5);
 }
 
-export function obligationDetail(handles: SqliteHandles, workspaceId: string, instanceId: string) {
-  const snapshot = loadSnapshot(handles, workspaceId);
+export async function obligationDetail(handles: DbHandles, workspaceId: string, instanceId: string) {
+  const snapshot = await loadSnapshot(handles, workspaceId);
   const instance = snapshot.obligationInstances.find((item) => item.id === instanceId);
   if (!instance) {
     throw new DomainError("obligation_not_found", "Obligation not found");
@@ -558,12 +565,12 @@ export function obligationDetail(handles: SqliteHandles, workspaceId: string, in
   };
 }
 
-export function comingCardPayments(
-  handles: SqliteHandles,
+export async function comingCardPayments(
+  handles: DbHandles,
   workspaceId: string,
   asOf = todayKolkata(),
 ) {
-  const snapshot = loadSnapshot(handles, workspaceId, asOf);
+  const snapshot = await loadSnapshot(handles, workspaceId, asOf);
   return snapshot.billingCycles
     .filter(
       (cycle) => cycle.ledgerRemainingPaise > 0 || cycle.statementRemainingPaise > 0 || cycle.mismatch,
@@ -587,8 +594,8 @@ export function comingCardPayments(
     .sort((left, right) => left.dueOn.localeCompare(right.dueOn));
 }
 
-export function listPeople(handles: SqliteHandles, workspaceId: string) {
-  const snapshot = loadSnapshot(handles, workspaceId);
+export async function listPeople(handles: DbHandles, workspaceId: string) {
+  const snapshot = await loadSnapshot(handles, workspaceId);
   return snapshot.people
     .map((person) => {
       const position = personPosition(snapshot.claims, person.id);
@@ -609,8 +616,8 @@ export function listPeople(handles: SqliteHandles, workspaceId: string) {
     .sort((left, right) => left.name.localeCompare(right.name));
 }
 
-export function personDetail(handles: SqliteHandles, workspaceId: string, personId: string) {
-  const snapshot = loadSnapshot(handles, workspaceId);
+export async function personDetail(handles: DbHandles, workspaceId: string, personId: string) {
+  const snapshot = await loadSnapshot(handles, workspaceId);
   const person = snapshot.people.find((item) => item.id === personId);
   if (!person) {
     throw new DomainError("person_not_found", "Person not found");
@@ -677,7 +684,7 @@ export function personDetail(handles: SqliteHandles, workspaceId: string, person
     const claim = snapshot.claims.find((item) => item.id === allocation.claimId);
     if (claim?.personId === person.id) eventIds.add(allocation.eventId);
   }
-  const history = listActivity(handles, workspaceId).filter((event) => eventIds.has(event.id));
+  const history = (await listActivity(handles, workspaceId)).filter((event) => eventIds.has(event.id));
   return {
     id: person.id,
     name: person.name,
@@ -695,14 +702,14 @@ export function personDetail(handles: SqliteHandles, workspaceId: string, person
   };
 }
 
-export function suggestPersonAllocations(
-  handles: SqliteHandles,
+export async function suggestPersonAllocations(
+  handles: DbHandles,
   workspaceId: string,
   personId: string,
   amountPaise: number,
   direction: ClaimDirection,
 ) {
-  const snapshot = loadSnapshot(handles, workspaceId);
+  const snapshot = await loadSnapshot(handles, workspaceId);
   const person = snapshot.people.find((item) => item.id === personId);
   if (!person) {
     throw new DomainError("person_not_found", "Person not found");
@@ -721,8 +728,8 @@ export function suggestPersonAllocations(
   };
 }
 
-export function listPendingSurplus(handles: SqliteHandles, workspaceId: string) {
-  const snapshot = loadSnapshot(handles, workspaceId);
+export async function listPendingSurplus(handles: DbHandles, workspaceId: string) {
+  const snapshot = await loadSnapshot(handles, workspaceId);
   return snapshot.surplusCases
     .filter((item) => item.status === "pending")
     .map((item) => {
@@ -783,16 +790,16 @@ export function listPendingSurplus(handles: SqliteHandles, workspaceId: string) 
     });
 }
 
-export function home(handles: SqliteHandles, workspaceId: string, asOf = todayKolkata()) {
-  const snapshot = loadSnapshot(handles, workspaceId, asOf);
+export async function home(handles: DbHandles, workspaceId: string, asOf = todayKolkata()) {
+  const snapshot = await loadSnapshot(handles, workspaceId, asOf);
   const sts = evaluateSafeToSpend(snapshot, asOf);
-  const month = currentMonthSpend(handles, workspaceId, asOf);
-  const previous = currentMonthSpend(handles, workspaceId, kolkataAddMonths(asOf, -1));
-  const people = listPeople(handles, workspaceId)
+  const month = await currentMonthSpend(handles, workspaceId, asOf);
+  const previous = await currentMonthSpend(handles, workspaceId, kolkataAddMonths(asOf, -1));
+  const people = (await listPeople(handles, workspaceId))
     .filter((person) => person.netPaise !== 0)
     .sort((left, right) => Math.abs(right.netPaise) - Math.abs(left.netPaise))
     .slice(0, 2);
-  const coming = comingUpPreview(handles, workspaceId, asOf);
+  const coming = await comingUpPreview(handles, workspaceId, asOf);
   const next = sts.fundingCycles.find((cycle) => cycle.id === sts.nextFundingCycleId);
   const active = sts.fundingCycles.find((cycle) => cycle.id === sts.activeFundingCycleId);
   return {

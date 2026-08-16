@@ -5,7 +5,7 @@ import { recordSplit as recordSplitDomain } from "../domain/commands/recordSplit
 import { loadSnapshot } from "../db/loadSnapshot.js";
 import { persistBatch } from "../db/persistBatch.js";
 import { loadCardRule } from "../db/config.js";
-import type { SqliteHandles } from "../db/client.js";
+import type { DbHandles } from "../db/client.js";
 import type { WorkspaceContext } from "./context.js";
 import { assertWorkspaceOwned } from "./ownership.js";
 
@@ -40,13 +40,13 @@ const inputSchema = z.object({
   commit: z.boolean().default(true),
 });
 
-export function recordSplit(
-  handles: SqliteHandles,
+export async function recordSplit(
+  handles: DbHandles,
   context: WorkspaceContext,
   raw: unknown,
 ) {
   const input = inputSchema.parse(raw);
-  assertWorkspaceOwned(handles, context.workspaceId, [
+  await assertWorkspaceOwned(handles, context.workspaceId, [
     input.source.type === "account"
       ? { type: "account" as const, id: input.source.accountId }
       : { type: "card" as const, id: input.source.creditCardId },
@@ -54,14 +54,14 @@ export function recordSplit(
     ...input.allocations.map((allocation) => ({ type: "category" as const, id: allocation.categoryId })),
   ]);
   const occurredOn = isoDate(input.occurredOn);
-  const snapshot = loadSnapshot(handles, context.workspaceId, occurredOn);
+  const snapshot = await loadSnapshot(handles, context.workspaceId, occurredOn);
   const source =
     input.source.type === "account"
       ? { type: "account" as const, accountId: input.source.accountId }
       : {
           type: "card" as const,
           creditCardId: input.source.creditCardId,
-          rule: loadCardRule(handles, context.workspaceId, input.source.creditCardId, occurredOn),
+          rule: await loadCardRule(handles, context.workspaceId, input.source.creditCardId, occurredOn),
         };
   const result = recordSplitDomain(
     {
@@ -86,7 +86,7 @@ export function recordSplit(
   );
 
   if (input.commit) {
-    persistBatch(handles, context.workspaceId, result.batch);
+    await persistBatch(handles, context.workspaceId, result.batch);
   }
 
   return {

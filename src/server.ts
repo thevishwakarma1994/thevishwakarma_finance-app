@@ -2,19 +2,21 @@ import fs from "node:fs";
 import path from "node:path";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
-import { openDatabase } from "./db/client.js";
+import { closeDatabase, openConfiguredDatabase } from "./db/client.js";
 import { applyMigrations } from "./db/migrate.js";
+import { describeDatabaseConfig, resolveDatabaseConfig } from "./db/env.js";
 import { createApp } from "./api/app.js";
 import { assertFirebaseAdminConfig } from "./api/auth/firebaseAdmin.js";
 
 assertFirebaseAdminConfig();
 
 const port = Number(process.env.PORT ?? 3000);
-const databasePath = process.env.DATABASE_PATH ?? "data/app.sqlite";
 const production = process.env.NODE_ENV === "production";
+const databaseConfig = resolveDatabaseConfig();
+console.log(describeDatabaseConfig(databaseConfig));
 
-const handles = openDatabase(databasePath);
-applyMigrations(handles);
+const handles = await openConfiguredDatabase(databaseConfig);
+await applyMigrations(handles);
 
 const app = createApp(handles);
 
@@ -38,6 +40,18 @@ if (production) {
   });
 }
 
-serve({ fetch: app.fetch, port, hostname: "127.0.0.1" }, (info) => {
+const server = serve({ fetch: app.fetch, port, hostname: "127.0.0.1" }, (info) => {
   console.log(`API listening on http://127.0.0.1:${info.port}`);
+});
+
+async function shutdown(): Promise<void> {
+  server.close();
+  await closeDatabase(handles);
+}
+
+process.on("SIGINT", () => {
+  void shutdown().finally(() => process.exit(0));
+});
+process.on("SIGTERM", () => {
+  void shutdown().finally(() => process.exit(0));
 });

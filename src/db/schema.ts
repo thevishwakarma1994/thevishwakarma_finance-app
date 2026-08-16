@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const workspaces = sqliteTable("workspaces", {
@@ -460,6 +461,9 @@ export const obligationInstances = sqliteTable(
     paidEventId: text("paid_event_id").references(() => financialEvents.id),
   },
   (table) => [
+    uniqueIndex("obligation_instances_template_due")
+      .on(table.workspaceId, table.templateId, table.dueOn)
+      .where(sql`${table.templateId} is not null`),
     index("obligation_instances_workspace_due_status").on(table.workspaceId, table.dueOn, table.status),
     index("obligation_instances_funding_cycle").on(table.fundingCycleId),
   ],

@@ -4,7 +4,7 @@ import { paise } from "../domain/money/paise.js";
 import { receiveSettlement as receiveSettlementDomain } from "../domain/commands/receiveSettlement.js";
 import { loadSnapshot } from "../db/loadSnapshot.js";
 import { persistBatch } from "../db/persistBatch.js";
-import type { SqliteHandles } from "../db/client.js";
+import type { DbHandles } from "../db/client.js";
 import type { WorkspaceContext } from "./context.js";
 import { assertWorkspaceOwned } from "./ownership.js";
 
@@ -27,19 +27,19 @@ const inputSchema = z.object({
   commit: z.boolean().default(true),
 });
 
-export function receiveSettlement(
-  handles: SqliteHandles,
+export async function receiveSettlement(
+  handles: DbHandles,
   context: WorkspaceContext,
   raw: unknown,
 ) {
   const input = inputSchema.parse(raw);
-  assertWorkspaceOwned(handles, context.workspaceId, [
+  await assertWorkspaceOwned(handles, context.workspaceId, [
     { type: "account", id: input.accountId },
     { type: "person", id: input.personId },
     ...input.allocations.map((allocation) => ({ type: "claim" as const, id: allocation.claimId })),
   ]);
   const occurredOn = isoDate(input.occurredOn);
-  const snapshot = loadSnapshot(handles, context.workspaceId, occurredOn);
+  const snapshot = await loadSnapshot(handles, context.workspaceId, occurredOn);
   const result = receiveSettlementDomain(
     {
       occurredOn,
@@ -58,7 +58,7 @@ export function receiveSettlement(
   );
 
   if (input.commit) {
-    persistBatch(handles, context.workspaceId, result.batch);
+    await persistBatch(handles, context.workspaceId, result.batch);
   }
 
   return {

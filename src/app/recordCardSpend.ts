@@ -5,7 +5,7 @@ import { recordCardSpend as recordCardSpendDomain } from "../domain/commands/rec
 import { loadSnapshot } from "../db/loadSnapshot.js";
 import { persistBatch } from "../db/persistBatch.js";
 import { loadCardRule } from "../db/config.js";
-import type { SqliteHandles } from "../db/client.js";
+import type { DbHandles } from "../db/client.js";
 import type { WorkspaceContext } from "./context.js";
 import { assertWorkspaceOwned } from "./ownership.js";
 
@@ -29,20 +29,20 @@ const inputSchema = z.object({
   commit: z.boolean().default(true),
 });
 
-export function recordCardSpend(
-  handles: SqliteHandles,
+export async function recordCardSpend(
+  handles: DbHandles,
   context: WorkspaceContext,
   raw: unknown,
 ) {
   const input = inputSchema.parse(raw);
-  assertWorkspaceOwned(handles, context.workspaceId, [
+  await assertWorkspaceOwned(handles, context.workspaceId, [
     { type: "card", id: input.creditCardId },
     ...input.allocations.map((allocation) => ({ type: "category" as const, id: allocation.categoryId })),
     input.ownerPersonId ? { type: "person" as const, id: input.ownerPersonId } : null,
   ]);
   const occurredOn = isoDate(input.occurredOn);
-  const snapshot = loadSnapshot(handles, context.workspaceId, occurredOn);
-  const rule = loadCardRule(handles, context.workspaceId, input.creditCardId, occurredOn);
+  const snapshot = await loadSnapshot(handles, context.workspaceId, occurredOn);
+  const rule = await loadCardRule(handles, context.workspaceId, input.creditCardId, occurredOn);
   const result = recordCardSpendDomain(
     {
       occurredOn,
@@ -63,7 +63,7 @@ export function recordCardSpend(
   );
 
   if (input.commit) {
-    persistBatch(handles, context.workspaceId, result.batch);
+    await persistBatch(handles, context.workspaceId, result.batch);
   }
 
   return {

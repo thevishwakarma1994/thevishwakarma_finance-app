@@ -1,8 +1,8 @@
 import { Hono } from "hono";
-import type { SqliteHandles } from "../../db/client.js";
+import type { DbHandles } from "../../db/client.js";
 
 type Env = {
-  Variables: { handles: SqliteHandles; workspaceId: string; userId: string };
+  Variables: { handles: DbHandles; workspaceId: string; userId: string };
 };
 
 export const authRoutes = new Hono<Env>();

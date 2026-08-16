@@ -18,21 +18,21 @@ import { createPerson, updatePerson } from "../../src/app/people.js";
 
 const capturedAt = "2026-08-16T10:00:00.000Z";
 
-function setup() {
+async function setup() {
   const handles = openMemoryDatabase();
-  applyMigrations(handles);
-  const workspaceId = getSoleWorkspaceId(handles);
-  const snapshot = loadSnapshot(handles, workspaceId);
+  await applyMigrations(handles);
+  const workspaceId = await getSoleWorkspaceId(handles);
+  const snapshot = await loadSnapshot(handles, workspaceId);
   const hdfc = snapshot.accounts.find((account) => account.displayName === "HDFC");
   const grocery = snapshot.categories.find((category) => category.name === "Grocery");
   if (!hdfc || !grocery) throw new Error("Expected seeded HDFC and Grocery");
-  applyOpening(handles, { workspaceId }, {
+  await applyOpening(handles, { workspaceId }, {
     accountId: hdfc.id,
     effectiveOn: "2026-08-01",
     balancePaise: 5_000_000,
     commit: true,
   });
-  const card = createCard(handles, { workspaceId }, {
+  const card = await createCard(handles, { workspaceId }, {
     displayName: "ICICI",
     issuer: "ICICI",
     mask: "8001",
@@ -40,8 +40,8 @@ function setup() {
     dueDaysAfterStatement: 18,
     defaultPaymentAccountId: hdfc.id,
   });
-  const rahul = createPerson(handles, { workspaceId }, { name: "Rahul" });
-  const amit = createPerson(handles, { workspaceId }, { name: "Amit" });
+  const rahul = await createPerson(handles, { workspaceId }, { name: "Rahul" });
+  const amit = await createPerson(handles, { workspaceId }, { name: "Amit" });
   return {
     handles,
     workspaceId,
@@ -82,8 +82,8 @@ function tableCounts(handles: SqliteHandles, workspaceId: string) {
   };
 }
 
-function balance(handles: SqliteHandles, workspaceId: string, accountId: string): number {
-  const account = loadSnapshot(handles, workspaceId).accounts.find((item) => item.id === accountId);
+async function balance(handles: SqliteHandles, workspaceId: string, accountId: string): Promise<number> {
+  const account = (await loadSnapshot(handles, workspaceId)).accounts.find((item) => item.id === accountId);
   if (!account) throw new Error("Account missing");
   return account.balancePaise;
 }
@@ -94,10 +94,10 @@ describe("stage 9 people claims and shared ownership", () => {
     for (const handles of contexts.splice(0)) handles.sqlite.close();
   });
 
-  it("A — bank split conserves account, expense, claim, and shares", () => {
-    const ctx = setup();
+  it("A — bank split conserves account, expense, claim, and shares", async () => {
+    const ctx = await setup();
     contexts.push(ctx.handles);
-    recordSplit(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    await recordSplit(ctx.handles, { workspaceId: ctx.workspaceId }, {
       occurredOn: "2026-08-16",
       capturedAt,
       amountPaise: 300_000,
@@ -108,20 +108,20 @@ describe("stage 9 people claims and shared ownership", () => {
       merchant: "Restaurant",
       commit: true,
     });
-    const snapshot = loadSnapshot(ctx.handles, ctx.workspaceId);
-    expect(balance(ctx.handles, ctx.workspaceId, ctx.hdfcId)).toBe(4_700_000);
+    const snapshot = await loadSnapshot(ctx.handles, ctx.workspaceId);
+    expect(await balance(ctx.handles, ctx.workspaceId, ctx.hdfcId)).toBe(4_700_000);
     expect(snapshot.postings.find((posting) => posting.pnl === "expense")?.amountPaise).toBe(120_000);
     expect(snapshot.claims[0]?.originalAmountPaise).toBe(180_000);
     expect(snapshot.claims[0]?.kind).toBe("shared_bill");
     expect(snapshot.eventShares.reduce((sum, share) => sum + share.amountPaise, 0)).toBe(300_000);
-    const activity = listActivity(ctx.handles, ctx.workspaceId).find((event) => event.meaning === "split");
+    const activity = (await listActivity(ctx.handles, ctx.workspaceId)).find((event) => event.meaning === "split");
     expect(activity?.shares.map((share) => share.personName).sort()).toEqual(["Rahul", "You"]);
   });
 
-  it("B — card split links the claim to the billing cycle", () => {
-    const ctx = setup();
+  it("B — card split links the claim to the billing cycle", async () => {
+    const ctx = await setup();
     contexts.push(ctx.handles);
-    const result = recordSplit(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    const result = await recordSplit(ctx.handles, { workspaceId: ctx.workspaceId }, {
       occurredOn: "2026-08-16",
       capturedAt,
       amountPaise: 400_000,
@@ -131,7 +131,7 @@ describe("stage 9 people claims and shared ownership", () => {
       allocations: [{ categoryId: ctx.groceryId, amountPaise: 150_000 }],
       commit: true,
     });
-    const snapshot = loadSnapshot(ctx.handles, ctx.workspaceId);
+    const snapshot = await loadSnapshot(ctx.handles, ctx.workspaceId);
     expect(snapshot.postings.find((posting) => posting.creditCardId)?.amountPaise).toBe(400_000);
     expect(snapshot.postings.find((posting) => posting.pnl === "expense")?.amountPaise).toBe(150_000);
     expect(snapshot.claims[0]?.kind).toBe("card_share");
@@ -139,14 +139,14 @@ describe("stage 9 people claims and shared ownership", () => {
     expect(snapshot.claims[0]?.billingCycleId).toBe(result.billingCycleId);
   });
 
-  it("C — other-owned default card spend creates a full claim and no expense", () => {
-    const ctx = setup();
+  it("C — other-owned default card spend creates a full claim and no expense", async () => {
+    const ctx = await setup();
     contexts.push(ctx.handles);
-    updateCard(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    await updateCard(ctx.handles, { workspaceId: ctx.workspaceId }, {
       cardId: ctx.cardId,
       defaultOwnerPersonId: ctx.rahulId,
     });
-    recordCardSpend(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    await recordCardSpend(ctx.handles, { workspaceId: ctx.workspaceId }, {
       occurredOn: "2026-08-16",
       capturedAt,
       creditCardId: ctx.cardId,
@@ -154,24 +154,24 @@ describe("stage 9 people claims and shared ownership", () => {
       allocations: [],
       commit: true,
     });
-    const snapshot = loadSnapshot(ctx.handles, ctx.workspaceId);
+    const snapshot = await loadSnapshot(ctx.handles, ctx.workspaceId);
     expect(snapshot.postings.find((posting) => posting.creditCardId)?.amountPaise).toBe(500_000);
     expect(snapshot.postings.some((posting) => posting.pnl === "expense")).toBe(false);
     expect(snapshot.claims[0]?.personId).toBe(ctx.rahulId);
     expect(snapshot.claims[0]?.originalAmountPaise).toBe(500_000);
-    const activity = listActivity(ctx.handles, ctx.workspaceId).find((event) => event.meaning === "spend_card");
+    const activity = (await listActivity(ctx.handles, ctx.workspaceId)).find((event) => event.meaning === "spend_card");
     expect(activity?.otherOwned).toBe(true);
     expect(activity?.counterpartyName).toBe("Rahul");
   });
 
-  it("D — overriding default owner to the user posts personal expense", () => {
-    const ctx = setup();
+  it("D — overriding default owner to the user posts personal expense", async () => {
+    const ctx = await setup();
     contexts.push(ctx.handles);
-    updateCard(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    await updateCard(ctx.handles, { workspaceId: ctx.workspaceId }, {
       cardId: ctx.cardId,
       defaultOwnerPersonId: ctx.rahulId,
     });
-    recordCardSpend(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    await recordCardSpend(ctx.handles, { workspaceId: ctx.workspaceId }, {
       occurredOn: "2026-08-16",
       capturedAt,
       creditCardId: ctx.cardId,
@@ -179,15 +179,15 @@ describe("stage 9 people claims and shared ownership", () => {
       allocations: [{ categoryId: ctx.groceryId, amountPaise: 500_000 }],
       commit: true,
     });
-    const snapshot = loadSnapshot(ctx.handles, ctx.workspaceId);
+    const snapshot = await loadSnapshot(ctx.handles, ctx.workspaceId);
     expect(snapshot.postings.find((posting) => posting.pnl === "expense")?.amountPaise).toBe(500_000);
     expect(snapshot.claims).toHaveLength(0);
   });
 
-  it("E — multi-person split conserves exactly", () => {
-    const ctx = setup();
+  it("E — multi-person split conserves exactly", async () => {
+    const ctx = await setup();
     contexts.push(ctx.handles);
-    recordSplit(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    await recordSplit(ctx.handles, { workspaceId: ctx.workspaceId }, {
       occurredOn: "2026-08-16",
       capturedAt,
       amountPaise: 600_000,
@@ -200,17 +200,17 @@ describe("stage 9 people claims and shared ownership", () => {
       allocations: [{ categoryId: ctx.groceryId, amountPaise: 200_000 }],
       commit: true,
     });
-    const snapshot = loadSnapshot(ctx.handles, ctx.workspaceId);
-    expect(balance(ctx.handles, ctx.workspaceId, ctx.hdfcId)).toBe(4_400_000);
+    const snapshot = await loadSnapshot(ctx.handles, ctx.workspaceId);
+    expect(await balance(ctx.handles, ctx.workspaceId, ctx.hdfcId)).toBe(4_400_000);
     expect(snapshot.postings.find((posting) => posting.pnl === "expense")?.amountPaise).toBe(200_000);
     expect(snapshot.claims.map((claim) => claim.originalAmountPaise).sort()).toEqual([150_000, 250_000]);
     expect(snapshot.eventShares.reduce((sum, share) => sum + share.amountPaise, 0)).toBe(600_000);
   });
 
-  it("F — lend decreases the account and opens a receivable without expense", () => {
-    const ctx = setup();
+  it("F — lend decreases the account and opens a receivable without expense", async () => {
+    const ctx = await setup();
     contexts.push(ctx.handles);
-    lendMoney(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    await lendMoney(ctx.handles, { workspaceId: ctx.workspaceId }, {
       occurredOn: "2026-08-16",
       capturedAt,
       accountId: ctx.hdfcId,
@@ -218,17 +218,17 @@ describe("stage 9 people claims and shared ownership", () => {
       amountPaise: 200_000,
       commit: true,
     });
-    const snapshot = loadSnapshot(ctx.handles, ctx.workspaceId);
-    expect(balance(ctx.handles, ctx.workspaceId, ctx.hdfcId)).toBe(4_800_000);
+    const snapshot = await loadSnapshot(ctx.handles, ctx.workspaceId);
+    expect(await balance(ctx.handles, ctx.workspaceId, ctx.hdfcId)).toBe(4_800_000);
     expect(snapshot.claims[0]?.kind).toBe("direct_loan");
     expect(snapshot.postings.some((posting) => posting.pnl === "expense")).toBe(false);
-    expect(listActivity(ctx.handles, ctx.workspaceId)[0]?.meaning).toBe("lend");
+    expect((await listActivity(ctx.handles, ctx.workspaceId))[0]?.meaning).toBe("lend");
   });
 
-  it("G — borrow increases the account and opens a payable without income", () => {
-    const ctx = setup();
+  it("G — borrow increases the account and opens a payable without income", async () => {
+    const ctx = await setup();
     contexts.push(ctx.handles);
-    borrowMoney(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    await borrowMoney(ctx.handles, { workspaceId: ctx.workspaceId }, {
       occurredOn: "2026-08-16",
       capturedAt,
       accountId: ctx.hdfcId,
@@ -236,18 +236,18 @@ describe("stage 9 people claims and shared ownership", () => {
       amountPaise: 200_000,
       commit: true,
     });
-    const snapshot = loadSnapshot(ctx.handles, ctx.workspaceId);
-    expect(balance(ctx.handles, ctx.workspaceId, ctx.hdfcId)).toBe(5_200_000);
+    const snapshot = await loadSnapshot(ctx.handles, ctx.workspaceId);
+    expect(await balance(ctx.handles, ctx.workspaceId, ctx.hdfcId)).toBe(5_200_000);
     expect(snapshot.claims[0]?.kind).toBe("borrowing");
     expect(snapshot.claims[0]?.direction).toBe("user_owes_them");
     expect(snapshot.postings.some((posting) => posting.pnl)).toBe(false);
-    expect(listActivity(ctx.handles, ctx.workspaceId)[0]?.meaning).toBe("borrow");
+    expect((await listActivity(ctx.handles, ctx.workspaceId))[0]?.meaning).toBe("borrow");
   });
 
-  it("H — Month Review includes only the user share", () => {
-    const ctx = setup();
+  it("H — Month Review includes only the user share", async () => {
+    const ctx = await setup();
     contexts.push(ctx.handles);
-    recordSplit(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    await recordSplit(ctx.handles, { workspaceId: ctx.workspaceId }, {
       occurredOn: "2026-08-16",
       capturedAt,
       amountPaise: 300_000,
@@ -257,14 +257,14 @@ describe("stage 9 people claims and shared ownership", () => {
       allocations: [{ categoryId: ctx.groceryId, amountPaise: 120_000 }],
       commit: true,
     });
-    const review = monthReview(ctx.handles, ctx.workspaceId, isoDate("2026-08-16"));
+    const review = await monthReview(ctx.handles, ctx.workspaceId, isoDate("2026-08-16"));
     expect(review.spentPaise).toBe(120_000);
   });
 
-  it("I — person net is derived from open receivable and payable claims", () => {
-    const ctx = setup();
+  it("I — person net is derived from open receivable and payable claims", async () => {
+    const ctx = await setup();
     contexts.push(ctx.handles);
-    lendMoney(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    await lendMoney(ctx.handles, { workspaceId: ctx.workspaceId }, {
       occurredOn: "2026-08-16",
       capturedAt,
       accountId: ctx.hdfcId,
@@ -272,7 +272,7 @@ describe("stage 9 people claims and shared ownership", () => {
       amountPaise: 300_000,
       commit: true,
     });
-    borrowMoney(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    await borrowMoney(ctx.handles, { workspaceId: ctx.workspaceId }, {
       occurredOn: "2026-08-16",
       capturedAt,
       accountId: ctx.hdfcId,
@@ -280,47 +280,47 @@ describe("stage 9 people claims and shared ownership", () => {
       amountPaise: 100_000,
       commit: true,
     });
-    const snapshot = loadSnapshot(ctx.handles, ctx.workspaceId);
+    const snapshot = await loadSnapshot(ctx.handles, ctx.workspaceId);
     const position = personPosition(snapshot.claims, ctx.rahulId);
     expect(position.theyOwePaise).toBe(300_000);
     expect(position.youOwePaise).toBe(100_000);
     expect(position.netPaise).toBe(200_000);
     expect(position.openItemCount).toBe(2);
-    const listed = listPeople(ctx.handles, ctx.workspaceId).find((person) => person.id === ctx.rahulId);
+    const listed = (await listPeople(ctx.handles, ctx.workspaceId)).find((person) => person.id === ctx.rahulId);
     expect(listed?.group).toBe("they_owe_you");
     expect(listed?.netPaise).toBe(200_000);
   });
 
-  it("J — person opening creates a claim without fake expense or income", () => {
-    const ctx = setup();
+  it("J — person opening creates a claim without fake expense or income", async () => {
+    const ctx = await setup();
     contexts.push(ctx.handles);
     const before = tableCounts(ctx.handles, ctx.workspaceId);
-    applyOpening(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    await applyOpening(ctx.handles, { workspaceId: ctx.workspaceId }, {
       personId: ctx.rahulId,
       effectiveOn: "2026-08-01",
       direction: "they_owe_user",
       amountPaise: 800_000,
       commit: true,
     });
-    const snapshot = loadSnapshot(ctx.handles, ctx.workspaceId);
+    const snapshot = await loadSnapshot(ctx.handles, ctx.workspaceId);
     expect(snapshot.events).toHaveLength(before.events);
     expect(snapshot.claims[0]?.kind).toBe("opening");
     expect(snapshot.claims[0]?.originalAmountPaise).toBe(800_000);
     expect(snapshot.openings.some((opening) => opening.kind === "person")).toBe(true);
     expect(snapshot.postings.some((posting) => posting.pnl)).toBe(false);
-    const detail = personDetail(ctx.handles, ctx.workspaceId, ctx.rahulId);
+    const detail = await personDetail(ctx.handles, ctx.workspaceId, ctx.rahulId);
     expect(detail.hasOpening).toBe(true);
     expect(detail.netPaise).toBe(800_000);
   });
 
-  it("K — changing card default owner does not rewrite earlier shares or claims", () => {
-    const ctx = setup();
+  it("K — changing card default owner does not rewrite earlier shares or claims", async () => {
+    const ctx = await setup();
     contexts.push(ctx.handles);
-    updateCard(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    await updateCard(ctx.handles, { workspaceId: ctx.workspaceId }, {
       cardId: ctx.cardId,
       defaultOwnerPersonId: ctx.rahulId,
     });
-    recordCardSpend(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    await recordCardSpend(ctx.handles, { workspaceId: ctx.workspaceId }, {
       occurredOn: "2026-08-16",
       capturedAt,
       creditCardId: ctx.cardId,
@@ -328,25 +328,25 @@ describe("stage 9 people claims and shared ownership", () => {
       allocations: [],
       commit: true,
     });
-    const before = loadSnapshot(ctx.handles, ctx.workspaceId);
+    const before = await loadSnapshot(ctx.handles, ctx.workspaceId);
     const claimId = before.claims[0]?.id;
     const shareAmounts = before.eventShares.map((share) => share.amountPaise).sort();
-    updateCard(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    await updateCard(ctx.handles, { workspaceId: ctx.workspaceId }, {
       cardId: ctx.cardId,
       defaultOwnerPersonId: ctx.amitId,
     });
-    const after = loadSnapshot(ctx.handles, ctx.workspaceId);
+    const after = await loadSnapshot(ctx.handles, ctx.workspaceId);
     expect(after.claims[0]?.id).toBe(claimId);
     expect(after.claims[0]?.personId).toBe(ctx.rahulId);
     expect(after.eventShares.map((share) => share.amountPaise).sort()).toEqual(shareAmounts);
     expect(after.creditCards[0]?.defaultOwnerPersonId).toBe(ctx.amitId);
   });
 
-  it("L — invalid shares reject with no partial writes", () => {
-    const ctx = setup();
+  it("L — invalid shares reject with no partial writes", async () => {
+    const ctx = await setup();
     contexts.push(ctx.handles);
     const before = tableCounts(ctx.handles, ctx.workspaceId);
-    expect(() =>
+    await expect(
       recordSplit(ctx.handles, { workspaceId: ctx.workspaceId }, {
         occurredOn: "2026-08-16",
         capturedAt,
@@ -357,15 +357,15 @@ describe("stage 9 people claims and shared ownership", () => {
         allocations: [{ categoryId: ctx.groceryId, amountPaise: 120_000 }],
         commit: true,
       }),
-    ).toThrow(DomainError);
+    ).rejects.toThrow(DomainError);
     expect(tableCounts(ctx.handles, ctx.workspaceId)).toEqual(before);
-    expect(balance(ctx.handles, ctx.workspaceId, ctx.hdfcId)).toBe(5_000_000);
+    expect(await balance(ctx.handles, ctx.workspaceId, ctx.hdfcId)).toBe(5_000_000);
   });
 
-  it("keeps archived people readable and does not merge matching claims", () => {
-    const ctx = setup();
+  it("keeps archived people readable and does not merge matching claims", async () => {
+    const ctx = await setup();
     contexts.push(ctx.handles);
-    lendMoney(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    await lendMoney(ctx.handles, { workspaceId: ctx.workspaceId }, {
       occurredOn: "2026-08-16",
       capturedAt,
       accountId: ctx.hdfcId,
@@ -373,7 +373,7 @@ describe("stage 9 people claims and shared ownership", () => {
       amountPaise: 100_000,
       commit: true,
     });
-    lendMoney(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    await lendMoney(ctx.handles, { workspaceId: ctx.workspaceId }, {
       occurredOn: "2026-08-17",
       capturedAt,
       accountId: ctx.hdfcId,
@@ -381,18 +381,18 @@ describe("stage 9 people claims and shared ownership", () => {
       amountPaise: 100_000,
       commit: true,
     });
-    updatePerson(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    await updatePerson(ctx.handles, { workspaceId: ctx.workspaceId }, {
       personId: ctx.rahulId,
       name: "Rahul K",
       status: "archived",
     });
-    const snapshot = loadSnapshot(ctx.handles, ctx.workspaceId);
+    const snapshot = await loadSnapshot(ctx.handles, ctx.workspaceId);
     expect(snapshot.people.find((person) => person.id === ctx.rahulId)?.name).toBe("Rahul K");
     expect(snapshot.claims).toHaveLength(2);
-    const detail = personDetail(ctx.handles, ctx.workspaceId, ctx.rahulId);
+    const detail = await personDetail(ctx.handles, ctx.workspaceId, ctx.rahulId);
     expect(detail.status).toBe("archived");
     expect(detail.history).toHaveLength(2);
-    expect(listActivity(ctx.handles, ctx.workspaceId).every((event) => event.counterpartyName === "Rahul K")).toBe(
+    expect((await listActivity(ctx.handles, ctx.workspaceId)).every((event) => event.counterpartyName === "Rahul K")).toBe(
       true,
     );
   });

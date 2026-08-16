@@ -3,13 +3,13 @@ import { newId } from "../domain/ids.js";
 import type { IsoDate } from "../domain/calendar/isoDate.js";
 import { DomainError, type CardCycleRule } from "../domain/ledger/types.js";
 import { parseCardCycleRule } from "../domain/cycle/assign.js";
-import { configVersions } from "./schema.js";
-import type { SqliteHandles } from "./client.js";
+import type { DbHandles, SqliteHandles } from "./handles.js";
+import { anyDb, queryAll, queryRun, tables } from "./exec.js"; 
 
 export const CONFIG_CARD_STATEMENT_DAY = "card.statement_day";
 export const CONFIG_CARD_DUE_RULE = "card.due_rule";
 
-export function upsertConfig(
+function upsertConfigSqlite(
   handles: SqliteHandles,
   workspaceId: string,
   input: {
@@ -19,25 +19,30 @@ export function upsertConfig(
     value: unknown;
   },
 ): void {
-  const existing = handles.db
+  const t = tables(handles);
+  const existing = anyDb(handles)
     .select()
-    .from(configVersions)
+    .from(t.configVersions)
     .where(
       and(
-        eq(configVersions.workspaceId, workspaceId),
-        eq(configVersions.key, input.key),
-        eq(configVersions.subjectId, input.subjectId),
+        eq(t.configVersions.workspaceId, workspaceId),
+        eq(t.configVersions.key, input.key),
+        eq(t.configVersions.subjectId, input.subjectId),
       ),
     )
-    .all()
-    .sort((left, right) => left.effectiveFrom.localeCompare(right.effectiveFrom));
+    .all() as Array<{
+      id: string;
+      effectiveFrom: string;
+      effectiveTo: string | null;
+    }>;
+  existing.sort((left, right) => left.effectiveFrom.localeCompare(right.effectiveFrom));
 
   const sameStart = existing.find((row) => row.effectiveFrom === input.effectiveFrom);
   if (sameStart) {
-    handles.db
-      .update(configVersions)
+    anyDb(handles)
+      .update(t.configVersions)
       .set({ value: JSON.stringify(input.value) })
-      .where(eq(configVersions.id, sameStart.id))
+      .where(eq(t.configVersions.id, sameStart.id))
       .run();
     return;
   }
@@ -48,16 +53,16 @@ export function upsertConfig(
       (row.effectiveTo === null || row.effectiveTo > input.effectiveFrom),
   );
   if (open) {
-    handles.db
-      .update(configVersions)
+    anyDb(handles)
+      .update(t.configVersions)
       .set({ effectiveTo: input.effectiveFrom })
-      .where(eq(configVersions.id, open.id))
+      .where(eq(t.configVersions.id, open.id))
       .run();
   }
 
   const next = existing.find((row) => row.effectiveFrom > input.effectiveFrom);
-  handles.db
-    .insert(configVersions)
+  anyDb(handles)
+    .insert(t.configVersions)
     .values({
       id: newId(),
       workspaceId,
@@ -70,46 +75,149 @@ export function upsertConfig(
     .run();
 }
 
-export function loadConfigValue(
+export function writeCardRuleSqlite(
   handles: SqliteHandles,
+  workspaceId: string,
+  cardId: string,
+  rule: CardCycleRule,
+  effectiveFrom: IsoDate,
+): void {
+  upsertConfigSqlite(handles, workspaceId, {
+    key: CONFIG_CARD_STATEMENT_DAY,
+    subjectId: cardId,
+    effectiveFrom,
+    value: { statementDay: rule.statementDay },
+  });
+  upsertConfigSqlite(handles, workspaceId, {
+    key: CONFIG_CARD_DUE_RULE,
+    subjectId: cardId,
+    effectiveFrom,
+    value: { dueDaysAfterStatement: rule.dueDaysAfterStatement },
+  });
+}
+
+export { upsertConfigSqlite };
+
+export async function upsertConfig(
+  handles: DbHandles,
+  workspaceId: string,
+  input: {
+    key: string;
+    subjectId: string;
+    effectiveFrom: IsoDate;
+    value: unknown;
+  },
+): Promise<void> {
+  if (handles.dialect === "sqlite") {
+    upsertConfigSqlite(handles, workspaceId, input);
+    return;
+  }
+  const t = tables(handles);
+  const existing = (
+    await queryAll<{
+      id: string;
+      effectiveFrom: string;
+      effectiveTo: string | null;
+    }>(
+      handles,
+      anyDb(handles)
+        .select()
+        .from(t.configVersions)
+        .where(
+          and(
+            eq(t.configVersions.workspaceId, workspaceId),
+            eq(t.configVersions.key, input.key),
+            eq(t.configVersions.subjectId, input.subjectId),
+          ),
+        ),
+    )
+  ).sort((left, right) => left.effectiveFrom.localeCompare(right.effectiveFrom));
+
+  const sameStart = existing.find((row) => row.effectiveFrom === input.effectiveFrom);
+  if (sameStart) {
+    await queryRun(
+      handles,
+      anyDb(handles)
+        .update(t.configVersions)
+        .set({ value: JSON.stringify(input.value) })
+        .where(eq(t.configVersions.id, sameStart.id)),
+    );
+    return;
+  }
+
+  const open = existing.find(
+    (row) =>
+      row.effectiveFrom < input.effectiveFrom &&
+      (row.effectiveTo === null || row.effectiveTo > input.effectiveFrom),
+  );
+  if (open) {
+    await queryRun(
+      handles,
+      anyDb(handles)
+        .update(t.configVersions)
+        .set({ effectiveTo: input.effectiveFrom })
+        .where(eq(t.configVersions.id, open.id)),
+    );
+  }
+
+  const next = existing.find((row) => row.effectiveFrom > input.effectiveFrom);
+  await queryRun(
+    handles,
+    anyDb(handles).insert(t.configVersions).values({
+      id: newId(),
+      workspaceId,
+      key: input.key,
+      subjectId: input.subjectId,
+      effectiveFrom: input.effectiveFrom,
+      effectiveTo: next?.effectiveFrom ?? null,
+      value: JSON.stringify(input.value),
+    }),
+  );
+}
+
+export async function loadConfigValue(
+  handles: DbHandles,
   workspaceId: string,
   key: string,
   subjectId: string,
   asOf: IsoDate,
-): unknown | null {
-  const rows = handles.db
-    .select()
-    .from(configVersions)
-    .where(
-      and(
-        eq(configVersions.workspaceId, workspaceId),
-        eq(configVersions.key, key),
-        eq(configVersions.subjectId, subjectId),
-        lte(configVersions.effectiveFrom, asOf),
-        or(isNull(configVersions.effectiveTo), gt(configVersions.effectiveTo, asOf)),
+): Promise<unknown | null> {
+  const t = tables(handles);
+  const rows = await queryAll<{ effectiveFrom: string; value: string }>(
+    handles,
+    anyDb(handles)
+      .select()
+      .from(t.configVersions)
+      .where(
+        and(
+          eq(t.configVersions.workspaceId, workspaceId),
+          eq(t.configVersions.key, key),
+          eq(t.configVersions.subjectId, subjectId),
+          lte(t.configVersions.effectiveFrom, asOf),
+          or(isNull(t.configVersions.effectiveTo), gt(t.configVersions.effectiveTo, asOf)),
+        ),
       ),
-    )
-    .all();
+  );
 
   const current = rows.sort((left, right) => right.effectiveFrom.localeCompare(left.effectiveFrom))[0];
   if (!current) return null;
   return JSON.parse(current.value) as unknown;
 }
 
-export function loadCardRule(
-  handles: SqliteHandles,
+export async function loadCardRule(
+  handles: DbHandles,
   workspaceId: string,
   cardId: string,
   asOf: IsoDate,
-): CardCycleRule {
-  const statement = loadConfigValue(
+): Promise<CardCycleRule> {
+  const statement = await loadConfigValue(
     handles,
     workspaceId,
     CONFIG_CARD_STATEMENT_DAY,
     cardId,
     asOf,
   );
-  const due = loadConfigValue(handles, workspaceId, CONFIG_CARD_DUE_RULE, cardId, asOf);
+  const due = await loadConfigValue(handles, workspaceId, CONFIG_CARD_DUE_RULE, cardId, asOf);
   if (!statement || !due) {
     throw new DomainError("card_rule_missing", "This card has no statement or due rule for that date");
   }
@@ -121,20 +229,24 @@ export function loadCardRule(
   });
 }
 
-export function writeCardRule(
-  handles: SqliteHandles,
+export async function writeCardRule(
+  handles: DbHandles,
   workspaceId: string,
   cardId: string,
   rule: CardCycleRule,
   effectiveFrom: IsoDate,
-): void {
-  upsertConfig(handles, workspaceId, {
+): Promise<void> {
+  if (handles.dialect === "sqlite") {
+    writeCardRuleSqlite(handles, workspaceId, cardId, rule, effectiveFrom);
+    return;
+  }
+  await upsertConfig(handles, workspaceId, {
     key: CONFIG_CARD_STATEMENT_DAY,
     subjectId: cardId,
     effectiveFrom,
     value: { statementDay: rule.statementDay },
   });
-  upsertConfig(handles, workspaceId, {
+  await upsertConfig(handles, workspaceId, {
     key: CONFIG_CARD_DUE_RULE,
     subjectId: cardId,
     effectiveFrom,

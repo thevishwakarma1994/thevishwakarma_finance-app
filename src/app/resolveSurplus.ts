@@ -5,7 +5,7 @@ import { todayKolkata, utcNowIso } from "../domain/calendar/kolkata.js";
 import { resolveSurplus as resolveSurplusDomain } from "../domain/commands/resolveSurplus.js";
 import { loadSnapshot } from "../db/loadSnapshot.js";
 import { persistBatch } from "../db/persistBatch.js";
-import type { SqliteHandles } from "../db/client.js";
+import type { DbHandles } from "../db/client.js";
 import type { WorkspaceContext } from "./context.js";
 import { assertWorkspaceOwned } from "./ownership.js";
 
@@ -26,19 +26,19 @@ const inputSchema = z.object({
   commit: z.boolean().default(true),
 });
 
-export function resolveSurplus(
-  handles: SqliteHandles,
+export async function resolveSurplus(
+  handles: DbHandles,
   context: WorkspaceContext,
   raw: unknown,
 ) {
   const input = inputSchema.parse(raw);
-  assertWorkspaceOwned(handles, context.workspaceId, [
+  await assertWorkspaceOwned(handles, context.workspaceId, [
     { type: "surplus", id: input.surplusCaseId },
     input.claimId ? { type: "claim" as const, id: input.claimId } : null,
     input.billingCycleId ? { type: "cycle" as const, id: input.billingCycleId } : null,
   ]);
   const occurredOn = isoDate(input.occurredOn ?? todayKolkata());
-  const snapshot = loadSnapshot(handles, context.workspaceId, occurredOn);
+  const snapshot = await loadSnapshot(handles, context.workspaceId, occurredOn);
   const result = resolveSurplusDomain(
     {
       occurredOn,
@@ -54,7 +54,7 @@ export function resolveSurplus(
   );
 
   if (input.commit) {
-    persistBatch(handles, context.workspaceId, result.batch);
+    await persistBatch(handles, context.workspaceId, result.batch);
   }
 
   return {

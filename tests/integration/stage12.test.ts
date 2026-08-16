@@ -14,14 +14,14 @@ import { newId } from "../../src/domain/ids.js";
 
 const capturedAt = "2026-08-16T10:00:00.000Z";
 
-function setup() {
+async function setup() {
   const handles = openMemoryDatabase();
-  applyMigrations(handles);
-  const workspaceId = getSoleWorkspaceId(handles);
-  const snapshot = loadSnapshot(handles, workspaceId);
+  await applyMigrations(handles);
+  const workspaceId = await getSoleWorkspaceId(handles);
+  const snapshot = await loadSnapshot(handles, workspaceId);
   const hdfc = snapshot.accounts.find((account) => account.displayName === "HDFC");
   if (!hdfc) throw new Error("Expected seeded HDFC");
-  applyOpening(handles, { workspaceId }, {
+  await applyOpening(handles, { workspaceId }, {
     accountId: hdfc.id,
     effectiveOn: "2026-08-01",
     balancePaise: 2_000_000,
@@ -52,8 +52,8 @@ describe("stage 12 home and salary persistence", () => {
     for (const handles of contexts.splice(0)) handles.sqlite.close();
   });
 
-  it("does not seed an assumed income policy on migrate", () => {
-    const ctx = setup();
+  it("does not seed an assumed income policy on migrate", async () => {
+    const ctx = await setup();
     contexts.push(ctx.handles);
     const n =
       ctx.handles.db
@@ -64,11 +64,11 @@ describe("stage 12 home and salary persistence", () => {
     expect(n).toBe(0);
   });
 
-  it("Home STS works with no income policy and does not invent a salary window", () => {
-    const ctx = setup();
+  it("Home STS works with no income policy and does not invent a salary window", async () => {
+    const ctx = await setup();
     contexts.push(ctx.handles);
     const asOf = isoDate("2026-09-10");
-    const view = home(ctx.handles, ctx.workspaceId, asOf);
+    const view = await home(ctx.handles, ctx.workspaceId, asOf);
     expect(view.incomePolicyConfigured).toBe(false);
     expect(view.salaryWindowStart).toBeNull();
     expect(view.expectedSalaryPaise).toBe(0);
@@ -79,10 +79,10 @@ describe("stage 12 home and salary persistence", () => {
     );
   });
 
-  it("U — simulation creates no DB/event/posting writes", () => {
-    const ctx = setup();
+  it("U — simulation creates no DB/event/posting writes", async () => {
+    const ctx = await setup();
     contexts.push(ctx.handles);
-    recordIncome(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    await recordIncome(ctx.handles, { workspaceId: ctx.workspaceId }, {
       occurredOn: "2026-08-05",
       capturedAt,
       accountId: ctx.hdfcId,
@@ -94,7 +94,7 @@ describe("stage 12 home and salary persistence", () => {
       ctx.handles.db.select({ value: count() }).from(financialEvents).where(eq(financialEvents.workspaceId, ctx.workspaceId)).get()?.value ?? 0;
     const postingsBefore =
       ctx.handles.db.select({ value: count() }).from(postings).where(eq(postings.workspaceId, ctx.workspaceId)).get()?.value ?? 0;
-    simulateAffordability(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    await simulateAffordability(ctx.handles, { workspaceId: ctx.workspaceId }, {
       amountPaise: 50_000,
       occurredOn: "2026-08-20",
       funding: { accountId: ctx.hdfcId },
@@ -107,10 +107,10 @@ describe("stage 12 home and salary persistence", () => {
     expect(postingsAfter).toBe(postingsBefore);
   });
 
-  it("V — Home read model uses the same engine result as the domain snapshot", () => {
-    const ctx = setup();
+  it("V — Home read model uses the same engine result as the domain snapshot", async () => {
+    const ctx = await setup();
     contexts.push(ctx.handles);
-    recordIncome(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    await recordIncome(ctx.handles, { workspaceId: ctx.workspaceId }, {
       occurredOn: "2026-08-05",
       capturedAt,
       accountId: ctx.hdfcId,
@@ -119,19 +119,19 @@ describe("stage 12 home and salary persistence", () => {
       commit: true,
     });
     const asOf = isoDate("2026-08-20");
-    const snapshot = loadSnapshot(ctx.handles, ctx.workspaceId, asOf);
+    const snapshot = await loadSnapshot(ctx.handles, ctx.workspaceId, asOf);
     const engine = evaluateSafeToSpend(snapshot, asOf);
-    const view = home(ctx.handles, ctx.workspaceId, asOf);
+    const view = await home(ctx.handles, ctx.workspaceId, asOf);
     expect(view.currentCycleSafeToSpend).toBe(engine.currentCycleSafeToSpend);
     expect(view.availableLiquid).toBe(engine.availableLiquid);
     expect(view.riskFlags).toEqual(engine.riskFlags);
   });
 
-  it("salary recording sets FundingCycle actuals without duplicating", () => {
-    const ctx = setup();
+  it("salary recording sets FundingCycle actuals without duplicating", async () => {
+    const ctx = await setup();
     contexts.push(ctx.handles);
     insertScenarioIncomePolicy(ctx.handles, ctx.workspaceId);
-    recordIncome(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    await recordIncome(ctx.handles, { workspaceId: ctx.workspaceId }, {
       occurredOn: "2026-08-05",
       capturedAt,
       accountId: ctx.hdfcId,
@@ -144,7 +144,7 @@ describe("stage 12 home and salary persistence", () => {
     expect(cycle?.actualAmountPaise).toBe(7_920_000);
     expect(cycle?.year).toBe(2026);
     expect(cycle?.month).toBe(8);
-    expect(() =>
+    await expect(
       recordIncome(ctx.handles, { workspaceId: ctx.workspaceId }, {
         occurredOn: "2026-08-06",
         capturedAt,
@@ -153,13 +153,13 @@ describe("stage 12 home and salary persistence", () => {
         kind: "salary",
         commit: true,
       }),
-    ).toThrow(/already has a salary/);
+    ).rejects.toThrow(/already has a salary/);
   });
 
-  it("salary without a policy still records income and does not fabricate a funding cycle", () => {
-    const ctx = setup();
+  it("salary without a policy still records income and does not fabricate a funding cycle", async () => {
+    const ctx = await setup();
     contexts.push(ctx.handles);
-    recordIncome(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    await recordIncome(ctx.handles, { workspaceId: ctx.workspaceId }, {
       occurredOn: "2026-08-05",
       capturedAt,
       accountId: ctx.hdfcId,
@@ -167,7 +167,7 @@ describe("stage 12 home and salary persistence", () => {
       kind: "salary",
       commit: true,
     });
-    const snapshot = loadSnapshot(ctx.handles, ctx.workspaceId);
+    const snapshot = await loadSnapshot(ctx.handles, ctx.workspaceId);
     expect(snapshot.fundingCycles).toHaveLength(0);
     expect(snapshot.events.some((event) => event.meaning === "income")).toBe(true);
     const hdfc = snapshot.accounts.find((account) => account.id === ctx.hdfcId);

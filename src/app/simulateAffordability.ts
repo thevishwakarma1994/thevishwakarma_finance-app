@@ -4,7 +4,7 @@ import { paise } from "../domain/money/paise.js";
 import { todayKolkata } from "../domain/calendar/kolkata.js";
 import { simulateAffordability as simulateAffordabilityDomain } from "../domain/engine/simulateAffordability.js";
 import { loadSnapshot } from "../db/loadSnapshot.js";
-import type { SqliteHandles } from "../db/client.js";
+import type { DbHandles } from "../db/client.js";
 import type { WorkspaceContext } from "./context.js";
 import { assertWorkspaceOwned } from "./ownership.js";
 
@@ -18,20 +18,20 @@ const inputSchema = z.object({
   categoryId: z.string().min(1).optional(),
 });
 
-export function simulateAffordability(
-  handles: SqliteHandles,
+export async function simulateAffordability(
+  handles: DbHandles,
   context: WorkspaceContext,
   raw: unknown,
 ) {
   const input = inputSchema.parse(raw);
-  assertWorkspaceOwned(handles, context.workspaceId, [
+  await assertWorkspaceOwned(handles, context.workspaceId, [
     "accountId" in input.funding
       ? { type: "account" as const, id: input.funding.accountId }
       : { type: "card" as const, id: input.funding.creditCardId },
     input.categoryId ? { type: "category" as const, id: input.categoryId } : null,
   ]);
   const occurredOn = isoDate(input.occurredOn ?? todayKolkata());
-  const snapshot = loadSnapshot(handles, context.workspaceId, occurredOn);
+  const snapshot = await loadSnapshot(handles, context.workspaceId, occurredOn);
   const meaning = "accountId" in input.funding ? "spend_account" : "spend_card";
   return simulateAffordabilityDomain(snapshot, occurredOn, {
     amountPaise: paise(input.amountPaise),

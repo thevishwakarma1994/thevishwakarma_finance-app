@@ -2,20 +2,19 @@ import { z } from "zod";
 import { isoDate } from "../domain/calendar/isoDate.js";
 import { newId } from "../domain/ids.js";
 import { DomainError, type ObligationPriority } from "../domain/ledger/types.js";
-import {
-  CONFIG_OBLIGATION_AMOUNT,
-  CONFIG_OBLIGATION_PRIORITY,
-  parseDueRule,
-} from "../domain/obligations/generate.js";
+import { parseDueRule } from "../domain/obligations/generate.js";
 import { loadSnapshot } from "../db/loadSnapshot.js";
 import { ensureObligationInstances } from "./ensureObligationInstances.js";
-import { upsertConfig } from "../db/config.js";
-import { obligationInstances, obligationTemplates } from "../db/schema.js";
-import { eq } from "drizzle-orm";
-import type { SqliteHandles } from "../db/client.js";
+import type { DbHandles } from "../db/client.js";
 import type { WorkspaceContext } from "./context.js";
 import { assertWorkspaceOwned } from "./ownership.js";
-import { withTransaction } from "../db/tx.js";
+import {
+  archiveObligationTemplateRow,
+  changeObligationTemplate,
+  findObligationTemplate,
+  insertObligationTemplateWithConfig,
+  insertOneOffObligation,
+} from "../db/catalog.js";
 
 const prioritySchema = z.enum(["must_pay", "committed", "planned"]);
 
@@ -48,145 +47,98 @@ const oneOffSchema = z.object({
   priority: prioritySchema,
 });
 
-export function createObligationTemplate(
-  handles: SqliteHandles,
+export async function createObligationTemplate(
+  handles: DbHandles,
   context: WorkspaceContext,
   raw: unknown,
 ) {
   const input = createTemplateSchema.parse(raw);
   parseDueRule({ dayOfMonth: input.dayOfMonth });
   if (input.defaultAccountId) {
-    assertWorkspaceOwned(handles, context.workspaceId, [
+    await assertWorkspaceOwned(handles, context.workspaceId, [
       { type: "account", id: input.defaultAccountId },
     ]);
   }
   const id = newId();
   const effectiveFrom = isoDate(input.effectiveFrom);
-  withTransaction(handles, () => {
-    handles.db
-      .insert(obligationTemplates)
-      .values({
-        id,
-        workspaceId: context.workspaceId,
-        name: input.name,
-        priority: input.priority,
-        dueRule: JSON.stringify({ dayOfMonth: input.dayOfMonth }),
-        defaultAccountId: input.defaultAccountId ?? null,
-        loanId: null,
-        effectiveFrom,
-        effectiveTo: null,
-      })
-      .run();
-    upsertConfig(handles, context.workspaceId, {
-      key: CONFIG_OBLIGATION_AMOUNT,
-      subjectId: id,
+  await insertObligationTemplateWithConfig(
+    handles,
+    {
+      id,
+      workspaceId: context.workspaceId,
+      name: input.name,
+      priority: input.priority,
+      dueRule: JSON.stringify({ dayOfMonth: input.dayOfMonth }),
+      defaultAccountId: input.defaultAccountId ?? null,
+      loanId: null,
       effectiveFrom,
-      value: { amountPaise: input.amountPaise },
-    });
-    upsertConfig(handles, context.workspaceId, {
-      key: CONFIG_OBLIGATION_PRIORITY,
-      subjectId: id,
-      effectiveFrom,
-      value: { priority: input.priority },
-    });
-  });
-  ensureObligationInstances(handles, context.workspaceId, effectiveFrom);
+      effectiveTo: null,
+    },
+    input.amountPaise,
+    input.priority,
+  );
+  await ensureObligationInstances(handles, context.workspaceId, effectiveFrom);
   return { id };
 }
 
-export function changeObligationFrom(
-  handles: SqliteHandles,
+export async function changeObligationFrom(
+  handles: DbHandles,
   context: WorkspaceContext,
   raw: unknown,
 ) {
   const input = changeFromSchema.parse(raw);
   const effectiveFrom = isoDate(input.effectiveFrom);
-  const existing = handles.db
-    .select()
-    .from(obligationTemplates)
-    .where(eq(obligationTemplates.id, input.templateId))
-    .get();
+  const existing = await findObligationTemplate(handles, input.templateId);
   if (!existing || existing.workspaceId !== context.workspaceId) {
     throw new DomainError("obligation_template_not_found", "Obligation template not found");
   }
-  withTransaction(handles, () => {
-    if (input.name) {
-      handles.db
-        .update(obligationTemplates)
-        .set({ name: input.name })
-        .where(eq(obligationTemplates.id, input.templateId))
-        .run();
-    }
-    if (input.amountPaise !== undefined) {
-      upsertConfig(handles, context.workspaceId, {
-        key: CONFIG_OBLIGATION_AMOUNT,
-        subjectId: input.templateId,
-        effectiveFrom,
-        value: { amountPaise: input.amountPaise },
-      });
-    }
-    if (input.priority) {
-      upsertConfig(handles, context.workspaceId, {
-        key: CONFIG_OBLIGATION_PRIORITY,
-        subjectId: input.templateId,
-        effectiveFrom,
-        value: { priority: input.priority },
-      });
-    }
+  await changeObligationTemplate(handles, context.workspaceId, input.templateId, effectiveFrom, {
+    name: input.name,
+    amountPaise: input.amountPaise,
+    priority: input.priority,
   });
-  ensureObligationInstances(handles, context.workspaceId, effectiveFrom);
+  await ensureObligationInstances(handles, context.workspaceId, effectiveFrom);
   return { id: input.templateId };
 }
 
-export function archiveObligationTemplate(
-  handles: SqliteHandles,
+export async function archiveObligationTemplate(
+  handles: DbHandles,
   context: WorkspaceContext,
   raw: unknown,
 ) {
   const input = archiveSchema.parse(raw);
-  const existing = handles.db
-    .select()
-    .from(obligationTemplates)
-    .where(eq(obligationTemplates.id, input.templateId))
-    .get();
+  const existing = await findObligationTemplate(handles, input.templateId);
   if (!existing || existing.workspaceId !== context.workspaceId) {
     throw new DomainError("obligation_template_not_found", "Obligation template not found");
   }
-  handles.db
-    .update(obligationTemplates)
-    .set({ effectiveTo: isoDate(input.effectiveTo) })
-    .where(eq(obligationTemplates.id, input.templateId))
-    .run();
+  await archiveObligationTemplateRow(handles, input.templateId, isoDate(input.effectiveTo));
   return { id: input.templateId };
 }
 
-export function createOneOffObligation(
-  handles: SqliteHandles,
+export async function createOneOffObligation(
+  handles: DbHandles,
   context: WorkspaceContext,
   raw: unknown,
 ) {
   const input = oneOffSchema.parse(raw);
   const id = newId();
-  handles.db
-    .insert(obligationInstances)
-    .values({
-      id,
-      workspaceId: context.workspaceId,
-      templateId: null,
-      nameSnapshot: input.name,
-      dueOn: isoDate(input.dueOn),
-      amountPaise: input.amountPaise,
-      prioritySnapshot: input.priority,
-      status: "open",
-      fundingCycleId: null,
-      paidEventId: null,
-    })
-    .run();
+  await insertOneOffObligation(handles, {
+    id,
+    workspaceId: context.workspaceId,
+    templateId: null,
+    nameSnapshot: input.name,
+    dueOn: isoDate(input.dueOn),
+    amountPaise: input.amountPaise,
+    prioritySnapshot: input.priority,
+    status: "open",
+    fundingCycleId: null,
+    paidEventId: null,
+  });
   return { id };
 }
 
-export function listObligationTemplates(handles: SqliteHandles, workspaceId: string) {
-  const snapshot = loadSnapshot(handles, workspaceId);
+export async function listObligationTemplates(handles: DbHandles, workspaceId: string) {
+  const snapshot = await loadSnapshot(handles, workspaceId);
   return snapshot.obligationTemplates.map((template) => ({
     ...template,
     amountPaise: snapshot.obligationInstances

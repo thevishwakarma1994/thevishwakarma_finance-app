@@ -18,9 +18,9 @@ const verifyIdToken: VerifyIdToken = async (token) => {
   };
 };
 
-function setup() {
+async function setup() {
   const handles = openMemoryDatabase();
-  applyMigrations(handles);
+  await applyMigrations(handles);
   const app = createApp(handles, { verifyIdToken });
   return { handles, app };
 }
@@ -91,7 +91,7 @@ describe("stage 14 firebase auth and workspace isolation", () => {
   });
 
   it("A / P — first login provisions user, personal workspace, owner membership", async () => {
-    const ctx = setup();
+    const ctx = await setup();
     dbs.push(ctx.handles);
     const session = await me(ctx.app, "A");
     expect(session.authenticated).toBe(true);
@@ -114,11 +114,11 @@ describe("stage 14 firebase auth and workspace isolation", () => {
       .where(eq(workspaces.id, session.workspaceId))
       .get();
     expect(workspace?.name).toBe("Personal");
-    expect(session.workspaceId).not.toBe(getSoleWorkspaceId(ctx.handles));
+    expect(session.workspaceId).not.toBe(await getSoleWorkspaceId(ctx.handles));
   });
 
   it("B — repeated login reuses the same user and workspace", async () => {
-    const ctx = setup();
+    const ctx = await setup();
     dbs.push(ctx.handles);
     const first = await me(ctx.app, "A");
     const second = await me(ctx.app, "A");
@@ -136,13 +136,13 @@ describe("stage 14 firebase auth and workspace isolation", () => {
   });
 
   it("C — second user gets a different empty personal workspace", async () => {
-    const ctx = setup();
+    const ctx = await setup();
     dbs.push(ctx.handles);
     const a = await me(ctx.app, "A");
     const b = await me(ctx.app, "B");
     expect(b.userId).not.toBe(a.userId);
     expect(b.workspaceId).not.toBe(a.workspaceId);
-    const legacy = getSoleWorkspaceId(ctx.handles);
+    const legacy = await getSoleWorkspaceId(ctx.handles);
     expect(a.workspaceId).not.toBe(legacy);
     expect(b.workspaceId).not.toBe(legacy);
     const legacyRow = ctx.handles.db.select().from(workspaces).where(eq(workspaces.id, legacy)).get();
@@ -158,7 +158,7 @@ describe("stage 14 firebase auth and workspace isolation", () => {
   });
 
   it("D / E — account reads stay inside the authenticated workspace", async () => {
-    const ctx = setup();
+    const ctx = await setup();
     dbs.push(ctx.handles);
     await me(ctx.app, "A");
     await me(ctx.app, "B");
@@ -176,7 +176,7 @@ describe("stage 14 firebase auth and workspace isolation", () => {
   });
 
   it("F — rejects a cross-workspace account id", async () => {
-    const ctx = setup();
+    const ctx = await setup();
     dbs.push(ctx.handles);
     await me(ctx.app, "A");
     await me(ctx.app, "B");
@@ -196,7 +196,7 @@ describe("stage 14 firebase auth and workspace isolation", () => {
   });
 
   it("G — rejects a cross-workspace card id", async () => {
-    const ctx = setup();
+    const ctx = await setup();
     dbs.push(ctx.handles);
     await me(ctx.app, "A");
     await me(ctx.app, "B");
@@ -218,7 +218,7 @@ describe("stage 14 firebase auth and workspace isolation", () => {
   });
 
   it("H — rejects a cross-workspace person and claim id", async () => {
-    const ctx = setup();
+    const ctx = await setup();
     dbs.push(ctx.handles);
     await me(ctx.app, "A");
     await me(ctx.app, "B");
@@ -281,7 +281,7 @@ describe("stage 14 firebase auth and workspace isolation", () => {
   });
 
   it("I — rejects a cross-workspace cycle id", async () => {
-    const ctx = setup();
+    const ctx = await setup();
     dbs.push(ctx.handles);
     await me(ctx.app, "A");
     await me(ctx.app, "B");
@@ -323,7 +323,7 @@ describe("stage 14 firebase auth and workspace isolation", () => {
   });
 
   it("J — rejects a cross-workspace obligation id", async () => {
-    const ctx = setup();
+    const ctx = await setup();
     dbs.push(ctx.handles);
     await me(ctx.app, "A");
     await me(ctx.app, "B");
@@ -356,7 +356,7 @@ describe("stage 14 firebase auth and workspace isolation", () => {
   });
 
   it("K / L / M — Home, STS, and affordability stay on the authenticated workspace", async () => {
-    const ctx = setup();
+    const ctx = await setup();
     dbs.push(ctx.handles);
     await me(ctx.app, "A");
     await me(ctx.app, "B");
@@ -415,7 +415,7 @@ describe("stage 14 firebase auth and workspace isolation", () => {
   });
 
   it("N — missing Firebase token is 401", async () => {
-    const ctx = setup();
+    const ctx = await setup();
     dbs.push(ctx.handles);
     const response = await api(ctx.app, null, "/api/me");
     expect(response.status).toBe(401);
@@ -423,7 +423,7 @@ describe("stage 14 firebase auth and workspace isolation", () => {
   });
 
   it("O — invalid Firebase token is 401", async () => {
-    const ctx = setup();
+    const ctx = await setup();
     dbs.push(ctx.handles);
     const response = await api(ctx.app, "invalid", "/api/accounts");
     expect(response.status).toBe(401);
@@ -433,7 +433,7 @@ describe("stage 14 firebase auth and workspace isolation", () => {
   });
 
   it("revoked Firebase token is 401 without leaking verifier internals", async () => {
-    const ctx = setup();
+    const ctx = await setup();
     dbs.push(ctx.handles);
     const response = await api(ctx.app, "revoked", "/api/accounts");
     expect(response.status).toBe(401);
@@ -444,7 +444,7 @@ describe("stage 14 firebase auth and workspace isolation", () => {
   });
 
   it("disabled Firebase identity is 401 without leaking verifier internals", async () => {
-    const ctx = setup();
+    const ctx = await setup();
     dbs.push(ctx.handles);
     const response = await api(ctx.app, "firebase-disabled", "/api/accounts");
     expect(response.status).toBe(401);
@@ -455,7 +455,7 @@ describe("stage 14 firebase auth and workspace isolation", () => {
   });
 
   it("Q — disabled internal user is denied", async () => {
-    const ctx = setup();
+    const ctx = await setup();
     dbs.push(ctx.handles);
     const session = await me(ctx.app, "A");
     ctx.handles.db.update(users).set({ status: "disabled" }).where(eq(users.id, session.userId)).run();
@@ -467,7 +467,7 @@ describe("stage 14 firebase auth and workspace isolation", () => {
   });
 
   it("R — old password login endpoint is unavailable", async () => {
-    const ctx = setup();
+    const ctx = await setup();
     dbs.push(ctx.handles);
     const missing = await api(ctx.app, null, "/api/login", {
       method: "POST",
@@ -482,9 +482,9 @@ describe("stage 14 firebase auth and workspace isolation", () => {
   });
 
   it("does not attach the legacy development workspace to a Firebase user", async () => {
-    const ctx = setup();
+    const ctx = await setup();
     dbs.push(ctx.handles);
-    const legacy = getSoleWorkspaceId(ctx.handles);
+    const legacy = await getSoleWorkspaceId(ctx.handles);
     const session = await me(ctx.app, "A");
     expect(session.workspaceId).not.toBe(legacy);
     const memberships = ctx.handles.db

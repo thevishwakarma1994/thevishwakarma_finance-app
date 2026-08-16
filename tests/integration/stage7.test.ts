@@ -13,12 +13,12 @@ import { transferMoney } from "../../src/app/transferMoney.js";
 import { createAccount } from "../../src/app/accounts.js";
 import { createCategory, updateCategory } from "../../src/app/categories.js";
 
-function setup() {
+async function setup() {
   const handles = openMemoryDatabase();
-  applyMigrations(handles);
-  const workspaceId = getSoleWorkspaceId(handles);
-  const accounts = listAccounts(handles, workspaceId);
-  const snapshot = loadSnapshot(handles, workspaceId);
+  await applyMigrations(handles);
+  const workspaceId = await getSoleWorkspaceId(handles);
+  const accounts = await listAccounts(handles, workspaceId);
+  const snapshot = await loadSnapshot(handles, workspaceId);
   const hdfc = accounts.find((account) => account.displayName === "HDFC");
   if (!hdfc) throw new Error("Expected seeded HDFC account");
   const grocery = snapshot.categories.find((category) => category.name === "Grocery");
@@ -50,8 +50,8 @@ function tableCounts(handles: SqliteHandles, workspaceId: string) {
   };
 }
 
-function balance(handles: SqliteHandles, workspaceId: string, accountId: string): number {
-  const account = loadSnapshot(handles, workspaceId).accounts.find((item) => item.id === accountId);
+async function balance(handles: SqliteHandles, workspaceId: string, accountId: string): Promise<number> {
+  const account = (await loadSnapshot(handles, workspaceId)).accounts.find((item) => item.id === accountId);
   if (!account) throw new Error("Account missing");
   return account.balancePaise;
 }
@@ -64,21 +64,21 @@ describe("transfers, categories, and month review", () => {
     handles?.sqlite.close();
   });
 
-  it("moves ₹2,000 from HDFC to Cash without changing personal spend", () => {
-    const ctx = setup();
+  it("moves ₹2,000 from HDFC to Cash without changing personal spend", async () => {
+    const ctx = await setup();
     handles = ctx.handles;
-    const cash = createAccount(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    const cash = await createAccount(ctx.handles, { workspaceId: ctx.workspaceId }, {
       displayName: "Cash",
       kind: "cash",
     });
-    applyOpening(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    await applyOpening(ctx.handles, { workspaceId: ctx.workspaceId }, {
       accountId: ctx.hdfcId,
       effectiveOn: "2026-08-01",
       balancePaise: 1_000_000,
       commit: true,
     });
-    const spendBefore = monthReview(ctx.handles, ctx.workspaceId, isoDate("2026-08-16")).spentPaise;
-    transferMoney(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    const spendBefore = (await monthReview(ctx.handles, ctx.workspaceId, isoDate("2026-08-16"))).spentPaise;
+    await transferMoney(ctx.handles, { workspaceId: ctx.workspaceId }, {
       occurredOn: "2026-08-12",
       capturedAt,
       amountPaise: 200_000,
@@ -86,28 +86,28 @@ describe("transfers, categories, and month review", () => {
       toAccountId: cash.id,
       commit: true,
     });
-    expect(balance(ctx.handles, ctx.workspaceId, ctx.hdfcId)).toBe(800_000);
-    expect(balance(ctx.handles, ctx.workspaceId, cash.id)).toBe(200_000);
-    expect(monthReview(ctx.handles, ctx.workspaceId, isoDate("2026-08-16")).spentPaise).toBe(
+    expect(await balance(ctx.handles, ctx.workspaceId, ctx.hdfcId)).toBe(800_000);
+    expect(await balance(ctx.handles, ctx.workspaceId, cash.id)).toBe(200_000);
+    expect((await monthReview(ctx.handles, ctx.workspaceId, isoDate("2026-08-16"))).spentPaise).toBe(
       spendBefore,
     );
   });
 
-  it("writes nothing when a transfer fails conservation or validation", () => {
-    const ctx = setup();
+  it("writes nothing when a transfer fails conservation or validation", async () => {
+    const ctx = await setup();
     handles = ctx.handles;
-    const cash = createAccount(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    const cash = await createAccount(ctx.handles, { workspaceId: ctx.workspaceId }, {
       displayName: "Cash",
       kind: "cash",
     });
-    applyOpening(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    await applyOpening(ctx.handles, { workspaceId: ctx.workspaceId }, {
       accountId: ctx.hdfcId,
       effectiveOn: "2026-08-01",
       balancePaise: 1_000_000,
       commit: true,
     });
     const before = tableCounts(ctx.handles, ctx.workspaceId);
-    expect(() =>
+    await expect(
       transferMoney(ctx.handles, { workspaceId: ctx.workspaceId }, {
         occurredOn: "2026-08-12",
         capturedAt,
@@ -116,65 +116,65 @@ describe("transfers, categories, and month review", () => {
         toAccountId: cash.id,
         commit: true,
       }),
-    ).toThrow(DomainError);
+    ).rejects.toThrow(DomainError);
     expect(tableCounts(ctx.handles, ctx.workspaceId)).toEqual(before);
-    expect(balance(ctx.handles, ctx.workspaceId, ctx.hdfcId)).toBe(1_000_000);
+    expect(await balance(ctx.handles, ctx.workspaceId, ctx.hdfcId)).toBe(1_000_000);
   });
 
-  it("keeps archived category names on historical activity", () => {
-    const ctx = setup();
+  it("keeps archived category names on historical activity", async () => {
+    const ctx = await setup();
     handles = ctx.handles;
-    applyOpening(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    await applyOpening(ctx.handles, { workspaceId: ctx.workspaceId }, {
       accountId: ctx.hdfcId,
       effectiveOn: "2026-08-01",
       balancePaise: 1_000_000,
       commit: true,
     });
-    recordExpense(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    await recordExpense(ctx.handles, { workspaceId: ctx.workspaceId }, {
       occurredOn: "2026-08-10",
       capturedAt,
       accountId: ctx.hdfcId,
       allocations: [{ categoryId: ctx.groceryId, amountPaise: 120_000 }],
       commit: true,
     });
-    updateCategory(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    await updateCategory(ctx.handles, { workspaceId: ctx.workspaceId }, {
       categoryId: ctx.groceryId,
       name: "Groceries",
       archive: true,
     });
-    const activity = listActivity(ctx.handles, ctx.workspaceId);
+    const activity = await listActivity(ctx.handles, ctx.workspaceId);
     expect(activity[0]?.categories[0]?.name).toBe("Groceries");
   });
 
-  it("rejects a duplicate active sibling category", () => {
-    const ctx = setup();
+  it("rejects a duplicate active sibling category", async () => {
+    const ctx = await setup();
     handles = ctx.handles;
-    expect(() =>
+    await expect(
       createCategory(ctx.handles, { workspaceId: ctx.workspaceId }, { name: "Grocery" }),
-    ).toThrow(/already exists/);
+    ).rejects.toThrow(/already exists/);
   });
 
-  it("sums only expense postings in Month Review, including multi-category events", () => {
-    const ctx = setup();
+  it("sums only expense postings in Month Review, including multi-category events", async () => {
+    const ctx = await setup();
     handles = ctx.handles;
-    const cash = createAccount(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    const cash = await createAccount(ctx.handles, { workspaceId: ctx.workspaceId }, {
       displayName: "Cash",
       kind: "cash",
     });
-    applyOpening(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    await applyOpening(ctx.handles, { workspaceId: ctx.workspaceId }, {
       accountId: ctx.hdfcId,
       effectiveOn: "2026-08-01",
       balancePaise: 1_000_000,
       commit: true,
     });
-    recordExpense(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    await recordExpense(ctx.handles, { workspaceId: ctx.workspaceId }, {
       occurredOn: "2026-07-20",
       capturedAt,
       accountId: ctx.hdfcId,
       allocations: [{ categoryId: ctx.groceryId, amountPaise: 100_000 }],
       commit: true,
     });
-    recordExpense(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    await recordExpense(ctx.handles, { workspaceId: ctx.workspaceId }, {
       occurredOn: "2026-08-12",
       capturedAt,
       accountId: ctx.hdfcId,
@@ -184,7 +184,7 @@ describe("transfers, categories, and month review", () => {
       ],
       commit: true,
     });
-    transferMoney(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    await transferMoney(ctx.handles, { workspaceId: ctx.workspaceId }, {
       occurredOn: "2026-08-13",
       capturedAt,
       amountPaise: 50_000,
@@ -192,7 +192,7 @@ describe("transfers, categories, and month review", () => {
       toAccountId: cash.id,
       commit: true,
     });
-    const review = monthReview(ctx.handles, ctx.workspaceId, isoDate("2026-08-16"));
+    const review = await monthReview(ctx.handles, ctx.workspaceId, isoDate("2026-08-16"));
     expect(review.month).toBe("2026-08");
     expect(review.previousMonth).toBe("2026-07");
     expect(review.spentPaise).toBe(300_000);
@@ -200,7 +200,7 @@ describe("transfers, categories, and month review", () => {
     expect(review.differencePaise).toBe(200_000);
     expect(review.categories.find((item) => item.name === "Grocery")?.spentPaise).toBe(180_000);
     expect(review.categories.find((item) => item.name === "Household")?.spentPaise).toBe(120_000);
-    expect(listActivity(ctx.handles, ctx.workspaceId).some((event) => event.meaning === "transfer")).toBe(
+    expect((await listActivity(ctx.handles, ctx.workspaceId)).some((event) => event.meaning === "transfer")).toBe(
       true,
     );
   });

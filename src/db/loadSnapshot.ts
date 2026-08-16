@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { paise } from "../domain/money/paise.js";
+import { paise, addPaise } from "../domain/money/paise.js";
 import { isoDate } from "../domain/calendar/isoDate.js";
 import { todayKolkata } from "../domain/calendar/kolkata.js";
 import { parseCardCycleRule } from "../domain/cycle/assign.js";
@@ -25,125 +25,36 @@ import type {
 import { isAccountOpeningPayload } from "../domain/ledger/types.js";
 import { enrichClaim } from "../domain/claims/derive.js";
 import { enrichReservation } from "../domain/reservations/derive.js";
-import {
-  accounts,
-  billingCycles,
-  categories,
-  claims,
-  creditCards,
-  eventShares,
-  financialEvents,
-  fundingCycles,
-  incomePolicies,
-  openingPositions,
-  obligationTemplates,
-  obligationInstances as obligationInstanceTable,
-  people,
-  postings,
-  reservationLedger,
-  reservations,
-  settlementAllocations,
-  surplusCases,
-} from "./schema.js";
-import type { SqliteHandles } from "./client.js";
+import type { DbHandles } from "./handles.js";
+import { anyDb, queryAll, tables } from "./exec.js"; 
 import { loadCardRule } from "./config.js";
 import { parseDueRule } from "../domain/obligations/generate.js";
+import { fromStoredPaise, fromStoredPaiseOrNull } from "./storedPaise.js";
 
-export function loadSnapshot(
-  handles: SqliteHandles,
+export async function loadSnapshot(
+  handles: DbHandles,
   workspaceId: string,
   asOf = todayKolkata(),
-): LedgerSnapshot {
-  const accountRows = handles.db
-    .select()
-    .from(accounts)
-    .where(eq(accounts.workspaceId, workspaceId))
-    .all();
-  const cardRows = handles.db
-    .select()
-    .from(creditCards)
-    .where(eq(creditCards.workspaceId, workspaceId))
-    .all();
-  const cycleRows = handles.db
-    .select()
-    .from(billingCycles)
-    .where(eq(billingCycles.workspaceId, workspaceId))
-    .all();
-  const categoryRows = handles.db
-    .select()
-    .from(categories)
-    .where(eq(categories.workspaceId, workspaceId))
-    .all();
-  const eventRows = handles.db
-    .select()
-    .from(financialEvents)
-    .where(eq(financialEvents.workspaceId, workspaceId))
-    .all();
-  const postingRows = handles.db
-    .select()
-    .from(postings)
-    .where(eq(postings.workspaceId, workspaceId))
-    .all();
-  const openingRows = handles.db
-    .select()
-    .from(openingPositions)
-    .where(eq(openingPositions.workspaceId, workspaceId))
-    .all();
-  const peopleRows = handles.db
-    .select()
-    .from(people)
-    .where(eq(people.workspaceId, workspaceId))
-    .all();
-  const claimRows = handles.db
-    .select()
-    .from(claims)
-    .where(eq(claims.workspaceId, workspaceId))
-    .all();
-  const shareRows = handles.db
-    .select()
-    .from(eventShares)
-    .where(eq(eventShares.workspaceId, workspaceId))
-    .all();
-  const allocationRows = handles.db
-    .select()
-    .from(settlementAllocations)
-    .where(eq(settlementAllocations.workspaceId, workspaceId))
-    .all();
-  const reservationRows = handles.db
-    .select()
-    .from(reservations)
-    .where(eq(reservations.workspaceId, workspaceId))
-    .all();
-  const reservationLedgerRows = handles.db
-    .select()
-    .from(reservationLedger)
-    .where(eq(reservationLedger.workspaceId, workspaceId))
-    .all();
-  const surplusRows = handles.db
-    .select()
-    .from(surplusCases)
-    .where(eq(surplusCases.workspaceId, workspaceId))
-    .all();
-  const policyRows = handles.db
-    .select()
-    .from(incomePolicies)
-    .where(eq(incomePolicies.workspaceId, workspaceId))
-    .all();
-  const fundingRows = handles.db
-    .select()
-    .from(fundingCycles)
-    .where(eq(fundingCycles.workspaceId, workspaceId))
-    .all();
-  const templateRows = handles.db
-    .select()
-    .from(obligationTemplates)
-    .where(eq(obligationTemplates.workspaceId, workspaceId))
-    .all();
-  const instanceRows = handles.db
-    .select()
-    .from(obligationInstanceTable)
-    .where(eq(obligationInstanceTable.workspaceId, workspaceId))
-    .all();
+): Promise<LedgerSnapshot> {
+  const t = tables(handles);
+  const accountRows = await queryAll(handles, anyDb(handles).select().from(t.accounts).where(eq(t.accounts.workspaceId, workspaceId)));
+  const cardRows = await queryAll(handles, anyDb(handles).select().from(t.creditCards).where(eq(t.creditCards.workspaceId, workspaceId)));
+  const cycleRows = await queryAll(handles, anyDb(handles).select().from(t.billingCycles).where(eq(t.billingCycles.workspaceId, workspaceId)));
+  const categoryRows = await queryAll(handles, anyDb(handles).select().from(t.categories).where(eq(t.categories.workspaceId, workspaceId)));
+  const eventRows = await queryAll(handles, anyDb(handles).select().from(t.financialEvents).where(eq(t.financialEvents.workspaceId, workspaceId)));
+  const postingRows = await queryAll(handles, anyDb(handles).select().from(t.postings).where(eq(t.postings.workspaceId, workspaceId)));
+  const openingRows = await queryAll(handles, anyDb(handles).select().from(t.openingPositions).where(eq(t.openingPositions.workspaceId, workspaceId)));
+  const peopleRows = await queryAll(handles, anyDb(handles).select().from(t.people).where(eq(t.people.workspaceId, workspaceId)));
+  const claimRows = await queryAll(handles, anyDb(handles).select().from(t.claims).where(eq(t.claims.workspaceId, workspaceId)));
+  const shareRows = await queryAll(handles, anyDb(handles).select().from(t.eventShares).where(eq(t.eventShares.workspaceId, workspaceId)));
+  const allocationRows = await queryAll(handles, anyDb(handles).select().from(t.settlementAllocations).where(eq(t.settlementAllocations.workspaceId, workspaceId)));
+  const reservationRows = await queryAll(handles, anyDb(handles).select().from(t.reservations).where(eq(t.reservations.workspaceId, workspaceId)));
+  const reservationLedgerRows = await queryAll(handles, anyDb(handles).select().from(t.reservationLedger).where(eq(t.reservationLedger.workspaceId, workspaceId)));
+  const surplusRows = await queryAll(handles, anyDb(handles).select().from(t.surplusCases).where(eq(t.surplusCases.workspaceId, workspaceId)));
+  const policyRows = await queryAll(handles, anyDb(handles).select().from(t.incomePolicies).where(eq(t.incomePolicies.workspaceId, workspaceId)));
+  const fundingRows = await queryAll(handles, anyDb(handles).select().from(t.fundingCycles).where(eq(t.fundingCycles.workspaceId, workspaceId)));
+  const templateRows = await queryAll(handles, anyDb(handles).select().from(t.obligationTemplates).where(eq(t.obligationTemplates.workspaceId, workspaceId)));
+  const instanceRows = await queryAll(handles, anyDb(handles).select().from(t.obligationInstances).where(eq(t.obligationInstances.workspaceId, workspaceId)));
 
   const openings: OpeningPosition[] = openingRows.map((row) => {
     const payload = JSON.parse(row.payload) as Record<string, unknown>;
@@ -155,7 +66,7 @@ export function loadSnapshot(
         subjectId: row.subjectId,
         payload: {
           direction: payload.direction as ClaimDirection,
-          amountPaise: paise(Number(payload.amountPaise)),
+          amountPaise: fromStoredPaise(payload.amountPaise),
           note: typeof payload.note === "string" ? payload.note : null,
         },
       };
@@ -165,7 +76,7 @@ export function loadSnapshot(
       effectiveOn: isoDate(row.effectiveOn),
       kind: row.kind as OpeningPosition["kind"],
       subjectId: row.subjectId,
-      payload: { balancePaise: paise(Number(payload.balancePaise)) },
+      payload: { balancePaise: fromStoredPaise(payload.balancePaise) },
     };
   });
 
@@ -175,11 +86,9 @@ export function loadSnapshot(
     );
     const openingBalancePaise =
       opening && isAccountOpeningPayload(opening.payload) ? opening.payload.balancePaise : paise(0);
-    const postedPaise = paise(
-      postingRows
-        .filter((posting) => posting.accountId === row.id)
-        .reduce((sum, posting) => sum + posting.amountPaise, 0),
-    );
+    const postedPaise = postingRows
+      .filter((posting) => posting.accountId === row.id)
+      .reduce((sum, posting) => addPaise(sum, fromStoredPaise(posting.amountPaise)), paise(0));
     return {
       id: row.id,
       kind: row.kind as LedgerAccount["kind"],
@@ -189,7 +98,7 @@ export function loadSnapshot(
       status: row.status as LedgerAccount["status"],
       openingBalancePaise,
       postedPaise,
-      balancePaise: paise(openingBalancePaise + postedPaise),
+      balancePaise: addPaise(openingBalancePaise, postedPaise),
     };
   });
 
@@ -198,7 +107,7 @@ export function loadSnapshot(
     displayName: row.displayName,
     issuer: row.issuer,
     mask: row.mask,
-    creditLimitPaise: row.creditLimitPaise === null ? null : paise(row.creditLimitPaise),
+    creditLimitPaise: fromStoredPaiseOrNull(row.creditLimitPaise),
     defaultPaymentAccountId: row.defaultPaymentAccountId,
     defaultOwnerPersonId: row.defaultOwnerPersonId,
     status: row.status as CreditCardRecord["status"],
@@ -209,7 +118,7 @@ export function loadSnapshot(
     meaning: row.meaning as LedgerSnapshot["events"][number]["meaning"],
     occurredOn: isoDate(row.occurredOn),
     capturedAt: row.capturedAt,
-    amountPaise: paise(row.amountPaise),
+    amountPaise: fromStoredPaise(row.amountPaise),
     accountId: row.accountId,
     creditCardId: row.creditCardId,
     loanId: null,
@@ -226,7 +135,7 @@ export function loadSnapshot(
   const ledgerPostings = postingRows.map((row) => ({
     id: row.id,
     eventId: row.eventId,
-    amountPaise: paise(row.amountPaise),
+    amountPaise: fromStoredPaise(row.amountPaise),
     accountId: row.accountId,
     creditCardId: row.creditCardId,
     loanId: null,
@@ -245,8 +154,7 @@ export function loadSnapshot(
     actualStatementOn: row.actualStatementOn ? isoDate(row.actualStatementOn) : null,
     expectedDueOn: isoDate(row.expectedDueOn),
     actualDueOn: row.actualDueOn ? isoDate(row.actualDueOn) : null,
-    actualStatementAmountPaise:
-      row.actualStatementAmountPaise === null ? null : paise(row.actualStatementAmountPaise),
+    actualStatementAmountPaise: fromStoredPaiseOrNull(row.actualStatementAmountPaise),
     ruleSnapshot: parseCardCycleRule(JSON.parse(row.ruleSnapshot)),
   }));
 
@@ -254,7 +162,7 @@ export function loadSnapshot(
     id: row.id,
     eventId: row.eventId,
     claimId: row.claimId,
-    amountPaise: paise(row.amountPaise),
+    amountPaise: fromStoredPaise(row.amountPaise),
     createsReservation: row.createsReservation === 1,
     reservationId: row.reservationId,
   }));
@@ -266,7 +174,7 @@ export function loadSnapshot(
         personId: row.personId,
         direction: row.direction as ClaimDirection,
         kind: row.kind as ClaimKind,
-        originalAmountPaise: paise(row.originalAmountPaise),
+        originalAmountPaise: fromStoredPaise(row.originalAmountPaise),
         originatingEventId: row.originatingEventId,
         openingPositionId: row.openingPositionId,
         billingCycleId: row.billingCycleId,
@@ -281,11 +189,11 @@ export function loadSnapshot(
     enrichReservation({
       id: row.id,
       sourceAccountId: row.sourceAccountId,
-      amountOriginalPaise: paise(row.amountOriginalPaise),
-      amountConsumedPaise: paise(row.amountConsumedPaise),
-      amountReleasedPaise: paise(row.amountReleasedPaise),
-      amountReassignedPaise: paise(row.amountReassignedPaise),
-      amountSurplusHeldPaise: paise(row.amountSurplusHeldPaise),
+      amountOriginalPaise: fromStoredPaise(row.amountOriginalPaise),
+      amountConsumedPaise: fromStoredPaise(row.amountConsumedPaise),
+      amountReleasedPaise: fromStoredPaise(row.amountReleasedPaise),
+      amountReassignedPaise: fromStoredPaise(row.amountReassignedPaise),
+      amountSurplusHeldPaise: fromStoredPaise(row.amountSurplusHeldPaise),
       status: row.status as ReservationStatus,
       obligationRef: {
         type: row.obligationRefType as ObligationRefType,
@@ -296,6 +204,18 @@ export function loadSnapshot(
       createdOn: isoDate(row.createdOn),
     }),
   );
+
+  const cardRules: LedgerSnapshot["cardRules"] = [];
+  for (const row of cardRows) {
+    try {
+      cardRules.push({
+        creditCardId: row.id,
+        rule: await loadCardRule(handles, workspaceId, row.id, asOf),
+      });
+    } catch {
+      // Cards without a rule are omitted from the snapshot, matching SQLite behavior.
+    }
+  }
 
   return {
     accounts: ledgerAccounts,
@@ -318,7 +238,7 @@ export function loadSnapshot(
       id: row.id,
       eventId: row.eventId,
       personId: row.personId,
-      amountPaise: paise(row.amountPaise),
+      amountPaise: fromStoredPaise(row.amountPaise),
       isUser: row.isUser === 1,
     })),
     settlementAllocations: loadedAllocations,
@@ -327,15 +247,15 @@ export function loadSnapshot(
       id: row.id,
       reservationId: row.reservationId,
       eventId: row.eventId,
-      deltaConsumedPaise: paise(row.deltaConsumedPaise),
-      deltaReleasedPaise: paise(row.deltaReleasedPaise),
-      deltaReassignedPaise: paise(row.deltaReassignedPaise),
-      deltaSurplusHeldPaise: paise(row.deltaSurplusHeldPaise),
+      deltaConsumedPaise: fromStoredPaise(row.deltaConsumedPaise),
+      deltaReleasedPaise: fromStoredPaise(row.deltaReleasedPaise),
+      deltaReassignedPaise: fromStoredPaise(row.deltaReassignedPaise),
+      deltaSurplusHeldPaise: fromStoredPaise(row.deltaSurplusHeldPaise),
       createdAt: row.createdAt,
     })),
     surplusCases: surplusRows.map((row) => ({
       id: row.id,
-      amountPaise: paise(row.amountPaise),
+      amountPaise: fromStoredPaise(row.amountPaise),
       kind: row.kind as SurplusKind,
       sourceAccountId: row.sourceAccountId,
       personId: row.personId,
@@ -352,7 +272,7 @@ export function loadSnapshot(
     openings,
     incomePolicies: policyRows.map((row) => ({
       id: row.id,
-      expectedAmountPaise: paise(row.expectedAmountPaise),
+      expectedAmountPaise: fromStoredPaise(row.expectedAmountPaise),
       windowStartDay: row.windowStartDay,
       windowEndDay: row.windowEndDay,
       typicalDay: row.typicalDay,
@@ -365,18 +285,12 @@ export function loadSnapshot(
       month: row.month,
       expectedWindowStart: isoDate(row.expectedWindowStart),
       expectedWindowEnd: isoDate(row.expectedWindowEnd),
-      expectedAmountSnapshot: paise(row.expectedAmountSnapshot),
+      expectedAmountSnapshot: fromStoredPaise(row.expectedAmountSnapshot),
       actualArrivalOn: row.actualArrivalOn ? isoDate(row.actualArrivalOn) : null,
-      actualAmountPaise: row.actualAmountPaise === null ? null : paise(row.actualAmountPaise),
+      actualAmountPaise: fromStoredPaiseOrNull(row.actualAmountPaise),
       salaryEventId: row.salaryEventId,
     })),
-    cardRules: cardRows.flatMap((row) => {
-      try {
-        return [{ creditCardId: row.id, rule: loadCardRule(handles, workspaceId, row.id, asOf) }];
-      } catch {
-        return [];
-      }
-    }),
+    cardRules,
     extraObligations: [],
     obligationTemplates: templateRows.map((row) => ({
       id: row.id,
@@ -393,7 +307,7 @@ export function loadSnapshot(
       templateId: row.templateId,
       nameSnapshot: row.nameSnapshot,
       dueOn: isoDate(row.dueOn),
-      amountPaise: paise(row.amountPaise),
+      amountPaise: fromStoredPaise(row.amountPaise),
       prioritySnapshot: row.prioritySnapshot as ObligationPriority,
       status: row.status as LedgerSnapshot["obligationInstances"][number]["status"],
       fundingCycleId: row.fundingCycleId,
@@ -403,12 +317,12 @@ export function loadSnapshot(
   };
 }
 
-export function getAccountBalance(
-  handles: SqliteHandles,
+export async function getAccountBalance(
+  handles: DbHandles,
   workspaceId: string,
   accountId: string,
-): number {
-  const snapshot = loadSnapshot(handles, workspaceId);
+): Promise<number> {
+  const snapshot = await loadSnapshot(handles, workspaceId);
   const account = snapshot.accounts.find((item) => item.id === accountId);
   if (!account) {
     throw new Error("Account not found");

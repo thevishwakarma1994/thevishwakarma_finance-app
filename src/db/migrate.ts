@@ -4,14 +4,22 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { count, eq } from "drizzle-orm";
 import { newId } from "../domain/ids.js";
 import { utcNowIso } from "../domain/calendar/kolkata.js";
-import { accounts, categories, workspaces } from "./schema.js";
-import { openDatabase, type SqliteHandles } from "./client.js";
+import { schema } from "./schema.js";
+import {
+  closeDatabase,
+  openConfiguredDatabase,
+  type DbHandles,
+  type SqliteHandles,
+} from "./client.js";
+import { describeDatabaseConfig, resolveDatabaseConfig } from "./env.js";
+import { anyDb, queryGet, tables } from "./exec.js"; 
+import { applyPostgresMigrations } from "./pg/migrate.js";
 
 export function drizzleDir(): string {
   return fileURLToPath(new URL("../../drizzle", import.meta.url));
 }
 
-export function applyMigrations(handles: SqliteHandles, migrationsDir = drizzleDir()): void {
+export function applySqliteMigrations(handles: SqliteHandles, migrationsDir = drizzleDir()): void {
   handles.sqlite.exec(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
       filename TEXT PRIMARY KEY NOT NULL,
@@ -43,24 +51,32 @@ export function applyMigrations(handles: SqliteHandles, migrationsDir = drizzleD
   seedWorkspace(handles);
 }
 
+export async function applyMigrations(handles: DbHandles): Promise<void> {
+  if (handles.dialect === "sqlite") {
+    applySqliteMigrations(handles);
+    return;
+  }
+  await applyPostgresMigrations(handles);
+}
+
 export const LEGACY_WORKSPACE_NAME = "Development (legacy)";
 
 function seedWorkspace(handles: SqliteHandles): void {
-  const existing = handles.db.select({ value: count() }).from(workspaces).get();
+  const existing = anyDb(handles).select({ value: count() }).from(schema.workspaces).get();
   if ((existing?.value ?? 0) > 0) {
     return;
   }
 
   const workspaceId = newId();
   const now = utcNowIso();
-  handles.db.insert(workspaces).values({
+  anyDb(handles).insert(schema.workspaces).values({
     id: workspaceId,
     name: LEGACY_WORKSPACE_NAME,
     createdAt: now,
   }).run();
 
   handles.db
-    .insert(categories)
+    .insert(schema.categories)
     .values([
       { id: newId(), workspaceId, parentId: null, name: "Grocery", archivedAt: null },
       { id: newId(), workspaceId, parentId: null, name: "Household", archivedAt: null },
@@ -68,7 +84,7 @@ function seedWorkspace(handles: SqliteHandles): void {
     .run();
 
   handles.db
-    .insert(accounts)
+    .insert(schema.accounts)
     .values({
       id: newId(),
       workspaceId,
@@ -83,14 +99,14 @@ function seedWorkspace(handles: SqliteHandles): void {
 }
 
 /** Test/dev helper: the unowned seeded workspace, never a Firebase personal book. */
-export function getSoleWorkspaceId(handles: SqliteHandles): string {
-  const legacy = handles.db
-    .select()
-    .from(workspaces)
-    .where(eq(workspaces.name, LEGACY_WORKSPACE_NAME))
-    .get();
+export async function getSoleWorkspaceId(handles: DbHandles): Promise<string> {
+  const t = tables(handles);
+  const legacy = await queryGet<{ id: string }>(
+    handles,
+    anyDb(handles).select().from(t.workspaces).where(eq(t.workspaces.name, LEGACY_WORKSPACE_NAME)),
+  );
   if (legacy) return legacy.id;
-  const row = handles.db.select().from(workspaces).get();
+  const row = await queryGet<{ id: string }>(handles, anyDb(handles).select().from(t.workspaces));
   if (!row) {
     throw new Error("Workspace has not been seeded");
   }
@@ -104,8 +120,9 @@ function isMain(): boolean {
 }
 
 if (isMain()) {
-  const databasePath = process.env.DATABASE_PATH ?? "data/app.sqlite";
-  const handles = openDatabase(databasePath);
-  applyMigrations(handles);
-  console.log(`Migrated ${databasePath}`);
+  const config = resolveDatabaseConfig();
+  const handles = await openConfiguredDatabase(config);
+  await applyMigrations(handles);
+  console.log(`Migrated ${describeDatabaseConfig(config)}`);
+  await closeDatabase(handles);
 }

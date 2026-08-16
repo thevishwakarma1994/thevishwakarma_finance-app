@@ -1,6 +1,8 @@
 # Stage 5 — Technical Architecture & Persistence
 
-**Status:** Stage 14 — Firebase Auth adapter + per-user Personal workspaces. SQLite remains the financial database. Do not migrate to PostgreSQL or deploy in this stage.
+**Status:** Stage 15A — PostgreSQL production persistence is implemented behind `src/db`. SQLite remains the local/dev/test default. Do not deploy in this stage.
+
+**Locked inputs:** `docs/04-financial-domain-model.md` (behaviour), `docs/03-information-architecture-ux.md` (UX). Shopping/receipts: `docs/06-shopping-receipts-amendment.md`. Production DB: `docs/07-production-deployment.md`. This document does not restate financial rules.
 
 **Locked inputs:** `docs/04-financial-domain-model.md` (behaviour), `docs/03-information-architecture-ux.md` (UX). Shopping/receipts: `docs/06-shopping-receipts-amendment.md`. This document does not restate financial rules.
 
@@ -19,9 +21,9 @@ Phone-first means capture from a phone. That requires an HTTP app, not a laptop-
 | UI         | Vite + React 19 + CSS modules (or vanilla-extract)                                         | Fast local loop, PWA-capable, no RSC cache surprises around money    | Next.js: extra caching/runtime for no SEO need. Expo: store + native tax for a personal tool |
 | API        | Hono, same Node process as static UI                                                       | Tiny, typed middleware                                               | Separate Nest/Express service: ceremony                                                      |
 | Domain     | Pure TS package folder `src/domain`                                                        | Testable with no HTTP, no DB, no React                               | Calculations inside components                                                               |
-| DB         | SQLite 3, WAL, `PRAGMA foreign_keys=ON`                                                    | One user, ACID, zero daemon locally, file backup                     | Postgres V1: extra process. Browser-SQLite: backup/corruption risk                           |
-| Driver     | `better-sqlite3`                                                                           | Synchronous transactions; no interleaved awaits inside a money write | async `sql.js`                                                                               |
-| ORM        | Drizzle                                                                                    | SQL-shaped, typed, no hidden N+1 magic                               | Prisma: heavier, worse for custom invariants                                                 |
+| DB         | SQLite locally; PostgreSQL (Neon) in production via `DATABASE_URL`                         | Local zero-daemon loop; production durability                    | Prisma; Firebase DB; browser-SQLite |
+| Driver     | `better-sqlite3` (dev) / `pg` (production)                                                | Dialect isolated in `src/db`                                     | async `sql.js` as the V1 local driver |
+| ORM        | Drizzle                                                                                    | SQL-shaped, typed, no hidden N+1 magic                           | Prisma: heavier, worse for custom invariants                                                 |
 | Validation | Zod                                                                                        | Shared request + domain input schemas                                |                                                                                              |
 | IDs        | UUIDv7 (TEXT)                                                                              | Sortable, import-friendly later                                      | Auto-increment ints                                                                          |
 | Money      | branded `Paise` integer                                                                    | Never `number` rupees in domain                                      |                                                                                              |
@@ -607,7 +609,7 @@ SQLite is **approved for V1**. Do not add Postgres now.
 | App-side JSON parse | JSON1-only queries as source of truth |
 | Driver-specific connection pragmas, isolated in `src/db` | Business logic in triggers, views that the domain depends on |
 
-**Unavoidable SQLite-specific (document, isolate):** WAL mode; `PRAGMA foreign_keys`; `better-sqlite3` synchronous transactions. Wrap transactions behind `src/db/tx.ts` so a future `node-postgres` adapter can use `BEGIN`/`COMMIT` without changing commands.
+**Unavoidable dialect-specific (document, isolate in `src/db`):** SQLite WAL / `PRAGMA foreign_keys` / synchronous `better-sqlite3` transactions; PostgreSQL `pg` Pool + Drizzle `db.transaction()`. Wrap transactions behind `src/db/tx.ts` so commands stay dialect-agnostic. SQLite callbacks must remain synchronous (no `await` inside a money write). PostgreSQL nested callers join the open transaction instead of taking a second pool connection.
 
 Boolean columns stored as `INTEGER` 0/1 in SQLite are mapped to `boolean` in loaders. Domain never sees 0/1 flags.
 

@@ -1,7 +1,7 @@
 import type { Context, Next } from "hono";
 import { ZodError } from "zod";
 import { DomainError } from "../../domain/ledger/types.js";
-import type { SqliteHandles } from "../../db/client.js";
+import type { DbHandles } from "../../db/client.js";
 import { provisionUserWorkspace, type VerifiedIdentity } from "../../app/provisionUser.js";
 
 export type VerifyIdToken = (token: string) => Promise<VerifiedIdentity>;
@@ -10,7 +10,7 @@ type Env = {
   Variables: {
     workspaceId: string;
     userId: string;
-    handles: SqliteHandles;
+    handles: DbHandles;
     verifyIdToken: VerifyIdToken;
   };
 };
@@ -40,7 +40,7 @@ export async function requireFirebaseAuth(c: Context<Env>, next: Next) {
   }
 
   try {
-    const access = provisionUserWorkspace(c.get("handles"), identity);
+    const access = await provisionUserWorkspace(c.get("handles"), identity);
     c.set("workspaceId", access.workspaceId);
     c.set("userId", access.userId);
   } catch (error) {
