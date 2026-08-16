@@ -5,7 +5,7 @@ import { isoDate } from "../domain/calendar/isoDate.js";
 import { todayKolkata, utcNowIso } from "../domain/calendar/kolkata.js";
 import { DomainError } from "../domain/ledger/types.js";
 import { parseCardCycleRule } from "../domain/cycle/assign.js";
-import { accounts, creditCards } from "../db/schema.js";
+import { accounts, creditCards, people } from "../db/schema.js";
 import { loadCardRule, writeCardRule } from "../db/config.js";
 import { withTransaction } from "../db/tx.js";
 import type { SqliteHandles } from "../db/client.js";
@@ -24,6 +24,7 @@ const createSchema = z.object({
     .optional(),
   creditLimitPaise: z.number().int().positive().nullable().optional(),
   defaultPaymentAccountId: z.string().min(1).nullable().optional(),
+  defaultOwnerPersonId: z.string().min(1).nullable().optional(),
   statementDay: z.number().int().min(1).max(31),
   dueDaysAfterStatement: z.number().int().min(0),
 });
@@ -40,6 +41,7 @@ const updateSchema = z.object({
     .optional(),
   creditLimitPaise: z.number().int().positive().nullable().optional(),
   defaultPaymentAccountId: z.string().min(1).nullable().optional(),
+  defaultOwnerPersonId: z.string().min(1).nullable().optional(),
   status: z.enum(["active", "inactive"]).optional(),
   statementDay: z.number().int().min(1).max(31).optional(),
   dueDaysAfterStatement: z.number().int().min(0).optional(),
@@ -66,9 +68,22 @@ function requirePaymentAccount(
   }
 }
 
+function requireOwnerPerson(
+  handles: SqliteHandles,
+  workspaceId: string,
+  personId: string | null | undefined,
+) {
+  if (!personId) return;
+  const row = handles.db.select().from(people).where(eq(people.id, personId)).get();
+  if (!row || row.workspaceId !== workspaceId || row.status !== "active") {
+    throw new DomainError("person_not_found", "Default owner not found");
+  }
+}
+
 export function createCard(handles: SqliteHandles, context: WorkspaceContext, raw: unknown) {
   const input = createSchema.parse(raw);
   requirePaymentAccount(handles, context.workspaceId, input.defaultPaymentAccountId);
+  requireOwnerPerson(handles, context.workspaceId, input.defaultOwnerPersonId);
   const id = newId();
   const rule = parseCardCycleRule({
     statementDay: input.statementDay,
@@ -86,6 +101,7 @@ export function createCard(handles: SqliteHandles, context: WorkspaceContext, ra
         mask: input.mask ?? null,
         creditLimitPaise: input.creditLimitPaise ?? null,
         defaultPaymentAccountId: input.defaultPaymentAccountId ?? null,
+        defaultOwnerPersonId: input.defaultOwnerPersonId ?? null,
         status: "active",
         createdAt: utcNowIso(),
       })
@@ -102,6 +118,9 @@ export function updateCard(handles: SqliteHandles, context: WorkspaceContext, ra
   if (input.defaultPaymentAccountId !== undefined) {
     requirePaymentAccount(handles, context.workspaceId, input.defaultPaymentAccountId);
   }
+  if (input.defaultOwnerPersonId !== undefined) {
+    requireOwnerPerson(handles, context.workspaceId, input.defaultOwnerPersonId);
+  }
 
   withTransaction(handles, () => {
     const patch: {
@@ -110,6 +129,7 @@ export function updateCard(handles: SqliteHandles, context: WorkspaceContext, ra
       mask?: string | null;
       creditLimitPaise?: number | null;
       defaultPaymentAccountId?: string | null;
+      defaultOwnerPersonId?: string | null;
       status?: "active" | "inactive";
     } = {};
     if (input.displayName !== undefined) patch.displayName = input.displayName;
@@ -118,6 +138,9 @@ export function updateCard(handles: SqliteHandles, context: WorkspaceContext, ra
     if (input.creditLimitPaise !== undefined) patch.creditLimitPaise = input.creditLimitPaise;
     if (input.defaultPaymentAccountId !== undefined) {
       patch.defaultPaymentAccountId = input.defaultPaymentAccountId;
+    }
+    if (input.defaultOwnerPersonId !== undefined) {
+      patch.defaultOwnerPersonId = input.defaultOwnerPersonId;
     }
     if (input.status !== undefined) patch.status = input.status;
     if (Object.keys(patch).length > 0) {

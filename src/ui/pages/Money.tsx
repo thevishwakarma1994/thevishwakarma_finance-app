@@ -12,6 +12,7 @@ import {
   fetchCategories,
   fetchComingCardPayments,
   fetchMonth,
+  fetchPeople,
   previewOrCommitOpening,
   signOut,
   updateAccount,
@@ -21,6 +22,7 @@ import {
   type Category,
   type ComingCardPayment,
   type MonthSpend,
+  type PersonListItem,
 } from "../apiClient.js";
 
 type Props = {
@@ -50,6 +52,8 @@ export function Money({ onSignedOut, onOpenMonth, onOpenCard, onOpenCycle }: Pro
   const [newCardDueDays, setNewCardDueDays] = useState("18");
   const [newCardLimit, setNewCardLimit] = useState("");
   const [newCardPaymentAccountId, setNewCardPaymentAccountId] = useState("");
+  const [newCardOwnerPersonId, setNewCardOwnerPersonId] = useState("");
+  const [people, setPeople] = useState<PersonListItem[]>([]);
   const [renameAccountId, setRenameAccountId] = useState<string | null>(null);
   const [renameAccountName, setRenameAccountName] = useState("");
   const [renameCategoryId, setRenameCategoryId] = useState<string | null>(null);
@@ -62,12 +66,14 @@ export function Money({ onSignedOut, onOpenMonth, onOpenCard, onOpenCycle }: Pro
       fetchCategories(),
       fetchCards(),
       fetchComingCardPayments(),
-    ]).then(([accountData, monthData, categoryData, cardData, comingData]) => {
+      fetchPeople(),
+    ]).then(([accountData, monthData, categoryData, cardData, comingData, peopleData]) => {
       setAccounts(accountData.accounts);
       setMonth(monthData);
       setCategories(categoryData.categories);
       setCards(cardData.cards);
       setComing(comingData.items);
+      setPeople(peopleData.people);
     });
   }
 
@@ -78,13 +84,15 @@ export function Money({ onSignedOut, onOpenMonth, onOpenCard, onOpenCycle }: Pro
       fetchCategories(),
       fetchCards(),
       fetchComingCardPayments(),
+      fetchPeople(),
     ])
-      .then(([accountData, monthData, categoryData, cardData, comingData]) => {
+      .then(([accountData, monthData, categoryData, cardData, comingData, peopleData]) => {
         setAccounts(accountData.accounts);
         setMonth(monthData);
         setCategories(categoryData.categories);
         setCards(cardData.cards);
         setComing(comingData.items);
+        setPeople(peopleData.people);
         if (accountData.accounts[0]) {
           setNewCardPaymentAccountId(accountData.accounts[0].id);
         }
@@ -162,6 +170,7 @@ export function Money({ onSignedOut, onOpenMonth, onOpenCard, onOpenCycle }: Pro
         dueDaysAfterStatement: Number(newCardDueDays),
         creditLimitPaise: newCardLimit ? parseInr(newCardLimit) : null,
         defaultPaymentAccountId: newCardPaymentAccountId || null,
+        defaultOwnerPersonId: newCardOwnerPersonId || null,
       });
       setNewCardName("");
       setNewCardIssuer("");
@@ -406,6 +415,22 @@ export function Money({ onSignedOut, onOpenMonth, onOpenCard, onOpenCycle }: Pro
                   {account.displayName}
                 </option>
               ))}
+            </select>
+          </label>
+          <label>
+            Default owner
+            <select
+              value={newCardOwnerPersonId}
+              onChange={(event) => setNewCardOwnerPersonId(event.target.value)}
+            >
+              <option value="">You</option>
+              {people
+                .filter((person) => person.status === "active")
+                .map((person) => (
+                  <option key={person.id} value={person.id}>
+                    {person.name}
+                  </option>
+                ))}
             </select>
           </label>
           <button className="primary" type="submit">

@@ -6,18 +6,27 @@ import { parseCardCycleRule } from "../domain/cycle/assign.js";
 import { enrichBillingCycles } from "../domain/cycle/lifecycle.js";
 import type {
   BillingCycleRecord,
+  ClaimDirection,
+  ClaimKind,
+  ClaimStatus,
   CreditCardRecord,
   LedgerAccount,
+  LedgerClaim,
   LedgerSnapshot,
   OpeningPosition,
+  PersonStatus,
 } from "../domain/ledger/types.js";
+import { isAccountOpeningPayload } from "../domain/ledger/types.js";
 import {
   accounts,
   billingCycles,
   categories,
+  claims,
   creditCards,
+  eventShares,
   financialEvents,
   openingPositions,
+  people,
   postings,
 } from "./schema.js";
 import type { SqliteHandles } from "./client.js";
@@ -62,15 +71,43 @@ export function loadSnapshot(
     .from(openingPositions)
     .where(eq(openingPositions.workspaceId, workspaceId))
     .all();
+  const peopleRows = handles.db
+    .select()
+    .from(people)
+    .where(eq(people.workspaceId, workspaceId))
+    .all();
+  const claimRows = handles.db
+    .select()
+    .from(claims)
+    .where(eq(claims.workspaceId, workspaceId))
+    .all();
+  const shareRows = handles.db
+    .select()
+    .from(eventShares)
+    .where(eq(eventShares.workspaceId, workspaceId))
+    .all();
 
   const openings: OpeningPosition[] = openingRows.map((row) => {
-    const payload = JSON.parse(row.payload) as { balancePaise: number };
+    const payload = JSON.parse(row.payload) as Record<string, unknown>;
+    if (row.kind === "person") {
+      return {
+        id: row.id,
+        effectiveOn: isoDate(row.effectiveOn),
+        kind: "person",
+        subjectId: row.subjectId,
+        payload: {
+          direction: payload.direction as ClaimDirection,
+          amountPaise: paise(Number(payload.amountPaise)),
+          note: typeof payload.note === "string" ? payload.note : null,
+        },
+      };
+    }
     return {
       id: row.id,
       effectiveOn: isoDate(row.effectiveOn),
       kind: row.kind as OpeningPosition["kind"],
       subjectId: row.subjectId,
-      payload: { balancePaise: paise(payload.balancePaise) },
+      payload: { balancePaise: paise(Number(payload.balancePaise)) },
     };
   });
 
@@ -78,7 +115,8 @@ export function loadSnapshot(
     const opening = openings.find(
       (item) => item.kind === "account" && item.subjectId === row.id,
     );
-    const openingBalancePaise = opening?.payload.balancePaise ?? paise(0);
+    const openingBalancePaise =
+      opening && isAccountOpeningPayload(opening.payload) ? opening.payload.balancePaise : paise(0);
     const postedPaise = paise(
       postingRows
         .filter((posting) => posting.accountId === row.id)
@@ -104,6 +142,7 @@ export function loadSnapshot(
     mask: row.mask,
     creditLimitPaise: row.creditLimitPaise === null ? null : paise(row.creditLimitPaise),
     defaultPaymentAccountId: row.defaultPaymentAccountId,
+    defaultOwnerPersonId: row.defaultOwnerPersonId,
     status: row.status as CreditCardRecord["status"],
   }));
 
@@ -134,7 +173,7 @@ export function loadSnapshot(
     loanId: null,
     pnl: row.pnl as LedgerSnapshot["postings"][number]["pnl"],
     categoryId: row.categoryId,
-    claimId: null,
+    claimId: row.claimId,
     billingCycleId: row.billingCycleId,
   }));
 
@@ -152,6 +191,20 @@ export function loadSnapshot(
     ruleSnapshot: parseCardCycleRule(JSON.parse(row.ruleSnapshot)),
   }));
 
+  const ledgerClaims: LedgerClaim[] = claimRows.map((row) => ({
+    id: row.id,
+    personId: row.personId,
+    direction: row.direction as ClaimDirection,
+    kind: row.kind as ClaimKind,
+    originalAmountPaise: paise(row.originalAmountPaise),
+    originatingEventId: row.originatingEventId,
+    openingPositionId: row.openingPositionId,
+    billingCycleId: row.billingCycleId,
+    note: row.note,
+    status: row.status as ClaimStatus,
+    openAmountPaise: paise(row.originalAmountPaise),
+  }));
+
   return {
     accounts: ledgerAccounts,
     categories: categoryRows.map((row) => ({
@@ -161,7 +214,21 @@ export function loadSnapshot(
       archivedAt: row.archivedAt,
     })),
     creditCards: creditCardRecords,
+    people: peopleRows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      notes: row.notes,
+      status: row.status as PersonStatus,
+    })),
     billingCycles: enrichBillingCycles(cycleRecords, events, ledgerPostings, asOf),
+    claims: ledgerClaims,
+    eventShares: shareRows.map((row) => ({
+      id: row.id,
+      eventId: row.eventId,
+      personId: row.personId,
+      amountPaise: paise(row.amountPaise),
+      isUser: row.isUser === 1,
+    })),
     events,
     postings: ledgerPostings,
     openings,

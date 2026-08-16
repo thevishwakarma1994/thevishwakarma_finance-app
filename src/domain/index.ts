@@ -24,11 +24,14 @@ export {
   type CreditCardRecord,
   type CycleLifecycle,
   type EventMeaning,
+  type EventShare,
   type FinancialEvent,
   type LedgerAccount,
   type LedgerBillingCycle,
+  type LedgerClaim,
   type LedgerSnapshot,
   type OpeningPosition,
+  type PersonRecord,
   type PnlKind,
   type Posting,
   type ProposedBatch,
@@ -54,4 +57,8 @@ export {
 } from "./commands/recordExpense.js";
 export { transferMoney, type TransferMoneyInput } from "./commands/transferMoney.js";
 export { recordCardSpend, type RecordCardSpendInput } from "./commands/recordCardSpend.js";
+export { recordSplit, type RecordSplitInput } from "./commands/recordSplit.js";
+export { lendMoney, type LendMoneyInput } from "./commands/lendMoney.js";
+export { borrowMoney, type BorrowMoneyInput } from "./commands/borrowMoney.js";
 export { payCard, type PayCardInput } from "./commands/payCard.js";
+export { personPosition, type PersonPosition } from "./people/position.js";

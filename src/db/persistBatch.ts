@@ -1,7 +1,14 @@
 import { utcNowIso } from "../domain/calendar/kolkata.js";
 import { assertBatchConservation } from "../domain/conservation/validate.js";
-import { DomainError, type ProposedBatch } from "../domain/ledger/types.js";
-import { billingCycles, financialEvents, openingPositions, postings } from "./schema.js";
+import { DomainError, isAccountOpeningPayload, type ProposedBatch } from "../domain/ledger/types.js";
+import {
+  billingCycles,
+  claims,
+  eventShares,
+  financialEvents,
+  openingPositions,
+  postings,
+} from "./schema.js";
 import type { SqliteHandles } from "./client.js";
 import { withTransaction } from "./tx.js";
 
@@ -51,7 +58,15 @@ export function persistBatch(
             effectiveOn: opening.effectiveOn,
             kind: opening.kind,
             subjectId: opening.subjectId,
-            payload: JSON.stringify({ balancePaise: opening.payload.balancePaise }),
+            payload: JSON.stringify(
+              isAccountOpeningPayload(opening.payload)
+                ? { balancePaise: opening.payload.balancePaise }
+                : {
+                    direction: opening.payload.direction,
+                    amountPaise: opening.payload.amountPaise,
+                    note: opening.payload.note ?? null,
+                  },
+            ),
             createdAt: utcNowIso(),
           })),
         )
@@ -82,6 +97,47 @@ export function persistBatch(
         .run();
     }
 
+    const nextClaims = batch.claims ?? [];
+    if (nextClaims.length > 0) {
+      handles.db
+        .insert(claims)
+        .values(
+          nextClaims.map((claim) => ({
+            id: claim.id,
+            workspaceId,
+            personId: claim.personId,
+            direction: claim.direction,
+            kind: claim.kind,
+            originalAmountPaise: claim.originalAmountPaise,
+            originatingEventId: claim.originatingEventId,
+            openingPositionId: claim.openingPositionId,
+            billingCycleId: claim.billingCycleId,
+            obligationRefType: null,
+            obligationRefId: null,
+            note: claim.note,
+            status: claim.status,
+          })),
+        )
+        .run();
+    }
+
+    const shares = batch.eventShares ?? [];
+    if (shares.length > 0) {
+      handles.db
+        .insert(eventShares)
+        .values(
+          shares.map((share) => ({
+            id: share.id,
+            workspaceId,
+            eventId: share.eventId,
+            personId: share.personId,
+            amountPaise: share.amountPaise,
+            isUser: share.isUser ? 1 : 0,
+          })),
+        )
+        .run();
+    }
+
     if (batch.postings.length > 0) {
       handles.db
         .insert(postings)
@@ -96,6 +152,7 @@ export function persistBatch(
             pnl: posting.pnl,
             categoryId: posting.categoryId,
             billingCycleId: posting.billingCycleId,
+            claimId: posting.claimId,
           })),
         )
         .run();

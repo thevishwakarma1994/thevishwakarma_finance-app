@@ -137,6 +137,76 @@ export function assertConservation(
     return;
   }
 
+  if (meaning === "split") {
+    const claims = claimPortion(batch);
+    if (incomeSum(batch) !== paise(0)) {
+      throw new DomainError("conservation_split", "A split cannot create income");
+    }
+    const cardIncrease = cardDeltas(batch);
+    if (cardIncrease !== paise(0)) {
+      if (accountDeltas(batch) !== paise(0)) {
+        throw new DomainError("conservation_split", "A card split does not move bank or cash");
+      }
+      if (cardIncrease <= 0) {
+        throw new DomainError("conservation_split", "Card liability must increase");
+      }
+      if (cardIncrease !== paise(expenseSum(batch) + claims)) {
+        throw new DomainError(
+          "conservation_split",
+          "Card liability increase must equal personal expense plus claims",
+        );
+      }
+      return;
+    }
+    const accountDecrease = paise(-accountDeltas(batch));
+    if (accountDecrease <= 0) {
+      throw new DomainError("conservation_split", "Account must decrease");
+    }
+    if (accountDecrease !== paise(expenseSum(batch) + claims)) {
+      throw new DomainError(
+        "conservation_split",
+        "Account decrease must equal personal expense plus claims",
+      );
+    }
+    return;
+  }
+
+  if (meaning === "lend") {
+    const accountDecrease = paise(-accountDeltas(batch));
+    const claims = claimPortion(batch);
+    if (accountDecrease !== claims || accountDecrease <= 0) {
+      throw new DomainError(
+        "conservation_lend",
+        "Account decrease must equal the receivable claim increase",
+      );
+    }
+    if (expenseSum(batch) !== paise(0)) {
+      throw new DomainError("conservation_lend", "Lending is not personal spending");
+    }
+    if (incomeSum(batch) !== paise(0)) {
+      throw new DomainError("conservation_lend", "Lending is not income");
+    }
+    return;
+  }
+
+  if (meaning === "borrow") {
+    const accountIncrease = accountDeltas(batch);
+    const claims = claimPortion(batch);
+    if (accountIncrease !== claims || accountIncrease <= 0) {
+      throw new DomainError(
+        "conservation_borrow",
+        "Account increase must equal the payable claim increase",
+      );
+    }
+    if (expenseSum(batch) !== paise(0)) {
+      throw new DomainError("conservation_borrow", "Borrowing is not personal spending");
+    }
+    if (incomeSum(batch) !== paise(0)) {
+      throw new DomainError("conservation_borrow", "Borrowing is not income");
+    }
+    return;
+  }
+
   if (meaning === "pay_obligation") {
     const accountDecrease = paise(-accountDeltas(batch));
     const cardDecrease = paise(-cardDeltas(batch));

@@ -59,7 +59,58 @@ export type CreditCardRecord = {
   mask: string | null;
   creditLimitPaise: Paise | null;
   defaultPaymentAccountId: EntityId | null;
+  defaultOwnerPersonId: EntityId | null;
   status: CreditCardStatus;
+};
+
+export type PersonStatus = "active" | "archived";
+
+export type PersonRecord = {
+  id: EntityId;
+  name: string;
+  notes: string | null;
+  status: PersonStatus;
+};
+
+export const CLAIM_DIRECTIONS = ["they_owe_user", "user_owes_them"] as const;
+export type ClaimDirection = (typeof CLAIM_DIRECTIONS)[number];
+
+export const CLAIM_KINDS = [
+  "card_share",
+  "shared_bill",
+  "direct_loan",
+  "borrowing",
+  "opening",
+  "surplus_payable",
+] as const;
+export type ClaimKind = (typeof CLAIM_KINDS)[number];
+
+export const CLAIM_STATUSES = ["open", "settled", "void"] as const;
+export type ClaimStatus = (typeof CLAIM_STATUSES)[number];
+
+export type ClaimRecord = {
+  id: EntityId;
+  personId: EntityId;
+  direction: ClaimDirection;
+  kind: ClaimKind;
+  originalAmountPaise: Paise;
+  originatingEventId: EntityId | null;
+  openingPositionId: EntityId | null;
+  billingCycleId: EntityId | null;
+  note: string | null;
+  status: ClaimStatus;
+};
+
+export type LedgerClaim = ClaimRecord & {
+  openAmountPaise: Paise;
+};
+
+export type EventShare = {
+  id: EntityId;
+  eventId: EntityId;
+  personId: EntityId | null;
+  amountPaise: Paise;
+  isUser: boolean;
 };
 
 export const BILLING_CYCLE_STATUSES = [
@@ -146,13 +197,25 @@ export type AccountOpeningPayload = {
   balancePaise: Paise;
 };
 
+export type PersonOpeningPayload = {
+  direction: ClaimDirection;
+  amountPaise: Paise;
+  note?: string | null;
+};
+
 export type OpeningPosition = {
   id: EntityId;
   effectiveOn: IsoDate;
   kind: OpeningKind;
   subjectId: EntityId;
-  payload: AccountOpeningPayload;
+  payload: AccountOpeningPayload | PersonOpeningPayload;
 };
+
+export function isAccountOpeningPayload(
+  payload: OpeningPosition["payload"],
+): payload is AccountOpeningPayload {
+  return "balancePaise" in payload;
+}
 
 export type LedgerAccount = AccountRecord & {
   openingBalancePaise: Paise;
@@ -164,14 +227,17 @@ export type LedgerSnapshot = {
   accounts: LedgerAccount[];
   categories: CategoryRecord[];
   creditCards: CreditCardRecord[];
+  people: PersonRecord[];
   billingCycles: LedgerBillingCycle[];
+  claims: LedgerClaim[];
+  eventShares: EventShare[];
   events: FinancialEvent[];
   postings: Posting[];
   openings: OpeningPosition[];
 };
 
 export type ConsequenceEffect = {
-  kind: "account" | "income" | "expense" | "opening" | "card";
+  kind: "account" | "income" | "expense" | "opening" | "card" | "claim";
   label: string;
   deltaPaise: Paise;
 };
@@ -193,6 +259,8 @@ export type ProposedBatch = {
   postings: Posting[];
   openings: OpeningPosition[];
   billingCycles?: BillingCycleRecord[];
+  claims?: ClaimRecord[];
+  eventShares?: EventShare[];
 };
 
 export class DomainError extends Error {

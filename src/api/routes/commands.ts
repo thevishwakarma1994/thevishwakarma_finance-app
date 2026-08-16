@@ -5,11 +5,15 @@ import { recordIncome } from "../../app/recordIncome.js";
 import { recordExpense } from "../../app/recordExpense.js";
 import { transferMoney } from "../../app/transferMoney.js";
 import { recordCardSpend } from "../../app/recordCardSpend.js";
+import { recordSplit } from "../../app/recordSplit.js";
+import { lendMoney } from "../../app/lendMoney.js";
+import { borrowMoney } from "../../app/borrowMoney.js";
 import { payCard } from "../../app/payCard.js";
 import { confirmStatement } from "../../app/confirmStatement.js";
 import { createAccount, updateAccount } from "../../app/accounts.js";
 import { createCategory, updateCategory } from "../../app/categories.js";
 import { createCard, updateCard } from "../../app/cards.js";
+import { createPerson, updatePerson } from "../../app/people.js";
 import type { SqliteHandles } from "../../db/client.js";
 import { mapError } from "../auth/guard.js";
 
@@ -167,6 +171,68 @@ commandRoutes.post("/commands/confirm-statement", async (c) => {
   try {
     const body = await c.req.json();
     return c.json(confirmStatement(c.get("handles"), { workspaceId: c.get("workspaceId") }, body));
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+commandRoutes.post("/people", async (c) => {
+  try {
+    const body = await c.req.json();
+    return c.json(createPerson(c.get("handles"), { workspaceId: c.get("workspaceId") }, body));
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+commandRoutes.post("/people/update", async (c) => {
+  try {
+    const body = await c.req.json();
+    return c.json(updatePerson(c.get("handles"), { workspaceId: c.get("workspaceId") }, body));
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+commandRoutes.post("/commands/split", async (c) => {
+  try {
+    const body = (await c.req.json()) as Record<string, unknown>;
+    const result = recordSplit(c.get("handles"), { workspaceId: c.get("workspaceId") }, {
+      ...body,
+      capturedAt: typeof body.capturedAt === "string" ? body.capturedAt : utcNowIso(),
+    });
+    return c.json(result);
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+commandRoutes.post("/commands/lend", async (c) => {
+  try {
+    const body = (await c.req.json()) as Record<string, unknown>;
+    const result = lendMoney(c.get("handles"), { workspaceId: c.get("workspaceId") }, {
+      ...body,
+      capturedAt: typeof body.capturedAt === "string" ? body.capturedAt : utcNowIso(),
+    });
+    return c.json(result);
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+commandRoutes.post("/commands/borrow", async (c) => {
+  try {
+    const body = (await c.req.json()) as Record<string, unknown>;
+    const result = borrowMoney(c.get("handles"), { workspaceId: c.get("workspaceId") }, {
+      ...body,
+      capturedAt: typeof body.capturedAt === "string" ? body.capturedAt : utcNowIso(),
+    });
+    return c.json(result);
   } catch (error) {
     const mapped = mapError(error);
     return c.json(mapped.body, mapped.status);

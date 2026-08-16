@@ -8,7 +8,9 @@ import {
   listActivity,
   listCards,
   listCategories,
+  listPeople,
   monthReview,
+  personDetail,
 } from "../../db/reads.js";
 import type { SqliteHandles } from "../../db/client.js";
 import { isoDate } from "../../domain/calendar/isoDate.js";
@@ -110,6 +112,24 @@ readRoutes.get("/cycles/:id", (c) => {
 readRoutes.get("/coming-card-payments", (c) => {
   try {
     return c.json({ items: comingCardPayments(c.get("handles"), c.get("workspaceId")) });
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+readRoutes.get("/people", (c) => {
+  try {
+    return c.json({ people: listPeople(c.get("handles"), c.get("workspaceId")) });
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+readRoutes.get("/people/:id", (c) => {
+  try {
+    return c.json(personDetail(c.get("handles"), c.get("workspaceId"), c.req.param("id")));
   } catch (error) {
     const mapped = mapError(error);
     return c.json(mapped.body, mapped.status);

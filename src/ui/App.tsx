@@ -7,6 +7,8 @@ import { Add } from "./pages/Add.js";
 import { MonthReview } from "./pages/MonthReview.js";
 import { CardDetail } from "./pages/CardDetail.js";
 import { CycleDetail } from "./pages/CycleDetail.js";
+import { People } from "./pages/People.js";
+import { PersonDetail } from "./pages/PersonDetail.js";
 
 function pathOf(): string {
   return window.location.pathname;
@@ -65,6 +67,7 @@ export function App() {
   const current = path === "/" || path === "/sign-in" ? "/money" : path;
   const cardMatch = /^\/card\/([^/]+)$/.exec(current);
   const cycleMatch = /^\/cycle\/([^/]+)$/.exec(current);
+  const personMatch = /^\/person\/([^/]+)$/.exec(current);
 
   return (
     <div className="app">
@@ -74,6 +77,10 @@ export function App() {
         <Add onDone={() => navigate("/activity")} />
       ) : current === "/month" ? (
         <MonthReview onOpenActivity={(href) => navigate(href)} />
+      ) : current === "/people" ? (
+        <People onOpenPerson={(id) => navigate(`/person/${id}`)} />
+      ) : personMatch?.[1] ? (
+        <PersonDetail personId={personMatch[1]} onBack={() => navigate("/people")} />
       ) : cardMatch?.[1] ? (
         <CardDetail
           cardId={cardMatch[1]}
@@ -103,11 +110,17 @@ export function App() {
         }}>
           Money
         </a>
-        <a className={current === "/activity" ? "active" : ""} href="/activity" onClick={(event) => {
+        <a className={current === "/activity" || current.startsWith("/activity") ? "active" : ""} href="/activity" onClick={(event) => {
           event.preventDefault();
           navigate("/activity");
         }}>
           Activity
+        </a>
+        <a className={current === "/people" || current.startsWith("/person/") ? "active" : ""} href="/people" onClick={(event) => {
+          event.preventDefault();
+          navigate("/people");
+        }}>
+          People
         </a>
         <a className={current === "/add" ? "active" : ""} href="/add" onClick={(event) => {
           event.preventDefault();

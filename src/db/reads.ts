@@ -8,6 +8,7 @@ import {
 } from "../domain/calendar/kolkata.js";
 import { formatCardLabel } from "../domain/cycle/lifecycle.js";
 import { DomainError, type LedgerBillingCycle } from "../domain/ledger/types.js";
+import { personPosition } from "../domain/people/position.js";
 import { loadSnapshot } from "./loadSnapshot.js";
 import { loadCardRule } from "./config.js";
 import { categories, financialEvents, postings } from "./schema.js";
@@ -66,7 +67,10 @@ export function listActivity(
         event.meaning === "spend_account" ||
         event.meaning === "transfer" ||
         event.meaning === "spend_card" ||
-        event.meaning === "pay_obligation",
+        event.meaning === "pay_obligation" ||
+        event.meaning === "split" ||
+        event.meaning === "lend" ||
+        event.meaning === "borrow",
     )
     .filter((event) => {
       if (!filter.month) return true;
@@ -105,6 +109,26 @@ export function listActivity(
         ? snapshot.creditCards.find((item) => item.id === event.creditCardId)
         : undefined;
       const cardLabel = card ? formatCardLabel(card.displayName, card.mask) : null;
+      const shares = snapshot.eventShares
+        .filter((share) => share.eventId === event.id)
+        .map((share) => ({
+          personId: share.personId,
+          personName: share.isUser
+            ? "You"
+            : (snapshot.people.find((person) => person.id === share.personId)?.name ?? "Someone"),
+          amountPaise: share.amountPaise,
+          isUser: share.isUser,
+        }));
+      const claim = snapshot.claims.find((item) => item.originatingEventId === event.id);
+      const counterparty = claim
+        ? snapshot.people.find((person) => person.id === claim.personId)
+        : undefined;
+      const userShare = shares.find((share) => share.isUser);
+      const otherOwned =
+        event.meaning === "spend_card" &&
+        userShare !== undefined &&
+        userShare.amountPaise === 0 &&
+        shares.some((share) => !share.isUser);
       return {
         id: event.id,
         meaning: event.meaning,
@@ -128,6 +152,10 @@ export function listActivity(
             : incomePostings[0]?.pnl === "income_other"
               ? "other"
               : null,
+        shares,
+        counterpartyName: counterparty?.name ?? shares.find((share) => !share.isUser)?.personName ?? null,
+        otherOwned,
+        personalAmountPaise: expensePostings.reduce((sum, posting) => sum + posting.amountPaise, 0),
       };
     });
 }
@@ -256,6 +284,10 @@ export function listCards(handles: SqliteHandles, workspaceId: string, asOf = to
         label: formatCardLabel(card.displayName, card.mask),
         creditLimitPaise: card.creditLimitPaise,
         defaultPaymentAccountId: card.defaultPaymentAccountId,
+        defaultOwnerPersonId: card.defaultOwnerPersonId,
+        defaultOwnerName: card.defaultOwnerPersonId
+          ? (snapshot.people.find((person) => person.id === card.defaultOwnerPersonId)?.name ?? null)
+          : null,
         status: card.status,
         outstandingPaise,
         currentCycle: current ? cycleView(current) : null,
@@ -295,6 +327,10 @@ export function cardDetail(
     label: formatCardLabel(card.displayName, card.mask),
     creditLimitPaise: card.creditLimitPaise,
     defaultPaymentAccountId: card.defaultPaymentAccountId,
+    defaultOwnerPersonId: card.defaultOwnerPersonId,
+    defaultOwnerName: card.defaultOwnerPersonId
+      ? (snapshot.people.find((person) => person.id === card.defaultOwnerPersonId)?.name ?? null)
+      : null,
     status: card.status,
     outstandingPaise,
     statementDay: rule.statementDay,
@@ -321,7 +357,11 @@ export function cycleDetail(
   }
   const categoryName = new Map(snapshot.categories.map((category) => [category.id, category.name]));
   const spends = snapshot.events
-    .filter((event) => event.billingCycleId === cycle.id && event.meaning === "spend_card")
+    .filter(
+      (event) =>
+        event.billingCycleId === cycle.id &&
+        (event.meaning === "spend_card" || event.meaning === "split"),
+    )
     .sort((left, right) => left.occurredOn.localeCompare(right.occurredOn))
     .map((event) => {
       const expensePostings = snapshot.postings.filter(
@@ -389,4 +429,88 @@ export function comingCardPayments(
       };
     })
     .sort((left, right) => left.dueOn.localeCompare(right.dueOn));
+}
+
+export function listPeople(handles: SqliteHandles, workspaceId: string) {
+  const snapshot = loadSnapshot(handles, workspaceId);
+  return snapshot.people
+    .map((person) => {
+      const position = personPosition(snapshot.claims, person.id);
+      const group =
+        position.netPaise > 0 ? "they_owe_you" : position.netPaise < 0 ? "you_owe" : "settled";
+      return {
+        id: person.id,
+        name: person.name,
+        notes: person.notes,
+        status: person.status,
+        theyOwePaise: position.theyOwePaise,
+        youOwePaise: position.youOwePaise,
+        netPaise: position.netPaise,
+        openItemCount: position.openItemCount,
+        group,
+      };
+    })
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+export function personDetail(handles: SqliteHandles, workspaceId: string, personId: string) {
+  const snapshot = loadSnapshot(handles, workspaceId);
+  const person = snapshot.people.find((item) => item.id === personId);
+  if (!person) {
+    throw new DomainError("person_not_found", "Person not found");
+  }
+  const position = personPosition(snapshot.claims, person.id);
+  const opening = snapshot.openings.find(
+    (item) => item.kind === "person" && item.subjectId === person.id,
+  );
+  const openClaims = snapshot.claims
+    .filter((claim) => claim.personId === person.id && claim.status === "open")
+    .map((claim) => {
+      const event = claim.originatingEventId
+        ? snapshot.events.find((item) => item.id === claim.originatingEventId)
+        : undefined;
+      const cycle = claim.billingCycleId
+        ? snapshot.billingCycles.find((item) => item.id === claim.billingCycleId)
+        : undefined;
+      const card = cycle
+        ? snapshot.creditCards.find((item) => item.id === cycle.creditCardId)
+        : undefined;
+      return {
+        id: claim.id,
+        kind: claim.kind,
+        direction: claim.direction,
+        originalAmountPaise: claim.originalAmountPaise,
+        openAmountPaise: claim.openAmountPaise,
+        originatingEventId: claim.originatingEventId,
+        originatingMeaning: event?.meaning ?? null,
+        originatingMerchant: event?.merchant ?? null,
+        occurredOn: event?.occurredOn ?? opening?.effectiveOn ?? null,
+        billingCycleId: claim.billingCycleId,
+        cycleStatementOn: cycle?.expectedStatementOn ?? null,
+        cardLabel: card ? formatCardLabel(card.displayName, card.mask) : null,
+        note: claim.note,
+      };
+    });
+  const eventIds = new Set<string>();
+  for (const claim of snapshot.claims.filter((item) => item.personId === person.id)) {
+    if (claim.originatingEventId) eventIds.add(claim.originatingEventId);
+  }
+  for (const share of snapshot.eventShares.filter((item) => item.personId === person.id)) {
+    eventIds.add(share.eventId);
+  }
+  const history = listActivity(handles, workspaceId).filter((event) => eventIds.has(event.id));
+  return {
+    id: person.id,
+    name: person.name,
+    notes: person.notes,
+    status: person.status,
+    theyOwePaise: position.theyOwePaise,
+    youOwePaise: position.youOwePaise,
+    netPaise: position.netPaise,
+    openItemCount: position.openItemCount,
+    hasOpening: Boolean(opening),
+    openingEffectiveOn: opening?.effectiveOn ?? null,
+    openClaims,
+    history,
+  };
 }

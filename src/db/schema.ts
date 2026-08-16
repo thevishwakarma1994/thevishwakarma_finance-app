@@ -45,6 +45,7 @@ export const creditCards = sqliteTable(
     mask: text("mask"),
     creditLimitPaise: integer("credit_limit_paise"),
     defaultPaymentAccountId: text("default_payment_account_id").references(() => accounts.id),
+    defaultOwnerPersonId: text("default_owner_person_id"),
     status: text("status").notNull(),
     createdAt: text("created_at").notNull(),
   },
@@ -162,13 +163,76 @@ export const postings = sqliteTable(
     pnl: text("pnl"),
     categoryId: text("category_id").references(() => categories.id),
     billingCycleId: text("billing_cycle_id").references(() => billingCycles.id),
+    claimId: text("claim_id"),
   },
   (table) => [
     index("postings_event").on(table.eventId),
     index("postings_account").on(table.accountId),
     index("postings_card_cycle").on(table.creditCardId, table.billingCycleId),
     index("postings_pnl_category").on(table.pnl, table.categoryId),
+    index("postings_claim").on(table.claimId),
   ],
+);
+
+export const people = sqliteTable(
+  "people",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id),
+    name: text("name").notNull(),
+    notes: text("notes"),
+    status: text("status").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [index("people_workspace_status").on(table.workspaceId, table.status)],
+);
+
+export const claims = sqliteTable(
+  "claims",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id),
+    personId: text("person_id")
+      .notNull()
+      .references(() => people.id),
+    direction: text("direction").notNull(),
+    kind: text("kind").notNull(),
+    originalAmountPaise: integer("original_amount_paise").notNull(),
+    originatingEventId: text("originating_event_id").references(() => financialEvents.id),
+    openingPositionId: text("opening_position_id").references(() => openingPositions.id),
+    billingCycleId: text("billing_cycle_id").references(() => billingCycles.id),
+    obligationRefType: text("obligation_ref_type"),
+    obligationRefId: text("obligation_ref_id"),
+    note: text("note"),
+    status: text("status").notNull(),
+  },
+  (table) => [
+    index("claims_person_status").on(table.personId, table.status),
+    index("claims_billing_cycle").on(table.billingCycleId),
+    index("claims_originating_event").on(table.originatingEventId),
+    index("claims_workspace").on(table.workspaceId),
+  ],
+);
+
+export const eventShares = sqliteTable(
+  "event_shares",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id),
+    eventId: text("event_id")
+      .notNull()
+      .references(() => financialEvents.id),
+    personId: text("person_id").references(() => people.id),
+    amountPaise: integer("amount_paise").notNull(),
+    isUser: integer("is_user").notNull(),
+  },
+  (table) => [index("event_shares_event").on(table.eventId)],
 );
 
 export const openingPositions = sqliteTable(
@@ -200,4 +264,7 @@ export const schema = {
   financialEvents,
   postings,
   openingPositions,
+  people,
+  claims,
+  eventShares,
 };

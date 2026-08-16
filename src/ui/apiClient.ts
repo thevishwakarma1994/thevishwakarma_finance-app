@@ -24,7 +24,15 @@ export type Category = {
 
 export type ActivityEvent = {
   id: string;
-  meaning: "income" | "spend_account" | "transfer" | "spend_card" | "pay_obligation";
+  meaning:
+    | "income"
+    | "spend_account"
+    | "transfer"
+    | "spend_card"
+    | "pay_obligation"
+    | "split"
+    | "lend"
+    | "borrow";
   occurredOn: string;
   amountPaise: number;
   accountName: string | null;
@@ -34,6 +42,10 @@ export type ActivityEvent = {
   merchant: string | null;
   categories: { id: string | null; name: string; amountPaise: number }[];
   incomeKind: "salary" | "other" | null;
+  shares: { personId: string | null; personName: string; amountPaise: number; isUser: boolean }[];
+  counterpartyName: string | null;
+  otherOwned: boolean;
+  personalAmountPaise: number;
 };
 
 export type CardCycleView = {
@@ -66,6 +78,8 @@ export type CardListItem = {
   label: string;
   creditLimitPaise: number | null;
   defaultPaymentAccountId: string | null;
+  defaultOwnerPersonId: string | null;
+  defaultOwnerName: string | null;
   status: string;
   outstandingPaise: number;
   currentCycle: CardCycleView | null;
@@ -102,6 +116,39 @@ export type MonthReview = {
   previousSpentPaise: number;
   differencePaise: number;
   categories: { categoryId: string; name: string; spentPaise: number }[];
+};
+
+export type PersonListItem = {
+  id: string;
+  name: string;
+  notes: string | null;
+  status: "active" | "archived";
+  theyOwePaise: number;
+  youOwePaise: number;
+  netPaise: number;
+  openItemCount: number;
+  group: "they_owe_you" | "you_owe" | "settled";
+};
+
+export type PersonDetail = PersonListItem & {
+  hasOpening: boolean;
+  openingEffectiveOn: string | null;
+  openClaims: {
+    id: string;
+    kind: string;
+    direction: string;
+    originalAmountPaise: number;
+    openAmountPaise: number;
+    originatingEventId: string | null;
+    originatingMeaning: string | null;
+    originatingMerchant: string | null;
+    occurredOn: string | null;
+    billingCycleId: string | null;
+    cycleStatementOn: string | null;
+    cardLabel: string | null;
+    note: string | null;
+  }[];
+  history: ActivityEvent[];
 };
 
 export type CommandResult = {
@@ -228,10 +275,41 @@ export function updateCategory(body: { categoryId: string; name?: string; archiv
   });
 }
 
+export function fetchPeople() {
+  return request<{ people: PersonListItem[] }>("/api/people");
+}
+
+export function fetchPerson(id: string) {
+  return request<PersonDetail>(`/api/people/${id}`);
+}
+
+export function createPerson(body: { name: string; notes?: string | null }) {
+  return request<{ id: string }>("/api/people", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function updatePerson(body: {
+  personId: string;
+  name?: string;
+  notes?: string | null;
+  status?: "active" | "archived";
+}) {
+  return request<{ id: string }>("/api/people/update", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 export function previewOrCommitOpening(body: {
-  accountId: string;
+  accountId?: string;
+  personId?: string;
   effectiveOn: string;
-  balancePaise: number;
+  balancePaise?: number;
+  direction?: "they_owe_user" | "user_owes_them";
+  amountPaise?: number;
+  note?: string | null;
   commit: boolean;
 }) {
   return request<CommandResult>("/api/commands/opening", {
@@ -320,6 +398,7 @@ export function createCard(body: {
   mask?: string | null;
   creditLimitPaise?: number | null;
   defaultPaymentAccountId?: string | null;
+  defaultOwnerPersonId?: string | null;
   statementDay: number;
   dueDaysAfterStatement: number;
 }) {
@@ -336,6 +415,7 @@ export function updateCard(body: {
   mask?: string | null;
   creditLimitPaise?: number | null;
   defaultPaymentAccountId?: string | null;
+  defaultOwnerPersonId?: string | null;
   status?: "active" | "inactive";
   statementDay?: number;
   dueDaysAfterStatement?: number;
@@ -351,6 +431,8 @@ export function previewOrCommitCardSpend(body: {
   occurredOn: string;
   creditCardId: string;
   allocations: { categoryId: string; amountPaise: number }[];
+  amountPaise?: number;
+  ownerPersonId?: string | null;
   merchant?: string | null;
   commit: boolean;
 }) {
@@ -387,6 +469,48 @@ export function confirmStatement(body: {
     mismatch: boolean;
     warning: string | null;
   }>("/api/commands/confirm-statement", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function previewOrCommitSplit(body: {
+  occurredOn: string;
+  amountPaise: number;
+  source: { type: "account"; accountId: string } | { type: "card"; creditCardId: string };
+  userSharePaise: number;
+  personShares: { personId: string; amountPaise: number }[];
+  allocations: { categoryId: string; amountPaise: number }[];
+  merchant?: string | null;
+  commit: boolean;
+}) {
+  return request<CommandResult>("/api/commands/split", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function previewOrCommitLend(body: {
+  occurredOn: string;
+  accountId: string;
+  personId: string;
+  amountPaise: number;
+  commit: boolean;
+}) {
+  return request<CommandResult>("/api/commands/lend", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function previewOrCommitBorrow(body: {
+  occurredOn: string;
+  accountId: string;
+  personId: string;
+  amountPaise: number;
+  commit: boolean;
+}) {
+  return request<CommandResult>("/api/commands/borrow", {
     method: "POST",
     body: JSON.stringify(body),
   });

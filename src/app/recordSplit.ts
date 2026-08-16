@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { isoDate } from "../domain/calendar/isoDate.js";
 import { paise } from "../domain/money/paise.js";
-import { recordCardSpend as recordCardSpendDomain } from "../domain/commands/recordCardSpend.js";
+import { recordSplit as recordSplitDomain } from "../domain/commands/recordSplit.js";
 import { loadSnapshot } from "../db/loadSnapshot.js";
 import { persistBatch } from "../db/persistBatch.js";
 import { loadCardRule } from "../db/config.js";
@@ -11,7 +11,20 @@ import type { WorkspaceContext } from "./context.js";
 const inputSchema = z.object({
   occurredOn: z.string(),
   capturedAt: z.string(),
-  creditCardId: z.string().min(1),
+  amountPaise: z.number().int().positive(),
+  source: z.discriminatedUnion("type", [
+    z.object({ type: z.literal("account"), accountId: z.string().min(1) }),
+    z.object({ type: z.literal("card"), creditCardId: z.string().min(1) }),
+  ]),
+  userSharePaise: z.number().int().nonnegative(),
+  personShares: z
+    .array(
+      z.object({
+        personId: z.string().min(1),
+        amountPaise: z.number().int().positive(),
+      }),
+    )
+    .min(1),
   allocations: z
     .array(
       z.object({
@@ -20,15 +33,13 @@ const inputSchema = z.object({
       }),
     )
     .default([]),
-  amountPaise: z.number().int().positive().optional(),
-  ownerPersonId: z.string().min(1).nullable().optional(),
   merchant: z.string().nullable().optional(),
   notes: z.string().nullable().optional(),
   channel: z.string().nullable().optional(),
   commit: z.boolean().default(true),
 });
 
-export function recordCardSpend(
+export function recordSplit(
   handles: SqliteHandles,
   context: WorkspaceContext,
   raw: unknown,
@@ -36,22 +47,32 @@ export function recordCardSpend(
   const input = inputSchema.parse(raw);
   const occurredOn = isoDate(input.occurredOn);
   const snapshot = loadSnapshot(handles, context.workspaceId, occurredOn);
-  const rule = loadCardRule(handles, context.workspaceId, input.creditCardId, occurredOn);
-  const result = recordCardSpendDomain(
+  const source =
+    input.source.type === "account"
+      ? { type: "account" as const, accountId: input.source.accountId }
+      : {
+          type: "card" as const,
+          creditCardId: input.source.creditCardId,
+          rule: loadCardRule(handles, context.workspaceId, input.source.creditCardId, occurredOn),
+        };
+  const result = recordSplitDomain(
     {
       occurredOn,
       capturedAt: input.capturedAt,
-      creditCardId: input.creditCardId,
+      amountPaise: paise(input.amountPaise),
+      source,
+      userSharePaise: paise(input.userSharePaise),
+      personShares: input.personShares.map((share) => ({
+        personId: share.personId,
+        amountPaise: paise(share.amountPaise),
+      })),
       allocations: input.allocations.map((allocation) => ({
         categoryId: allocation.categoryId,
         amountPaise: paise(allocation.amountPaise),
       })),
-      amountPaise: input.amountPaise === undefined ? undefined : paise(input.amountPaise),
-      ownerPersonId: input.ownerPersonId,
       merchant: input.merchant,
       notes: input.notes,
       channel: input.channel,
-      rule,
     },
     snapshot,
   );

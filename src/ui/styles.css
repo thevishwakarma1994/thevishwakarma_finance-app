@@ -140,7 +140,7 @@ select {
   position: sticky;
   bottom: 0;
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: 1fr 1fr 1fr 1fr;
   background: rgba(246, 244, 240, 0.96);
   border-top: 1px solid var(--line);
   padding: 0.4rem 0.5rem calc(0.4rem + env(safe-area-inset-bottom));

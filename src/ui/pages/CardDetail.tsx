@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { formatInr } from "../../domain/money/inr.js";
 import { paise } from "../../domain/money/paise.js";
-import { ApiError, fetchCard, updateCard, type ActivityEvent, type CardCycleView } from "../apiClient.js";
+import { ApiError, fetchCard, fetchPeople, updateCard, type ActivityEvent, type CardCycleView, type PersonListItem } from "../apiClient.js";
 
 type Props = {
   cardId: string;
@@ -12,6 +12,8 @@ type Props = {
 export function CardDetail({ cardId, onBack, onOpenCycle }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [rename, setRename] = useState("");
+  const [ownerPersonId, setOwnerPersonId] = useState("");
+  const [people, setPeople] = useState<PersonListItem[]>([]);
   const [data, setData] = useState<{
     displayName: string;
     issuer: string;
@@ -20,15 +22,19 @@ export function CardDetail({ cardId, onBack, onOpenCycle }: Props) {
     outstandingPaise: number;
     statementDay: number;
     dueDaysAfterStatement: number;
+    defaultOwnerPersonId: string | null;
+    defaultOwnerName: string | null;
     cycles: CardCycleView[];
     transactions: ActivityEvent[];
   } | null>(null);
 
   useEffect(() => {
-    fetchCard(cardId)
-      .then((card) => {
+    Promise.all([fetchCard(cardId), fetchPeople()])
+      .then(([card, peopleData]) => {
         setData(card);
         setRename(card.displayName);
+        setOwnerPersonId(card.defaultOwnerPersonId ?? "");
+        setPeople(peopleData.people);
       })
       .catch((caught: unknown) => {
         setError(caught instanceof ApiError ? caught.message : "Could not load card");
@@ -65,20 +71,26 @@ export function CardDetail({ cardId, onBack, onOpenCycle }: Props) {
           <p className="balance">{formatInr(paise(data.outstandingPaise))}</p>
           <p className="muted">
             Statement day {data.statementDay} · due {data.dueDaysAfterStatement} days later
+            {data.defaultOwnerName ? ` · default owner ${data.defaultOwnerName}` : " · default owner you"}
           </p>
         </section>
         <form
           className="card stack"
           onSubmit={(event) => {
             event.preventDefault();
-            void updateCard({ cardId, displayName: rename })
+            void updateCard({
+              cardId,
+              displayName: rename,
+              defaultOwnerPersonId: ownerPersonId || null,
+            })
               .then(() => fetchCard(cardId))
               .then((card) => {
                 setData(card);
                 setRename(card.displayName);
+                setOwnerPersonId(card.defaultOwnerPersonId ?? "");
               })
               .catch((caught: unknown) => {
-                setError(caught instanceof ApiError ? caught.message : "Could not rename");
+                setError(caught instanceof ApiError ? caught.message : "Could not save");
               });
           }}
         >
@@ -86,8 +98,21 @@ export function CardDetail({ cardId, onBack, onOpenCycle }: Props) {
             Name
             <input value={rename} onChange={(event) => setRename(event.target.value)} />
           </label>
+          <label>
+            Default owner
+            <select value={ownerPersonId} onChange={(event) => setOwnerPersonId(event.target.value)}>
+              <option value="">You</option>
+              {people
+                .filter((person) => person.status === "active")
+                .map((person) => (
+                  <option key={person.id} value={person.id}>
+                    {person.name}
+                  </option>
+                ))}
+            </select>
+          </label>
           <button className="secondary" type="submit">
-            Rename
+            Save
           </button>
           <button
             className="secondary"

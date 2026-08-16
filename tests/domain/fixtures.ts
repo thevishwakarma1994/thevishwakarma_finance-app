@@ -6,6 +6,7 @@ import type {
   LedgerAccount,
   LedgerBillingCycle,
   LedgerSnapshot,
+  PersonRecord,
   ProposedBatch,
 } from "../../src/domain/ledger/types.js";
 
@@ -37,6 +38,7 @@ export function cardFixture(overrides: Partial<CreditCardRecord> = {}): CreditCa
     mask: overrides.mask ?? "8001",
     creditLimitPaise: overrides.creditLimitPaise ?? null,
     defaultPaymentAccountId: overrides.defaultPaymentAccountId ?? null,
+    defaultOwnerPersonId: overrides.defaultOwnerPersonId ?? null,
     status: overrides.status ?? "active",
   };
 }
@@ -71,6 +73,15 @@ export function cycleFixture(overrides: Partial<LedgerBillingCycle> = {}): Ledge
   };
 }
 
+export function personFixture(overrides: Partial<PersonRecord> = {}): PersonRecord {
+  return {
+    id: overrides.id ?? newId(),
+    name: overrides.name ?? "Rahul",
+    notes: overrides.notes ?? null,
+    status: overrides.status ?? "active",
+  };
+}
+
 export function snapshotFixture(overrides: Partial<LedgerSnapshot> = {}): LedgerSnapshot {
   const accounts = overrides.accounts ?? [accountFixture({ balancePaise: paiseOf(50_000) })];
   return {
@@ -80,7 +91,10 @@ export function snapshotFixture(overrides: Partial<LedgerSnapshot> = {}): Ledger
       { id: "cat-household", parentId: null, name: "Household", archivedAt: null },
     ],
     creditCards: overrides.creditCards ?? [],
+    people: overrides.people ?? [],
     billingCycles: overrides.billingCycles ?? [],
+    claims: overrides.claims ?? [],
+    eventShares: overrides.eventShares ?? [],
     events: overrides.events ?? [],
     postings: overrides.postings ?? [],
     openings: overrides.openings ?? [],
