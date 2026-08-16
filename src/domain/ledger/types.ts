@@ -45,6 +45,69 @@ export type CategoryRecord = {
   archivedAt: string | null;
 };
 
+export type CardCycleRule = {
+  statementDay: number;
+  dueDaysAfterStatement: number;
+};
+
+export type CreditCardStatus = "active" | "inactive";
+
+export type CreditCardRecord = {
+  id: EntityId;
+  displayName: string;
+  issuer: string;
+  mask: string | null;
+  creditLimitPaise: Paise | null;
+  defaultPaymentAccountId: EntityId | null;
+  status: CreditCardStatus;
+};
+
+export const BILLING_CYCLE_STATUSES = [
+  "open",
+  "statement_expected",
+  "statement_confirmed",
+  "due",
+  "paid",
+  "closed",
+] as const;
+
+export type BillingCycleStatus = (typeof BILLING_CYCLE_STATUSES)[number];
+
+export const CYCLE_LIFECYCLES = [
+  "accumulating",
+  "statement_expected",
+  "statement_recorded",
+  "partially_paid",
+  "paid",
+  "overdue",
+] as const;
+
+export type CycleLifecycle = (typeof CYCLE_LIFECYCLES)[number];
+
+export type BillingCycleRecord = {
+  id: EntityId;
+  creditCardId: EntityId;
+  purchaseWindowStart: IsoDate;
+  purchaseWindowEnd: IsoDate;
+  expectedStatementOn: IsoDate;
+  actualStatementOn: IsoDate | null;
+  expectedDueOn: IsoDate;
+  actualDueOn: IsoDate | null;
+  actualStatementAmountPaise: Paise | null;
+  ruleSnapshot: CardCycleRule;
+};
+
+export type LedgerBillingCycle = BillingCycleRecord & {
+  expectedAmountPaise: Paise;
+  amountPaidPaise: Paise;
+  ledgerRemainingPaise: Paise;
+  statementRemainingPaise: Paise;
+  remainingPaise: Paise;
+  mismatch: boolean;
+  status: BillingCycleStatus;
+  lifecycle: CycleLifecycle;
+};
+
 export type FinancialEvent = {
   id: EntityId;
   meaning: EventMeaning;
@@ -100,13 +163,15 @@ export type LedgerAccount = AccountRecord & {
 export type LedgerSnapshot = {
   accounts: LedgerAccount[];
   categories: CategoryRecord[];
+  creditCards: CreditCardRecord[];
+  billingCycles: LedgerBillingCycle[];
   events: FinancialEvent[];
   postings: Posting[];
   openings: OpeningPosition[];
 };
 
 export type ConsequenceEffect = {
-  kind: "account" | "income" | "expense" | "opening";
+  kind: "account" | "income" | "expense" | "opening" | "card";
   label: string;
   deltaPaise: Paise;
 };
@@ -127,6 +192,7 @@ export type ProposedBatch = {
   events: FinancialEvent[];
   postings: Posting[];
   openings: OpeningPosition[];
+  billingCycles?: BillingCycleRecord[];
 };
 
 export class DomainError extends Error {

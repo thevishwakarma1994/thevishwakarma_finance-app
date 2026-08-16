@@ -17,6 +17,8 @@ describe("ledger primitives", () => {
   it("keeps FinancialEvent meanings and snapshots free of workspace identity", () => {
     expect(EVENT_MEANINGS).toContain("income");
     expect(EVENT_MEANINGS).toContain("spend_account");
+    expect(EVENT_MEANINGS).toContain("spend_card");
+    expect(EVENT_MEANINGS).toContain("pay_obligation");
     const account = accountFixture({ balancePaise: paiseOf(50_000) });
     const snapshot = snapshotFixture({ accounts: [account] });
     expect(snapshot).not.toHaveProperty("workspaceId");

@@ -1,19 +1,46 @@
 import { eq } from "drizzle-orm";
 import { paise } from "../domain/money/paise.js";
 import { isoDate } from "../domain/calendar/isoDate.js";
+import { todayKolkata } from "../domain/calendar/kolkata.js";
+import { parseCardCycleRule } from "../domain/cycle/assign.js";
+import { enrichBillingCycles } from "../domain/cycle/lifecycle.js";
 import type {
+  BillingCycleRecord,
+  CreditCardRecord,
   LedgerAccount,
   LedgerSnapshot,
   OpeningPosition,
 } from "../domain/ledger/types.js";
-import { accounts, categories, financialEvents, openingPositions, postings } from "./schema.js";
+import {
+  accounts,
+  billingCycles,
+  categories,
+  creditCards,
+  financialEvents,
+  openingPositions,
+  postings,
+} from "./schema.js";
 import type { SqliteHandles } from "./client.js";
 
-export function loadSnapshot(handles: SqliteHandles, workspaceId: string): LedgerSnapshot {
+export function loadSnapshot(
+  handles: SqliteHandles,
+  workspaceId: string,
+  asOf = todayKolkata(),
+): LedgerSnapshot {
   const accountRows = handles.db
     .select()
     .from(accounts)
     .where(eq(accounts.workspaceId, workspaceId))
+    .all();
+  const cardRows = handles.db
+    .select()
+    .from(creditCards)
+    .where(eq(creditCards.workspaceId, workspaceId))
+    .all();
+  const cycleRows = handles.db
+    .select()
+    .from(billingCycles)
+    .where(eq(billingCycles.workspaceId, workspaceId))
     .all();
   const categoryRows = handles.db
     .select()
@@ -70,6 +97,61 @@ export function loadSnapshot(handles: SqliteHandles, workspaceId: string): Ledge
     };
   });
 
+  const creditCardRecords: CreditCardRecord[] = cardRows.map((row) => ({
+    id: row.id,
+    displayName: row.displayName,
+    issuer: row.issuer,
+    mask: row.mask,
+    creditLimitPaise: row.creditLimitPaise === null ? null : paise(row.creditLimitPaise),
+    defaultPaymentAccountId: row.defaultPaymentAccountId,
+    status: row.status as CreditCardRecord["status"],
+  }));
+
+  const events = eventRows.map((row) => ({
+    id: row.id,
+    meaning: row.meaning as LedgerSnapshot["events"][number]["meaning"],
+    occurredOn: isoDate(row.occurredOn),
+    capturedAt: row.capturedAt,
+    amountPaise: paise(row.amountPaise),
+    accountId: row.accountId,
+    creditCardId: row.creditCardId,
+    loanId: null,
+    billingCycleId: row.billingCycleId,
+    fundingCycleId: null,
+    categoryId: row.categoryId,
+    channel: row.channel,
+    merchant: row.merchant,
+    notes: row.notes,
+    reversalOfEventId: row.reversalOfEventId,
+  }));
+
+  const ledgerPostings = postingRows.map((row) => ({
+    id: row.id,
+    eventId: row.eventId,
+    amountPaise: paise(row.amountPaise),
+    accountId: row.accountId,
+    creditCardId: row.creditCardId,
+    loanId: null,
+    pnl: row.pnl as LedgerSnapshot["postings"][number]["pnl"],
+    categoryId: row.categoryId,
+    claimId: null,
+    billingCycleId: row.billingCycleId,
+  }));
+
+  const cycleRecords: BillingCycleRecord[] = cycleRows.map((row) => ({
+    id: row.id,
+    creditCardId: row.creditCardId,
+    purchaseWindowStart: isoDate(row.purchaseWindowStart),
+    purchaseWindowEnd: isoDate(row.purchaseWindowEnd),
+    expectedStatementOn: isoDate(row.expectedStatementOn),
+    actualStatementOn: row.actualStatementOn ? isoDate(row.actualStatementOn) : null,
+    expectedDueOn: isoDate(row.expectedDueOn),
+    actualDueOn: row.actualDueOn ? isoDate(row.actualDueOn) : null,
+    actualStatementAmountPaise:
+      row.actualStatementAmountPaise === null ? null : paise(row.actualStatementAmountPaise),
+    ruleSnapshot: parseCardCycleRule(JSON.parse(row.ruleSnapshot)),
+  }));
+
   return {
     accounts: ledgerAccounts,
     categories: categoryRows.map((row) => ({
@@ -78,35 +160,10 @@ export function loadSnapshot(handles: SqliteHandles, workspaceId: string): Ledge
       name: row.name,
       archivedAt: row.archivedAt,
     })),
-    events: eventRows.map((row) => ({
-      id: row.id,
-      meaning: row.meaning as LedgerSnapshot["events"][number]["meaning"],
-      occurredOn: isoDate(row.occurredOn),
-      capturedAt: row.capturedAt,
-      amountPaise: paise(row.amountPaise),
-      accountId: row.accountId,
-      creditCardId: null,
-      loanId: null,
-      billingCycleId: null,
-      fundingCycleId: null,
-      categoryId: row.categoryId,
-      channel: row.channel,
-      merchant: row.merchant,
-      notes: row.notes,
-      reversalOfEventId: row.reversalOfEventId,
-    })),
-    postings: postingRows.map((row) => ({
-      id: row.id,
-      eventId: row.eventId,
-      amountPaise: paise(row.amountPaise),
-      accountId: row.accountId,
-      creditCardId: null,
-      loanId: null,
-      pnl: row.pnl as LedgerSnapshot["postings"][number]["pnl"],
-      categoryId: row.categoryId,
-      claimId: null,
-      billingCycleId: null,
-    })),
+    creditCards: creditCardRecords,
+    billingCycles: enrichBillingCycles(cycleRecords, events, ledgerPostings, asOf),
+    events,
+    postings: ledgerPostings,
     openings,
   };
 }

@@ -21,6 +21,22 @@ function pnlSum(batch: ProposedBatch, kind: ProposedBatch["postings"][number]["p
   );
 }
 
+function cardDeltas(batch: ProposedBatch): Paise {
+  return sumPaise(
+    batch.postings
+      .filter((posting) => posting.creditCardId)
+      .map((posting) => posting.amountPaise),
+  );
+}
+
+function claimPortion(batch: ProposedBatch): Paise {
+  return sumPaise(
+    batch.postings
+      .filter((posting) => posting.claimId && !posting.pnl && !posting.accountId && !posting.creditCardId)
+      .map((posting) => posting.amountPaise),
+  );
+}
+
 function expenseSum(batch: ProposedBatch): Paise {
   return pnlSum(batch, "expense");
 }
@@ -94,6 +110,47 @@ export function assertConservation(
     }
     if (incomeSum(batch) !== paise(0)) {
       throw new DomainError("conservation_transfer", "A transfer cannot create income");
+    }
+    return;
+  }
+
+  if (meaning === "spend_card") {
+    const cardIncrease = cardDeltas(batch);
+    const claims = claimPortion(batch);
+    if (accountDeltas(batch) !== paise(0)) {
+      throw new DomainError("conservation_card_spend", "A card purchase does not move bank or cash");
+    }
+    if (incomeSum(batch) !== paise(0)) {
+      throw new DomainError("conservation_card_spend", "A card purchase cannot create income");
+    }
+    if (cardIncrease <= 0) {
+      throw new DomainError("conservation_card_spend", "Card liability must increase");
+    }
+    // Stage 8 recordCardSpend is 100% personal (claims = 0). Later the same
+    // identity holds when claims are non-zero: card = personal expense + claims.
+    if (cardIncrease !== paise(expenseSum(batch) + claims)) {
+      throw new DomainError(
+        "conservation_card_spend",
+        "Card liability increase must equal personal expense plus claims",
+      );
+    }
+    return;
+  }
+
+  if (meaning === "pay_obligation") {
+    const accountDecrease = paise(-accountDeltas(batch));
+    const cardDecrease = paise(-cardDeltas(batch));
+    if (accountDecrease !== cardDecrease || accountDecrease <= 0) {
+      throw new DomainError(
+        "conservation_card_payment",
+        "Account decrease must equal card liability decrease",
+      );
+    }
+    if (expenseSum(batch) !== paise(0)) {
+      throw new DomainError("conservation_card_payment", "A card payment is not personal spending");
+    }
+    if (incomeSum(batch) !== paise(0)) {
+      throw new DomainError("conservation_card_payment", "A card payment is not income");
     }
   }
 }

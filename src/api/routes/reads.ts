@@ -1,8 +1,12 @@
 import { Hono } from "hono";
 import {
+  cardDetail,
+  comingCardPayments,
   currentMonthSpend,
+  cycleDetail,
   listAccounts,
   listActivity,
+  listCards,
   listCategories,
   monthReview,
 } from "../../db/reads.js";
@@ -70,6 +74,42 @@ readRoutes.get("/month-review", (c) => {
         asOf ? isoDate(asOf) : undefined,
       ),
     );
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+readRoutes.get("/cards", (c) => {
+  try {
+    return c.json({ cards: listCards(c.get("handles"), c.get("workspaceId")) });
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+readRoutes.get("/cards/:id", (c) => {
+  try {
+    return c.json(cardDetail(c.get("handles"), c.get("workspaceId"), c.req.param("id")));
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+readRoutes.get("/cycles/:id", (c) => {
+  try {
+    return c.json(cycleDetail(c.get("handles"), c.get("workspaceId"), c.req.param("id")));
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+readRoutes.get("/coming-card-payments", (c) => {
+  try {
+    return c.json({ items: comingCardPayments(c.get("handles"), c.get("workspaceId")) });
   } catch (error) {
     const mapped = mapError(error);
     return c.json(mapped.body, mapped.status);

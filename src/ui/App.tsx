@@ -5,6 +5,8 @@ import { Money } from "./pages/Money.js";
 import { Activity } from "./pages/Activity.js";
 import { Add } from "./pages/Add.js";
 import { MonthReview } from "./pages/MonthReview.js";
+import { CardDetail } from "./pages/CardDetail.js";
+import { CycleDetail } from "./pages/CycleDetail.js";
 
 function pathOf(): string {
   return window.location.pathname;
@@ -61,6 +63,8 @@ export function App() {
   }
 
   const current = path === "/" || path === "/sign-in" ? "/money" : path;
+  const cardMatch = /^\/card\/([^/]+)$/.exec(current);
+  const cycleMatch = /^\/cycle\/([^/]+)$/.exec(current);
 
   return (
     <div className="app">
@@ -70,9 +74,22 @@ export function App() {
         <Add onDone={() => navigate("/activity")} />
       ) : current === "/month" ? (
         <MonthReview onOpenActivity={(href) => navigate(href)} />
+      ) : cardMatch?.[1] ? (
+        <CardDetail
+          cardId={cardMatch[1]}
+          onBack={() => navigate("/money")}
+          onOpenCycle={(cycleId) => navigate(`/cycle/${cycleId}`)}
+        />
+      ) : cycleMatch?.[1] ? (
+        <CycleDetail
+          cycleId={cycleMatch[1]}
+          onBack={() => navigate("/money")}
+        />
       ) : (
         <Money
           onOpenMonth={() => navigate("/month")}
+          onOpenCard={(cardId) => navigate(`/card/${cardId}`)}
+          onOpenCycle={(cycleId) => navigate(`/cycle/${cycleId}`)}
           onSignedOut={() => {
             setAuthed(false);
             navigate("/sign-in");

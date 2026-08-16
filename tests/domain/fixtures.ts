@@ -1,7 +1,10 @@
 import { paise, type Paise } from "../../src/domain/money/paise.js";
 import { newId } from "../../src/domain/ids.js";
+import { isoDate } from "../../src/domain/calendar/isoDate.js";
 import type {
+  CreditCardRecord,
   LedgerAccount,
+  LedgerBillingCycle,
   LedgerSnapshot,
   ProposedBatch,
 } from "../../src/domain/ledger/types.js";
@@ -26,6 +29,48 @@ export function accountFixture(overrides: Partial<LedgerAccount> = {}): LedgerAc
   };
 }
 
+export function cardFixture(overrides: Partial<CreditCardRecord> = {}): CreditCardRecord {
+  return {
+    id: overrides.id ?? newId(),
+    displayName: overrides.displayName ?? "ICICI",
+    issuer: overrides.issuer ?? "ICICI",
+    mask: overrides.mask ?? "8001",
+    creditLimitPaise: overrides.creditLimitPaise ?? null,
+    defaultPaymentAccountId: overrides.defaultPaymentAccountId ?? null,
+    status: overrides.status ?? "active",
+  };
+}
+
+export function cycleFixture(overrides: Partial<LedgerBillingCycle> = {}): LedgerBillingCycle {
+  const expected = overrides.expectedAmountPaise ?? paise(0);
+  const paid = overrides.amountPaidPaise ?? paise(0);
+  const ledgerRemainingPaise = overrides.ledgerRemainingPaise ?? paise(expected - paid);
+  const statementRemainingPaise =
+    overrides.statementRemainingPaise ??
+    paise((overrides.actualStatementAmountPaise ?? expected) - paid);
+  const remaining = overrides.remainingPaise ?? paise(Math.min(ledgerRemainingPaise, statementRemainingPaise));
+  return {
+    id: overrides.id ?? newId(),
+    creditCardId: overrides.creditCardId ?? newId(),
+    purchaseWindowStart: overrides.purchaseWindowStart ?? isoDate("2026-08-13"),
+    purchaseWindowEnd: overrides.purchaseWindowEnd ?? isoDate("2026-09-12"),
+    expectedStatementOn: overrides.expectedStatementOn ?? isoDate("2026-09-12"),
+    actualStatementOn: overrides.actualStatementOn ?? null,
+    expectedDueOn: overrides.expectedDueOn ?? isoDate("2026-09-30"),
+    actualDueOn: overrides.actualDueOn ?? null,
+    actualStatementAmountPaise: overrides.actualStatementAmountPaise ?? null,
+    ruleSnapshot: overrides.ruleSnapshot ?? { statementDay: 12, dueDaysAfterStatement: 18 },
+    expectedAmountPaise: expected,
+    amountPaidPaise: paid,
+    ledgerRemainingPaise,
+    statementRemainingPaise,
+    remainingPaise: remaining,
+    mismatch: overrides.mismatch ?? false,
+    status: overrides.status ?? "open",
+    lifecycle: overrides.lifecycle ?? "accumulating",
+  };
+}
+
 export function snapshotFixture(overrides: Partial<LedgerSnapshot> = {}): LedgerSnapshot {
   const accounts = overrides.accounts ?? [accountFixture({ balancePaise: paiseOf(50_000) })];
   return {
@@ -34,6 +79,8 @@ export function snapshotFixture(overrides: Partial<LedgerSnapshot> = {}): Ledger
       { id: "cat-grocery", parentId: null, name: "Grocery", archivedAt: null },
       { id: "cat-household", parentId: null, name: "Household", archivedAt: null },
     ],
+    creditCards: overrides.creditCards ?? [],
+    billingCycles: overrides.billingCycles ?? [],
     events: overrides.events ?? [],
     postings: overrides.postings ?? [],
     openings: overrides.openings ?? [],
@@ -43,3 +90,5 @@ export function snapshotFixture(overrides: Partial<LedgerSnapshot> = {}): Ledger
 export function emptyBatch(): ProposedBatch {
   return { events: [], postings: [], openings: [] };
 }
+
+export const ICICI_RULE = { statementDay: 12, dueDaysAfterStatement: 18 };

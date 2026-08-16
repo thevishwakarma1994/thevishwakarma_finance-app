@@ -24,15 +24,68 @@ export type Category = {
 
 export type ActivityEvent = {
   id: string;
-  meaning: "income" | "spend_account" | "transfer";
+  meaning: "income" | "spend_account" | "transfer" | "spend_card" | "pay_obligation";
   occurredOn: string;
   amountPaise: number;
   accountName: string | null;
   fromAccountName: string | null;
   toAccountName: string | null;
+  cardLabel: string | null;
   merchant: string | null;
   categories: { id: string | null; name: string; amountPaise: number }[];
   incomeKind: "salary" | "other" | null;
+};
+
+export type CardCycleView = {
+  id: string;
+  creditCardId: string;
+  purchaseWindowStart: string;
+  purchaseWindowEnd: string;
+  expectedStatementOn: string;
+  actualStatementOn: string | null;
+  expectedDueOn: string;
+  actualDueOn: string | null;
+  dueOn: string;
+  expectedAmountPaise: number;
+  actualStatementAmountPaise: number | null;
+  amountPaidPaise: number;
+  ledgerRemainingPaise: number;
+  statementRemainingPaise: number;
+  remainingPaise: number;
+  mismatch: boolean;
+  status: string;
+  lifecycle: string;
+  ruleSnapshot: { statementDay: number; dueDaysAfterStatement: number };
+};
+
+export type CardListItem = {
+  id: string;
+  displayName: string;
+  issuer: string;
+  mask: string | null;
+  label: string;
+  creditLimitPaise: number | null;
+  defaultPaymentAccountId: string | null;
+  status: string;
+  outstandingPaise: number;
+  currentCycle: CardCycleView | null;
+  nextDueOn: string | null;
+  statementDay: number;
+  dueDaysAfterStatement: number;
+};
+
+export type ComingCardPayment = {
+  cycleId: string;
+  cardId: string;
+  cardLabel: string;
+  dueOn: string;
+  remainingPaise: number;
+  ledgerRemainingPaise: number;
+  statementRemainingPaise: number;
+  expectedAmountPaise: number;
+  actualStatementAmountPaise: number | null;
+  mismatch: boolean;
+  lifecycle: string;
 };
 
 export type MonthSpend = {
@@ -223,6 +276,117 @@ export function previewOrCommitTransfer(body: {
   commit: boolean;
 }) {
   return request<CommandResult>("/api/commands/transfer", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function fetchCards() {
+  return request<{ cards: CardListItem[] }>("/api/cards");
+}
+
+export function fetchCard(id: string) {
+  return request<
+    CardListItem & {
+      cycles: CardCycleView[];
+      transactions: ActivityEvent[];
+    }
+  >(`/api/cards/${id}`);
+}
+
+export function fetchCycle(id: string) {
+  return request<
+    CardCycleView & {
+      card: { id: string; label: string; displayName: string; mask: string | null };
+      spends: {
+        id: string;
+        occurredOn: string;
+        amountPaise: number;
+        merchant: string | null;
+        categories: { id: string | null; name: string; amountPaise: number }[];
+      }[];
+      payments: { id: string; occurredOn: string; amountPaise: number; accountName: string | null }[];
+    }
+  >(`/api/cycles/${id}`);
+}
+
+export function fetchComingCardPayments() {
+  return request<{ items: ComingCardPayment[] }>("/api/coming-card-payments");
+}
+
+export function createCard(body: {
+  displayName: string;
+  issuer: string;
+  mask?: string | null;
+  creditLimitPaise?: number | null;
+  defaultPaymentAccountId?: string | null;
+  statementDay: number;
+  dueDaysAfterStatement: number;
+}) {
+  return request<{ id: string }>("/api/cards", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function updateCard(body: {
+  cardId: string;
+  displayName?: string;
+  issuer?: string;
+  mask?: string | null;
+  creditLimitPaise?: number | null;
+  defaultPaymentAccountId?: string | null;
+  status?: "active" | "inactive";
+  statementDay?: number;
+  dueDaysAfterStatement?: number;
+  ruleEffectiveFrom?: string;
+}) {
+  return request<{ id: string }>("/api/cards/update", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function previewOrCommitCardSpend(body: {
+  occurredOn: string;
+  creditCardId: string;
+  allocations: { categoryId: string; amountPaise: number }[];
+  merchant?: string | null;
+  commit: boolean;
+}) {
+  return request<CommandResult>("/api/commands/card-spend", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function previewOrCommitPayCard(body: {
+  occurredOn: string;
+  creditCardId: string;
+  billingCycleId: string;
+  accountId: string;
+  amountPaise: number;
+  commit: boolean;
+}) {
+  return request<CommandResult>("/api/commands/pay-card", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function confirmStatement(body: {
+  cycleId: string;
+  actualStatementAmountPaise: number;
+  actualStatementOn: string;
+  actualDueOn: string;
+}) {
+  return request<{
+    cycleId: string;
+    expectedAmountPaise: number;
+    actualStatementAmountPaise: number;
+    mismatch: boolean;
+    warning: string | null;
+  }>("/api/commands/confirm-statement", {
     method: "POST",
     body: JSON.stringify(body),
   });

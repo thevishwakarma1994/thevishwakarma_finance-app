@@ -43,7 +43,7 @@ export function Activity() {
         {events.length === 0 ? <p className="muted">No movements yet.</p> : null}
         {events.map((event) => (
           <article
-            className={`card event${event.meaning === "transfer" ? " event-transfer" : ""}`}
+            className={`card event${event.meaning === "transfer" || event.meaning === "pay_obligation" ? " event-transfer" : ""}`}
             key={event.id}
           >
             <div className="row">
@@ -54,27 +54,37 @@ export function Activity() {
                     : "Income"
                   : event.meaning === "transfer"
                     ? "Moved"
-                    : (event.merchant ?? "Spending")}
+                    : event.meaning === "spend_card"
+                      ? `${formatInr(paise(event.amountPaise))} · ${event.categories.map((category) => category.name).join(", ")}${event.cardLabel ? ` · ${event.cardLabel}` : ""}`
+                      : event.meaning === "pay_obligation"
+                        ? `Paid ${formatInr(paise(event.amountPaise))} to ${event.cardLabel ?? "card"}`
+                        : (event.merchant ?? "Spending")}
               </strong>
               <span>
                 {event.meaning === "income"
                   ? formatInrDelta(paise(event.amountPaise))
                   : event.meaning === "transfer"
                     ? formatInr(paise(event.amountPaise))
-                    : formatInrDelta(paise(-event.amountPaise))}
+                    : event.meaning === "spend_card" || event.meaning === "pay_obligation"
+                      ? event.occurredOn
+                      : formatInrDelta(paise(-event.amountPaise))}
               </span>
             </div>
             <p className="muted">
               {event.meaning === "transfer" && event.fromAccountName && event.toAccountName
                 ? `Moved ${formatInr(paise(event.amountPaise))} from ${event.fromAccountName} to ${event.toAccountName}`
-                : `${event.occurredOn}${event.accountName ? ` · ${event.accountName}` : ""}`}
+                : event.meaning === "pay_obligation"
+                  ? event.occurredOn
+                  : `${event.occurredOn}${event.accountName ? ` · ${event.accountName}` : ""}`}
             </p>
             {event.meaning === "transfer" ? <p className="muted">{event.occurredOn}</p> : null}
-            {event.categories.map((category) => (
-              <p className="muted" key={`${event.id}-${category.name}`}>
-                {category.name} {formatInr(paise(category.amountPaise))}
-              </p>
-            ))}
+            {event.meaning === "spend_card" || event.meaning === "pay_obligation"
+              ? null
+              : event.categories.map((category) => (
+                  <p className="muted" key={`${event.id}-${category.name}`}>
+                    {category.name} {formatInr(paise(category.amountPaise))}
+                  </p>
+                ))}
           </article>
         ))}
         {error ? <p className="danger">{error}</p> : null}

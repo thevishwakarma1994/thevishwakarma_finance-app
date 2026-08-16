@@ -4,8 +4,12 @@ import { applyOpening } from "../../app/applyOpening.js";
 import { recordIncome } from "../../app/recordIncome.js";
 import { recordExpense } from "../../app/recordExpense.js";
 import { transferMoney } from "../../app/transferMoney.js";
+import { recordCardSpend } from "../../app/recordCardSpend.js";
+import { payCard } from "../../app/payCard.js";
+import { confirmStatement } from "../../app/confirmStatement.js";
 import { createAccount, updateAccount } from "../../app/accounts.js";
 import { createCategory, updateCategory } from "../../app/categories.js";
+import { createCard, updateCard } from "../../app/cards.js";
 import type { SqliteHandles } from "../../db/client.js";
 import { mapError } from "../auth/guard.js";
 
@@ -105,6 +109,64 @@ commandRoutes.post("/categories/update", async (c) => {
   try {
     const body = await c.req.json();
     return c.json(updateCategory(c.get("handles"), { workspaceId: c.get("workspaceId") }, body));
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+commandRoutes.post("/cards", async (c) => {
+  try {
+    const body = await c.req.json();
+    return c.json(createCard(c.get("handles"), { workspaceId: c.get("workspaceId") }, body));
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+commandRoutes.post("/cards/update", async (c) => {
+  try {
+    const body = await c.req.json();
+    return c.json(updateCard(c.get("handles"), { workspaceId: c.get("workspaceId") }, body));
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+commandRoutes.post("/commands/card-spend", async (c) => {
+  try {
+    const body = (await c.req.json()) as Record<string, unknown>;
+    const result = recordCardSpend(c.get("handles"), { workspaceId: c.get("workspaceId") }, {
+      ...body,
+      capturedAt: typeof body.capturedAt === "string" ? body.capturedAt : utcNowIso(),
+    });
+    return c.json(result);
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+commandRoutes.post("/commands/pay-card", async (c) => {
+  try {
+    const body = (await c.req.json()) as Record<string, unknown>;
+    const result = payCard(c.get("handles"), { workspaceId: c.get("workspaceId") }, {
+      ...body,
+      capturedAt: typeof body.capturedAt === "string" ? body.capturedAt : utcNowIso(),
+    });
+    return c.json(result);
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+commandRoutes.post("/commands/confirm-statement", async (c) => {
+  try {
+    const body = await c.req.json();
+    return c.json(confirmStatement(c.get("handles"), { workspaceId: c.get("workspaceId") }, body));
   } catch (error) {
     const mapped = mapError(error);
     return c.json(mapped.body, mapped.status);

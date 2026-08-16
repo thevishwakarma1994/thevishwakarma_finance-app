@@ -108,9 +108,14 @@ export function mapError(
 ): { status: 400 | 404 | 409 | 500; body: { error: string; message: string } } {
   if (error instanceof DomainError) {
     const status =
-      error.code === "insufficient_balance" || error.code === "duplicate_category"
+      error.code === "insufficient_balance" ||
+      error.code === "duplicate_category" ||
+      error.code === "payment_exceeds_outstanding"
         ? 409
-        : error.code === "account_not_found" || error.code === "category_not_found"
+        : error.code === "account_not_found" ||
+            error.code === "category_not_found" ||
+            error.code === "card_not_found" ||
+            error.code === "cycle_not_found"
           ? 404
           : 400;
     return { status, body: { error: error.code, message: error.message } };

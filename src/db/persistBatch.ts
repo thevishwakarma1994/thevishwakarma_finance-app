@@ -1,7 +1,7 @@
 import { utcNowIso } from "../domain/calendar/kolkata.js";
 import { assertBatchConservation } from "../domain/conservation/validate.js";
 import { DomainError, type ProposedBatch } from "../domain/ledger/types.js";
-import { financialEvents, openingPositions, postings } from "./schema.js";
+import { billingCycles, financialEvents, openingPositions, postings } from "./schema.js";
 import type { SqliteHandles } from "./client.js";
 import { withTransaction } from "./tx.js";
 
@@ -18,6 +18,29 @@ export function persistBatch(
   }
 
   withTransaction(handles, () => {
+    const cycles = batch.billingCycles ?? [];
+    if (cycles.length > 0) {
+      handles.db
+        .insert(billingCycles)
+        .values(
+          cycles.map((cycle) => ({
+            id: cycle.id,
+            workspaceId,
+            creditCardId: cycle.creditCardId,
+            purchaseWindowStart: cycle.purchaseWindowStart,
+            purchaseWindowEnd: cycle.purchaseWindowEnd,
+            expectedStatementOn: cycle.expectedStatementOn,
+            actualStatementOn: cycle.actualStatementOn,
+            expectedDueOn: cycle.expectedDueOn,
+            actualDueOn: cycle.actualDueOn,
+            actualStatementAmountPaise: cycle.actualStatementAmountPaise,
+            status: "open",
+            ruleSnapshot: JSON.stringify(cycle.ruleSnapshot),
+          })),
+        )
+        .run();
+    }
+
     if (batch.openings.length > 0) {
       handles.db
         .insert(openingPositions)
@@ -47,6 +70,8 @@ export function persistBatch(
             capturedAt: event.capturedAt,
             amountPaise: event.amountPaise,
             accountId: event.accountId,
+            creditCardId: event.creditCardId,
+            billingCycleId: event.billingCycleId,
             categoryId: event.categoryId,
             channel: event.channel,
             merchant: event.merchant,
@@ -67,8 +92,10 @@ export function persistBatch(
             eventId: posting.eventId,
             amountPaise: posting.amountPaise,
             accountId: posting.accountId,
+            creditCardId: posting.creditCardId,
             pnl: posting.pnl,
             categoryId: posting.categoryId,
+            billingCycleId: posting.billingCycleId,
           })),
         )
         .run();

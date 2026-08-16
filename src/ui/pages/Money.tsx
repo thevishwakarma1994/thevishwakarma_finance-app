@@ -5,27 +5,36 @@ import { todayKolkata } from "../../domain/calendar/kolkata.js";
 import {
   ApiError,
   createAccount,
+  createCard,
   createCategory,
   fetchAccounts,
+  fetchCards,
   fetchCategories,
+  fetchComingCardPayments,
   fetchMonth,
   previewOrCommitOpening,
   signOut,
   updateAccount,
   updateCategory,
   type Account,
+  type CardListItem,
   type Category,
+  type ComingCardPayment,
   type MonthSpend,
 } from "../apiClient.js";
 
 type Props = {
   onSignedOut: () => void;
   onOpenMonth: () => void;
+  onOpenCard: (cardId: string) => void;
+  onOpenCycle: (cycleId: string) => void;
 };
 
-export function Money({ onSignedOut, onOpenMonth }: Props) {
+export function Money({ onSignedOut, onOpenMonth, onOpenCard, onOpenCycle }: Props) {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [cards, setCards] = useState<CardListItem[]>([]);
+  const [coming, setComing] = useState<ComingCardPayment[]>([]);
   const [month, setMonth] = useState<MonthSpend | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [openingAccountId, setOpeningAccountId] = useState<string | null>(null);
@@ -34,27 +43,51 @@ export function Money({ onSignedOut, onOpenMonth }: Props) {
   const [newAccountKind, setNewAccountKind] = useState<"bank" | "cash">("bank");
   const [newCategoryName, setNewCategoryName] = useState("");
   const [newCategoryParentId, setNewCategoryParentId] = useState("");
+  const [newCardName, setNewCardName] = useState("");
+  const [newCardIssuer, setNewCardIssuer] = useState("");
+  const [newCardMask, setNewCardMask] = useState("");
+  const [newCardStatementDay, setNewCardStatementDay] = useState("12");
+  const [newCardDueDays, setNewCardDueDays] = useState("18");
+  const [newCardLimit, setNewCardLimit] = useState("");
+  const [newCardPaymentAccountId, setNewCardPaymentAccountId] = useState("");
   const [renameAccountId, setRenameAccountId] = useState<string | null>(null);
   const [renameAccountName, setRenameAccountName] = useState("");
   const [renameCategoryId, setRenameCategoryId] = useState<string | null>(null);
   const [renameCategoryName, setRenameCategoryName] = useState("");
 
   function load() {
-    return Promise.all([fetchAccounts(), fetchMonth(), fetchCategories()]).then(
-      ([accountData, monthData, categoryData]) => {
-        setAccounts(accountData.accounts);
-        setMonth(monthData);
-        setCategories(categoryData.categories);
-      },
-    );
+    return Promise.all([
+      fetchAccounts(),
+      fetchMonth(),
+      fetchCategories(),
+      fetchCards(),
+      fetchComingCardPayments(),
+    ]).then(([accountData, monthData, categoryData, cardData, comingData]) => {
+      setAccounts(accountData.accounts);
+      setMonth(monthData);
+      setCategories(categoryData.categories);
+      setCards(cardData.cards);
+      setComing(comingData.items);
+    });
   }
 
   useEffect(() => {
-    Promise.all([fetchAccounts(), fetchMonth(), fetchCategories()])
-      .then(([accountData, monthData, categoryData]) => {
+    Promise.all([
+      fetchAccounts(),
+      fetchMonth(),
+      fetchCategories(),
+      fetchCards(),
+      fetchComingCardPayments(),
+    ])
+      .then(([accountData, monthData, categoryData, cardData, comingData]) => {
         setAccounts(accountData.accounts);
         setMonth(monthData);
         setCategories(categoryData.categories);
+        setCards(cardData.cards);
+        setComing(comingData.items);
+        if (accountData.accounts[0]) {
+          setNewCardPaymentAccountId(accountData.accounts[0].id);
+        }
       })
       .catch((caught: unknown) => {
         setError(caught instanceof ApiError ? caught.message : "Could not load accounts");
@@ -117,6 +150,29 @@ export function Money({ onSignedOut, onOpenMonth }: Props) {
     }
   }
 
+  async function onCreateCard(event: FormEvent) {
+    event.preventDefault();
+    setError(null);
+    try {
+      await createCard({
+        displayName: newCardName,
+        issuer: newCardIssuer || newCardName,
+        mask: newCardMask || null,
+        statementDay: Number(newCardStatementDay),
+        dueDaysAfterStatement: Number(newCardDueDays),
+        creditLimitPaise: newCardLimit ? parseInr(newCardLimit) : null,
+        defaultPaymentAccountId: newCardPaymentAccountId || null,
+      });
+      setNewCardName("");
+      setNewCardIssuer("");
+      setNewCardMask("");
+      setNewCardLimit("");
+      await load();
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : "Could not create card");
+    }
+  }
+
   return (
     <>
       <header className="header">
@@ -132,6 +188,28 @@ export function Money({ onSignedOut, onOpenMonth }: Props) {
             <p className="balance">{formatInr(paise(month.spentPaise))}</p>
             <p className="muted">Open Month Review</p>
           </button>
+        ) : null}
+        {coming.length > 0 ? (
+          <section className="card stack">
+            <p>Coming card payments</p>
+            {coming.map((item) => (
+              <button
+                className="link-card"
+                type="button"
+                key={item.cycleId}
+                onClick={() => onOpenCycle(item.cycleId)}
+              >
+                <div className="row">
+                  <strong>{item.cardLabel}</strong>
+                  <span>{formatInr(paise(item.statementRemainingPaise))}</span>
+                </div>
+                <p className="muted">
+                  Due {item.dueOn}
+                  {item.mismatch ? " · statement mismatch" : ""}
+                </p>
+              </button>
+            ))}
+          </section>
         ) : null}
         {accounts.map((account) => (
           <section className="card" key={account.id}>
@@ -251,6 +329,87 @@ export function Money({ onSignedOut, onOpenMonth }: Props) {
           </label>
           <button className="primary" type="submit">
             Create account
+          </button>
+        </form>
+        <section className="card stack">
+          <p>Cards</p>
+          {cards.length === 0 ? <p className="muted">No cards yet.</p> : null}
+          {cards.map((card) => (
+            <button className="link-card" type="button" key={card.id} onClick={() => onOpenCard(card.id)}>
+              <div className="row">
+                <strong>{card.label}</strong>
+                <span>{formatInr(paise(card.outstandingPaise))}</span>
+              </div>
+              <p className="muted">
+                {card.currentCycle
+                  ? `Open cycle statement ${card.currentCycle.expectedStatementOn}`
+                  : "No open cycle yet"}
+                {card.nextDueOn ? ` · due ${card.nextDueOn}` : ""}
+              </p>
+            </button>
+          ))}
+        </section>
+        <form className="card stack" onSubmit={(event) => void onCreateCard(event)}>
+          <p>Add card</p>
+          <label>
+            Name
+            <input value={newCardName} onChange={(event) => setNewCardName(event.target.value)} required />
+          </label>
+          <label>
+            Issuer
+            <input value={newCardIssuer} onChange={(event) => setNewCardIssuer(event.target.value)} />
+          </label>
+          <label>
+            Last 4
+            <input
+              value={newCardMask}
+              onChange={(event) => setNewCardMask(event.target.value)}
+              inputMode="numeric"
+              maxLength={4}
+            />
+          </label>
+          <label>
+            Statement day
+            <input
+              value={newCardStatementDay}
+              onChange={(event) => setNewCardStatementDay(event.target.value)}
+              inputMode="numeric"
+              required
+            />
+          </label>
+          <label>
+            Due days after statement
+            <input
+              value={newCardDueDays}
+              onChange={(event) => setNewCardDueDays(event.target.value)}
+              inputMode="numeric"
+              required
+            />
+          </label>
+          <label>
+            Credit limit (optional)
+            <input
+              inputMode="decimal"
+              value={newCardLimit}
+              onChange={(event) => setNewCardLimit(event.target.value)}
+            />
+          </label>
+          <label>
+            Default payment account
+            <select
+              value={newCardPaymentAccountId}
+              onChange={(event) => setNewCardPaymentAccountId(event.target.value)}
+            >
+              <option value="">None</option>
+              {accounts.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {account.displayName}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button className="primary" type="submit">
+            Create card
           </button>
         </form>
         <section className="card stack">

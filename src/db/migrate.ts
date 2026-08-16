@@ -7,8 +7,6 @@ import { utcNowIso } from "../domain/calendar/kolkata.js";
 import { accounts, categories, workspaces } from "./schema.js";
 import { openDatabase, type SqliteHandles } from "./client.js";
 
-const MIGRATION_FILE = "0000_init.sql";
-
 export function drizzleDir(): string {
   return fileURLToPath(new URL("../../drizzle", import.meta.url));
 }
@@ -28,13 +26,18 @@ export function applyMigrations(handles: SqliteHandles, migrationsDir = drizzleD
       .map((row) => (row as { filename: string }).filename),
   );
 
-  const sqlPath = path.join(migrationsDir, MIGRATION_FILE);
-  if (!applied.has(MIGRATION_FILE)) {
-    const sql = fs.readFileSync(sqlPath, "utf8");
+  const files = fs
+    .readdirSync(migrationsDir)
+    .filter((filename) => filename.endsWith(".sql"))
+    .sort();
+
+  for (const filename of files) {
+    if (applied.has(filename)) continue;
+    const sql = fs.readFileSync(path.join(migrationsDir, filename), "utf8");
     handles.sqlite.exec(sql);
     handles.sqlite
       .prepare("INSERT INTO schema_migrations (filename, applied_at) VALUES (?, ?)")
-      .run(MIGRATION_FILE, utcNowIso());
+      .run(filename, utcNowIso());
   }
 
   seedWorkspace(handles);

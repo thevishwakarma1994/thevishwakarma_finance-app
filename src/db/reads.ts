@@ -1,12 +1,15 @@
 import { and, eq, gte, lte, sql } from "drizzle-orm";
-import { paise } from "../domain/money/paise.js";
+import { paise, sumPaise } from "../domain/money/paise.js";
 import {
   kolkataAddMonths,
   kolkataMonthEnd,
   kolkataMonthStart,
   todayKolkata,
 } from "../domain/calendar/kolkata.js";
+import { formatCardLabel } from "../domain/cycle/lifecycle.js";
+import { DomainError, type LedgerBillingCycle } from "../domain/ledger/types.js";
 import { loadSnapshot } from "./loadSnapshot.js";
+import { loadCardRule } from "./config.js";
 import { categories, financialEvents, postings } from "./schema.js";
 import type { SqliteHandles } from "./client.js";
 
@@ -59,7 +62,11 @@ export function listActivity(
   return snapshot.events
     .filter(
       (event) =>
-        event.meaning === "income" || event.meaning === "spend_account" || event.meaning === "transfer",
+        event.meaning === "income" ||
+        event.meaning === "spend_account" ||
+        event.meaning === "transfer" ||
+        event.meaning === "spend_card" ||
+        event.meaning === "pay_obligation",
     )
     .filter((event) => {
       if (!filter.month) return true;
@@ -94,6 +101,10 @@ export function listActivity(
       // positive account posting on the same event.
       const source = accountPostings.find((posting) => posting.amountPaise < 0);
       const destination = accountPostings.find((posting) => posting.amountPaise > 0);
+      const card = event.creditCardId
+        ? snapshot.creditCards.find((item) => item.id === event.creditCardId)
+        : undefined;
+      const cardLabel = card ? formatCardLabel(card.displayName, card.mask) : null;
       return {
         id: event.id,
         meaning: event.meaning,
@@ -104,6 +115,7 @@ export function listActivity(
         toAccountName: destination?.accountId
           ? (accountName.get(destination.accountId) ?? null)
           : null,
+        cardLabel,
         merchant: event.merchant,
         categories: expensePostings.map((posting) => ({
           id: posting.categoryId,
@@ -194,4 +206,187 @@ export function monthReview(handles: SqliteHandles, workspaceId: string, asOf = 
       }))
       .sort((left, right) => right.spentPaise - left.spentPaise),
   };
+}
+
+function cycleView(cycle: LedgerBillingCycle) {
+  return {
+    id: cycle.id,
+    creditCardId: cycle.creditCardId,
+    purchaseWindowStart: cycle.purchaseWindowStart,
+    purchaseWindowEnd: cycle.purchaseWindowEnd,
+    expectedStatementOn: cycle.expectedStatementOn,
+    actualStatementOn: cycle.actualStatementOn,
+    expectedDueOn: cycle.expectedDueOn,
+    actualDueOn: cycle.actualDueOn,
+    dueOn: cycle.actualDueOn ?? cycle.expectedDueOn,
+    expectedAmountPaise: cycle.expectedAmountPaise,
+    actualStatementAmountPaise: cycle.actualStatementAmountPaise,
+    amountPaidPaise: cycle.amountPaidPaise,
+    ledgerRemainingPaise: cycle.ledgerRemainingPaise,
+    statementRemainingPaise: cycle.statementRemainingPaise,
+    remainingPaise: cycle.remainingPaise,
+    mismatch: cycle.mismatch,
+    status: cycle.status,
+    lifecycle: cycle.lifecycle,
+    ruleSnapshot: cycle.ruleSnapshot,
+  };
+}
+
+export function listCards(handles: SqliteHandles, workspaceId: string, asOf = todayKolkata()) {
+  const snapshot = loadSnapshot(handles, workspaceId, asOf);
+  return snapshot.creditCards
+    .filter((card) => card.status === "active")
+    .map((card) => {
+      const cycles = snapshot.billingCycles.filter((cycle) => cycle.creditCardId === card.id);
+      const outstandingPaise = sumPaise(cycles.map((cycle) => cycle.ledgerRemainingPaise));
+      const current =
+        cycles.find(
+          (cycle) => cycle.purchaseWindowStart <= asOf && asOf <= cycle.purchaseWindowEnd,
+        ) ?? null;
+      const nextDue = cycles
+        .filter((cycle) => cycle.ledgerRemainingPaise > 0 || cycle.statementRemainingPaise > 0)
+        .map((cycle) => cycle.actualDueOn ?? cycle.expectedDueOn)
+        .sort()[0];
+      const rule = loadCardRule(handles, workspaceId, card.id, asOf);
+      return {
+        id: card.id,
+        displayName: card.displayName,
+        issuer: card.issuer,
+        mask: card.mask,
+        label: formatCardLabel(card.displayName, card.mask),
+        creditLimitPaise: card.creditLimitPaise,
+        defaultPaymentAccountId: card.defaultPaymentAccountId,
+        status: card.status,
+        outstandingPaise,
+        currentCycle: current ? cycleView(current) : null,
+        nextDueOn: nextDue ?? current?.actualDueOn ?? current?.expectedDueOn ?? null,
+        statementDay: rule.statementDay,
+        dueDaysAfterStatement: rule.dueDaysAfterStatement,
+      };
+    });
+}
+
+export function cardDetail(
+  handles: SqliteHandles,
+  workspaceId: string,
+  cardId: string,
+  asOf = todayKolkata(),
+) {
+  const snapshot = loadSnapshot(handles, workspaceId, asOf);
+  const card = snapshot.creditCards.find((item) => item.id === cardId);
+  if (!card) {
+    throw new DomainError("card_not_found", "Credit card not found");
+  }
+  const cycles = snapshot.billingCycles
+    .filter((cycle) => cycle.creditCardId === card.id)
+    .sort((left, right) => right.expectedStatementOn.localeCompare(left.expectedStatementOn));
+  const outstandingPaise = sumPaise(cycles.map((cycle) => cycle.ledgerRemainingPaise));
+  const rule = loadCardRule(handles, workspaceId, card.id, asOf);
+  const activity = listActivity(handles, workspaceId).filter((event) =>
+    snapshot.events.some(
+      (item) => item.id === event.id && item.creditCardId === card.id,
+    ),
+  );
+  return {
+    id: card.id,
+    displayName: card.displayName,
+    issuer: card.issuer,
+    mask: card.mask,
+    label: formatCardLabel(card.displayName, card.mask),
+    creditLimitPaise: card.creditLimitPaise,
+    defaultPaymentAccountId: card.defaultPaymentAccountId,
+    status: card.status,
+    outstandingPaise,
+    statementDay: rule.statementDay,
+    dueDaysAfterStatement: rule.dueDaysAfterStatement,
+    cycles: cycles.map(cycleView),
+    transactions: activity,
+  };
+}
+
+export function cycleDetail(
+  handles: SqliteHandles,
+  workspaceId: string,
+  cycleId: string,
+  asOf = todayKolkata(),
+) {
+  const snapshot = loadSnapshot(handles, workspaceId, asOf);
+  const cycle = snapshot.billingCycles.find((item) => item.id === cycleId);
+  if (!cycle) {
+    throw new DomainError("cycle_not_found", "Billing cycle not found");
+  }
+  const card = snapshot.creditCards.find((item) => item.id === cycle.creditCardId);
+  if (!card) {
+    throw new DomainError("card_not_found", "Credit card not found");
+  }
+  const categoryName = new Map(snapshot.categories.map((category) => [category.id, category.name]));
+  const spends = snapshot.events
+    .filter((event) => event.billingCycleId === cycle.id && event.meaning === "spend_card")
+    .sort((left, right) => left.occurredOn.localeCompare(right.occurredOn))
+    .map((event) => {
+      const expensePostings = snapshot.postings.filter(
+        (posting) => posting.eventId === event.id && posting.pnl === "expense",
+      );
+      return {
+        id: event.id,
+        occurredOn: event.occurredOn,
+        amountPaise: event.amountPaise,
+        merchant: event.merchant,
+        categories: expensePostings.map((posting) => ({
+          id: posting.categoryId,
+          name: posting.categoryId ? (categoryName.get(posting.categoryId) ?? "Expense") : "Expense",
+          amountPaise: posting.amountPaise,
+        })),
+      };
+    });
+  const payments = snapshot.events
+    .filter((event) => event.billingCycleId === cycle.id && event.meaning === "pay_obligation")
+    .sort((left, right) => left.occurredOn.localeCompare(right.occurredOn))
+    .map((event) => ({
+      id: event.id,
+      occurredOn: event.occurredOn,
+      amountPaise: event.amountPaise,
+      accountName:
+        snapshot.accounts.find((account) => account.id === event.accountId)?.displayName ?? null,
+    }));
+  return {
+    ...cycleView(cycle),
+    card: {
+      id: card.id,
+      label: formatCardLabel(card.displayName, card.mask),
+      displayName: card.displayName,
+      mask: card.mask,
+    },
+    spends,
+    payments,
+  };
+}
+
+export function comingCardPayments(
+  handles: SqliteHandles,
+  workspaceId: string,
+  asOf = todayKolkata(),
+) {
+  const snapshot = loadSnapshot(handles, workspaceId, asOf);
+  return snapshot.billingCycles
+    .filter(
+      (cycle) => cycle.ledgerRemainingPaise > 0 || cycle.statementRemainingPaise > 0 || cycle.mismatch,
+    )
+    .map((cycle) => {
+      const card = snapshot.creditCards.find((item) => item.id === cycle.creditCardId);
+      return {
+        cycleId: cycle.id,
+        cardId: cycle.creditCardId,
+        cardLabel: card ? formatCardLabel(card.displayName, card.mask) : "Card",
+        dueOn: cycle.actualDueOn ?? cycle.expectedDueOn,
+        remainingPaise: cycle.remainingPaise,
+        ledgerRemainingPaise: cycle.ledgerRemainingPaise,
+        statementRemainingPaise: cycle.statementRemainingPaise,
+        expectedAmountPaise: cycle.expectedAmountPaise,
+        actualStatementAmountPaise: cycle.actualStatementAmountPaise,
+        mismatch: cycle.mismatch,
+        lifecycle: cycle.lifecycle,
+      };
+    })
+    .sort((left, right) => left.dueOn.localeCompare(right.dueOn));
 }
