@@ -203,28 +203,43 @@ class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+let unauthorizedHandler: (() => void) | null = null;
+
+export function setUnauthorizedHandler(handler: (() => void) | null) {
+  unauthorizedHandler = handler;
+}
+
+async function authorizedFetch(path: string, init: RequestInit, forceRefresh: boolean) {
   const headers = new Headers(init.headers);
   if (init.body && !headers.has("content-type")) {
     headers.set("content-type", "application/json");
   }
-  const token = await currentIdToken();
+  const token = await currentIdToken(forceRefresh);
   if (token) {
     headers.set("authorization", `Bearer ${token}`);
   }
-  const response = await fetch(path, {
-    ...init,
-    headers,
-  });
-  if (response.status === 401 && path !== "/api/me") {
-    if (window.location.pathname !== "/sign-in") {
-      window.location.assign("/sign-in");
-    }
+  return fetch(path, { ...init, headers });
+}
+
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  let response = await authorizedFetch(path, init, false);
+  if (response.status === 401) {
+    response = await authorizedFetch(path, init, true);
   }
   const data = (await response.json().catch(() => ({}))) as {
     error?: string;
     message?: string;
   } & T;
+  if (response.status === 401) {
+    if (path !== "/api/me") {
+      unauthorizedHandler?.();
+    }
+    throw new ApiError(
+      response.status,
+      data.error ?? "unauthenticated",
+      data.message ?? "Request failed",
+    );
+  }
   if (!response.ok) {
     throw new ApiError(response.status, data.error ?? "error", data.message ?? "Request failed");
   }

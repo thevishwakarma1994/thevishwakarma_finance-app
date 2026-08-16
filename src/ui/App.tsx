@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
-import { getMe } from "./apiClient.js";
-import { completeGoogleRedirect, firebaseConfigured, subscribeAuth } from "./firebase.js";
+import { useAuthSession } from "./authSession.js";
 import { SignIn } from "./pages/SignIn.js";
 import { Home } from "./pages/Home.js";
 import { StsExplain } from "./pages/StsExplain.js";
@@ -22,8 +21,7 @@ function pathOf(): string {
 
 export function App() {
   const [path, setPath] = useState(pathOf);
-  const [ready, setReady] = useState(() => !firebaseConfigured());
-  const [authed, setAuthed] = useState(false);
+  const { state, beginBootstrap, retry, signOut } = useAuthSession();
 
   useEffect(() => {
     const onPop = () => setPath(pathOf());
@@ -31,62 +29,55 @@ export function App() {
     return () => window.removeEventListener("popstate", onPop);
   }, []);
 
-  useEffect(() => {
-    if (!firebaseConfigured()) {
-      return;
-    }
-    let cancelled = false;
-    let unsubscribe = () => {};
-
-    async function confirmSession() {
-      try {
-        await getMe();
-        if (!cancelled) setAuthed(true);
-      } catch {
-        if (!cancelled) setAuthed(false);
-      } finally {
-        if (!cancelled) setReady(true);
-      }
-    }
-
-    void completeGoogleRedirect().catch(() => null).then(() => {
-      if (cancelled) return;
-      unsubscribe = subscribeAuth((user) => {
-        if (!user) {
-          if (!cancelled) {
-            setAuthed(false);
-            setReady(true);
-          }
-          return;
-        }
-        void confirmSession();
-      });
-    });
-
-    return () => {
-      cancelled = true;
-      unsubscribe();
-    };
-  }, []);
-
   function navigate(to: string) {
     window.history.pushState({}, "", to);
     setPath(to);
   }
 
-  if (!ready) {
-    return <div className="app page muted">Loading…</div>;
+  if (state.phase === "initializing" || state.phase === "bootstrap_loading") {
+    return (
+      <div className="app page muted" data-auth-phase={state.phase}>
+        Loading…
+      </div>
+    );
   }
 
-  if (!authed) {
+  if (state.phase === "denied") {
     return (
-      <div className="app">
-        <SignIn
-          onSignedIn={() => {
-            setAuthed(true);
-            navigate("/");
-          }}
-        />
+      <div className="app" data-auth-phase="denied">
+        <main className="page">
+          <header className="header">
+            <h1>Access denied</h1>
+          </header>
+          <p className="danger">{state.message ?? "This account is disabled"}</p>
+          <button className="secondary" type="button" onClick={() => void signOut()}>
+            Sign out
+          </button>
+        </main>
+      </div>
+    );
+  }
+
+  if (state.phase === "error") {
+    return (
+      <div className="app" data-auth-phase="error">
+        <main className="page">
+          <header className="header">
+            <h1>Could not load your workspace</h1>
+          </header>
+          <p className="danger">{state.message ?? "Could not reach the server"}</p>
+          <button className="primary" type="button" onClick={retry}>
+            Retry
+          </button>
+        </main>
+      </div>
+    );
+  }
+
+  if (state.phase === "unauthenticated") {
+    return (
+      <div className="app" data-auth-phase="unauthenticated">
+        <SignIn onSignedIn={beginBootstrap} />
       </div>
     );
   }
@@ -98,7 +89,7 @@ export function App() {
   const obligationMatch = /^\/obligation\/([^/]+)$/.exec(current);
 
   return (
-    <div className="app">
+    <div className="app" data-auth-phase="ready">
       {current === "/activity" ? (
         <Activity />
       ) : current === "/add" ? (
@@ -138,8 +129,7 @@ export function App() {
           onOpenCard={(cardId) => navigate(`/card/${cardId}`)}
           onOpenCycle={(cycleId) => navigate(`/cycle/${cycleId}`)}
           onSignedOut={() => {
-            setAuthed(false);
-            navigate("/sign-in");
+            void signOut().then(() => navigate("/sign-in"));
           }}
         />
       ) : (
@@ -153,8 +143,7 @@ export function App() {
           onOpenObligation={(id) => navigate(`/obligation/${id}`)}
           onAdd={() => navigate("/add")}
           onSignedOut={() => {
-            setAuthed(false);
-            navigate("/sign-in");
+            void signOut().then(() => navigate("/sign-in"));
           }}
         />
       )}

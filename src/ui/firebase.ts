@@ -49,11 +49,11 @@ export function subscribeAuth(listener: (user: User | null) => void): () => void
   return onAuthStateChanged(firebaseAuth(), listener);
 }
 
-export async function currentIdToken(): Promise<string | null> {
+export async function currentIdToken(forceRefresh = false): Promise<string | null> {
   if (!firebaseConfigured()) return null;
   const user = firebaseAuth().currentUser;
   if (!user) return null;
-  return user.getIdToken();
+  return user.getIdToken(forceRefresh);
 }
 
 function prefersRedirectSignIn(): boolean {
