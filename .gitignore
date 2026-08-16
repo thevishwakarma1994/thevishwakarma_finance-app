@@ -1,0 +1,16 @@
+node_modules
+dist
+build
+coverage
+data
+.env
+.env.*
+!.env.example
+*.log
+*.sqlite
+*.db
+*-wal
+*-shm
+.DS_Store
+dev-dist
+.pnpm-store

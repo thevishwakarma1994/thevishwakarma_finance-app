@@ -1,0 +1,182 @@
+:root {
+  color-scheme: light;
+  --bg: #f6f4f0;
+  --card: #fffdf9;
+  --ink: #1c1917;
+  --muted: #57534e;
+  --line: #e7e5e4;
+  --accent: #0f766e;
+  --danger: #b42318;
+  font-family: "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+body {
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+    env(safe-area-inset-left);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+.app {
+  max-width: 28rem;
+  margin: 0 auto;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1rem 0.5rem;
+}
+
+.header h1 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.linkish {
+  background: none;
+  border: none;
+  color: var(--accent);
+  padding: 0;
+}
+
+.page {
+  flex: 1;
+  padding: 0 1rem 5.5rem;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  padding: 1rem;
+  margin: 0.75rem 0;
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.balance {
+  font-size: 1.4rem;
+  font-weight: 650;
+  margin: 0.25rem 0 0;
+}
+
+.row {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: baseline;
+}
+
+.stack {
+  display: grid;
+  gap: 0.75rem;
+}
+
+label {
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.9rem;
+}
+
+input,
+select {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  padding: 0.75rem 0.85rem;
+  background: white;
+}
+
+.primary,
+.secondary {
+  width: 100%;
+  border-radius: 0.9rem;
+  padding: 0.85rem 1rem;
+  border: none;
+}
+
+.primary {
+  background: var(--ink);
+  color: white;
+}
+
+.secondary {
+  background: white;
+  border: 1px solid var(--line);
+}
+
+.danger {
+  color: var(--danger);
+  font-size: 0.9rem;
+}
+
+.nav {
+  position: sticky;
+  bottom: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  background: rgba(246, 244, 240, 0.96);
+  border-top: 1px solid var(--line);
+  padding: 0.4rem 0.5rem calc(0.4rem + env(safe-area-inset-bottom));
+}
+
+.nav a {
+  text-align: center;
+  text-decoration: none;
+  color: var(--muted);
+  padding: 0.65rem 0.4rem;
+  border-radius: 0.8rem;
+  font-size: 0.92rem;
+}
+
+.nav a.active {
+  background: white;
+  color: var(--ink);
+  font-weight: 650;
+}
+
+.choice {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.preview {
+  display: grid;
+  gap: 0.35rem;
+  font-size: 1.05rem;
+}
+
+.event {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.event strong {
+  font-size: 1rem;
+}
