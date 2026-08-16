@@ -7,7 +7,7 @@ import { applyMigrations } from "./db/migrate.js";
 import { describeDatabaseConfig, resolveDatabaseConfig } from "./db/env.js";
 import { createApp } from "./api/app.js";
 import { assertFirebaseAdminConfig } from "./api/auth/firebaseAdmin.js";
-import { isSpaFallbackPath, serverBindHostname } from "./http/listen.js";
+import { isApiOrHealthPath, isSpaFallbackPath, serverBindHostname } from "./http/listen.js";
 
 assertFirebaseAdminConfig();
 
@@ -25,7 +25,7 @@ const app = createApp(handles);
 if (production) {
   const dist = "dist";
   app.use("/*", async (c, next) => {
-    if (!isSpaFallbackPath(c.req.path)) {
+    if (isApiOrHealthPath(c.req.path)) {
       await next();
       return;
     }

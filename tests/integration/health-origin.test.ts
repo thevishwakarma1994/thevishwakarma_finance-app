@@ -36,6 +36,7 @@ describe("production HTTP bind and SPA fallback", () => {
     expect(isSpaFallbackPath("/registerSW.js")).toBe(false);
     expect(isSpaFallbackPath("/icons/icon-192.png")).toBe(false);
     expect(isSpaFallbackPath("/icons/icon-512.png")).toBe(false);
+    expect(isSpaFallbackPath("/assets/index.js")).toBe(false);
   });
 });
 
