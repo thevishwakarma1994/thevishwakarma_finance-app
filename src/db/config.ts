@@ -55,6 +55,7 @@ export function upsertConfig(
       .run();
   }
 
+  const next = existing.find((row) => row.effectiveFrom > input.effectiveFrom);
   handles.db
     .insert(configVersions)
     .values({
@@ -63,7 +64,7 @@ export function upsertConfig(
       key: input.key,
       subjectId: input.subjectId,
       effectiveFrom: input.effectiveFrom,
-      effectiveTo: null,
+      effectiveTo: next?.effectiveFrom ?? null,
       value: JSON.stringify(input.value),
     })
     .run();

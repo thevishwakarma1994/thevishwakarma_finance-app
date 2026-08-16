@@ -25,6 +25,8 @@ export function cloneSnapshot(snapshot: LedgerSnapshot): LedgerSnapshot {
     fundingCycles: snapshot.fundingCycles.map((item) => ({ ...item })),
     cardRules: snapshot.cardRules.map((item) => ({ ...item, rule: { ...item.rule } })),
     extraObligations: snapshot.extraObligations.map((item) => ({ ...item })),
+    obligationTemplates: snapshot.obligationTemplates.map((item) => ({ ...item, dueRule: { ...item.dueRule } })),
+    obligationInstances: snapshot.obligationInstances.map((item) => ({ ...item })),
     budgets: snapshot.budgets.map((item) => ({ ...item })),
   };
 }
@@ -85,6 +87,17 @@ export function applyBatchOverlay(
             salaryEventId: patch.salaryEventId,
           }
         : cycle,
+    );
+  }
+
+  if (batch.obligationInstances) {
+    next.obligationInstances = [...next.obligationInstances, ...batch.obligationInstances];
+  }
+  for (const patch of batch.obligationInstanceUpdates ?? []) {
+    next.obligationInstances = next.obligationInstances.map((instance) =>
+      instance.id === patch.id
+        ? { ...instance, status: patch.status, paidEventId: patch.paidEventId }
+        : instance,
     );
   }
 

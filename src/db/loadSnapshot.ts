@@ -13,6 +13,7 @@ import type {
   LedgerAccount,
   LedgerClaim,
   LedgerSnapshot,
+  ObligationPriority,
   ObligationRefType,
   OpeningPosition,
   PersonStatus,
@@ -35,6 +36,8 @@ import {
   fundingCycles,
   incomePolicies,
   openingPositions,
+  obligationTemplates,
+  obligationInstances as obligationInstanceTable,
   people,
   postings,
   reservationLedger,
@@ -44,6 +47,7 @@ import {
 } from "./schema.js";
 import type { SqliteHandles } from "./client.js";
 import { loadCardRule } from "./config.js";
+import { parseDueRule } from "../domain/obligations/generate.js";
 
 export function loadSnapshot(
   handles: SqliteHandles,
@@ -130,6 +134,16 @@ export function loadSnapshot(
     .from(fundingCycles)
     .where(eq(fundingCycles.workspaceId, workspaceId))
     .all();
+  const templateRows = handles.db
+    .select()
+    .from(obligationTemplates)
+    .where(eq(obligationTemplates.workspaceId, workspaceId))
+    .all();
+  const instanceRows = handles.db
+    .select()
+    .from(obligationInstanceTable)
+    .where(eq(obligationInstanceTable.workspaceId, workspaceId))
+    .all();
 
   const openings: OpeningPosition[] = openingRows.map((row) => {
     const payload = JSON.parse(row.payload) as Record<string, unknown>;
@@ -201,6 +215,7 @@ export function loadSnapshot(
     loanId: null,
     billingCycleId: row.billingCycleId,
     fundingCycleId: null,
+    obligationInstanceId: row.obligationInstanceId,
     categoryId: row.categoryId,
     channel: row.channel,
     merchant: row.merchant,
@@ -363,6 +378,27 @@ export function loadSnapshot(
       }
     }),
     extraObligations: [],
+    obligationTemplates: templateRows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      priority: row.priority as ObligationPriority,
+      dueRule: parseDueRule(JSON.parse(row.dueRule) as unknown),
+      defaultAccountId: row.defaultAccountId,
+      loanId: row.loanId,
+      effectiveFrom: isoDate(row.effectiveFrom),
+      effectiveTo: row.effectiveTo ? isoDate(row.effectiveTo) : null,
+    })),
+    obligationInstances: instanceRows.map((row) => ({
+      id: row.id,
+      templateId: row.templateId,
+      nameSnapshot: row.nameSnapshot,
+      dueOn: isoDate(row.dueOn),
+      amountPaise: paise(row.amountPaise),
+      prioritySnapshot: row.prioritySnapshot as ObligationPriority,
+      status: row.status as LedgerSnapshot["obligationInstances"][number]["status"],
+      fundingCycleId: row.fundingCycleId,
+      paidEventId: row.paidEventId,
+    })),
     budgets: [],
   };
 }

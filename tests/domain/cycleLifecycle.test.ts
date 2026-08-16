@@ -31,6 +31,7 @@ function cardPosting(eventId: string, amount: number, meaningPaid = false): { ev
     loanId: null,
     billingCycleId: cycle.id,
     fundingCycleId: null,
+    obligationInstanceId: null,
     categoryId: null,
     channel: null,
     merchant: null,

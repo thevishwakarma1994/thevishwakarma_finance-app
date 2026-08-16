@@ -1,7 +1,8 @@
 import { paise, sumPaise, type Paise } from "../money/paise.js";
 import { formatInr } from "../money/inr.js";
 import { formatCardLabel, obligationRemainingForSTS } from "../cycle/lifecycle.js";
-import { reservedTowardCycle } from "../reservations/derive.js";
+import { reservedToward, reservedTowardCycle } from "../reservations/derive.js";
+import { remainingObligationPaise } from "../obligations/generate.js";
 import { accountAvailability } from "./liquidity.js";
 import { q1Include, type InclusionContext } from "./inclusion.js";
 import type { IsoDate } from "../calendar/isoDate.js";
@@ -91,33 +92,54 @@ function extraImpacts(
   items: ExtraObligation[],
   context: InclusionContext,
 ): ObligationImpact[] {
-  return items.map((item) => {
-    const assigned = assignFundingCycle(context.cycles, item.dueOn, context.asOf);
-    const unfunded = paise(Math.max(0, item.remainingPaise - item.reservedPaise));
-    const decision = q1Include(
-      {
-        dueOn: item.dueOn,
-        fundingCycleId: assigned?.id ?? null,
-        priority: item.priority,
-        remainingPaise: item.remainingPaise,
-      },
-      context,
-    );
-    return {
-      ref: { type: "obligation_instance" as const, id: item.id },
-      name: `${item.name} due ${item.dueOn}`,
+  return items.map((item) => instanceToImpact(item, context));
+}
+
+function instanceToImpact(
+  item: ExtraObligation,
+  context: InclusionContext,
+): ObligationImpact {
+  const assigned = assignFundingCycle(context.cycles, item.dueOn, context.asOf);
+  const unfunded = paise(Math.max(0, item.remainingPaise - item.reservedPaise));
+  const decision = q1Include(
+    {
       dueOn: item.dueOn,
-      grossRemaining: item.remainingPaise,
-      reservedLinked: item.reservedPaise,
-      unfunded,
       fundingCycleId: assigned?.id ?? null,
-      uncertainWindow: decision.uncertainWindow,
       priority: item.priority,
-      includeInCurrentCycle: decision.include && item.priority !== "planned",
-      cardId: null,
-      mismatch: false,
-    };
-  });
+      remainingPaise: item.remainingPaise,
+    },
+    context,
+  );
+  return {
+    ref: { type: "obligation_instance" as const, id: item.id },
+    name: `${item.name} due ${item.dueOn}`,
+    dueOn: item.dueOn,
+    grossRemaining: item.remainingPaise,
+    reservedLinked: item.reservedPaise,
+    unfunded,
+    fundingCycleId: assigned?.id ?? null,
+    uncertainWindow: decision.uncertainWindow,
+    priority: item.priority,
+    includeInCurrentCycle: decision.include && item.priority !== "planned",
+    cardId: null,
+    mismatch: false,
+  };
+}
+
+function instancesAsExtras(snapshot: LedgerSnapshot): ExtraObligation[] {
+  return snapshot.obligationInstances
+    .filter((instance) => instance.status === "open")
+    .map((instance) => ({
+      id: instance.id,
+      name: instance.nameSnapshot,
+      dueOn: instance.dueOn,
+      remainingPaise: remainingObligationPaise(instance),
+      reservedPaise: reservedToward(snapshot.reservations, {
+        type: "obligation_instance",
+        id: instance.id,
+      }),
+      priority: instance.prioritySnapshot,
+    }));
 }
 
 function buildInclusionContext(
@@ -146,9 +168,10 @@ export function evaluateSafeToSpend(snapshot: LedgerSnapshot, asOf: IsoDate): Sa
   const reservedTotal = paise(reservedActive + pendingSurplus);
   const availableLiquid = sumPaise(accounts.map((account) => account.availablePaise));
 
+  const extras = [...instancesAsExtras(snapshot), ...snapshot.extraObligations];
   const allImpacts = [
     ...billingImpacts(snapshot, inclusion),
-    ...extraImpacts(snapshot.extraObligations, inclusion),
+    ...extraImpacts(extras, inclusion),
   ];
   const includedObligations = allImpacts.filter(
     (item) => item.includeInCurrentCycle && item.priority !== "planned",
@@ -221,7 +244,7 @@ export function evaluateSafeToSpend(snapshot: LedgerSnapshot, asOf: IsoDate): Sa
     nextUnfailedCycleId: inclusion.nextUnfailed?.id ?? null,
     incomePolicyConfigured,
     fundingCycles: cycles,
-    extraObligations: snapshot.extraObligations,
+    extraObligations: extras,
     riskFlags,
     explanationItems,
   };

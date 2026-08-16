@@ -1,5 +1,6 @@
 import { Hono } from "hono";
-import { utcNowIso } from "../../domain/calendar/kolkata.js";
+import { utcNowIso, todayKolkata } from "../../domain/calendar/kolkata.js";
+import { isoDate } from "../../domain/calendar/isoDate.js";
 import { applyOpening } from "../../app/applyOpening.js";
 import { recordIncome } from "../../app/recordIncome.js";
 import { recordExpense } from "../../app/recordExpense.js";
@@ -13,11 +14,20 @@ import { paySettlement } from "../../app/paySettlement.js";
 import { resolveSurplus } from "../../app/resolveSurplus.js";
 import { simulateAffordability } from "../../app/simulateAffordability.js";
 import { payCard } from "../../app/payCard.js";
+import { recordObligationPayment } from "../../app/recordObligationPayment.js";
+import { skipObligation } from "../../app/skipObligation.js";
+import {
+  archiveObligationTemplate,
+  changeObligationFrom,
+  createObligationTemplate,
+  createOneOffObligation,
+} from "../../app/obligations.js";
 import { confirmStatement } from "../../app/confirmStatement.js";
 import { createAccount, updateAccount } from "../../app/accounts.js";
 import { createCategory, updateCategory } from "../../app/categories.js";
 import { createCard, updateCard } from "../../app/cards.js";
 import { createPerson, updatePerson } from "../../app/people.js";
+import { ensureObligationInstances } from "../../app/ensureObligationInstances.js";
 import type { SqliteHandles } from "../../db/client.js";
 import { mapError } from "../auth/guard.js";
 
@@ -284,9 +294,70 @@ commandRoutes.post("/commands/resolve-surplus", async (c) => {
 
 commandRoutes.post("/commands/simulate-affordability", async (c) => {
   try {
-    const body = await c.req.json();
+    const body = (await c.req.json()) as Record<string, unknown>;
+    const asOf = isoDate(typeof body.occurredOn === "string" ? body.occurredOn : todayKolkata());
+    ensureObligationInstances(c.get("handles"), c.get("workspaceId"), asOf);
     const result = simulateAffordability(c.get("handles"), { workspaceId: c.get("workspaceId") }, body);
     return c.json(result);
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+commandRoutes.post("/commands/obligation-templates", async (c) => {
+  try {
+    return c.json(createObligationTemplate(c.get("handles"), { workspaceId: c.get("workspaceId") }, await c.req.json()));
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+commandRoutes.post("/commands/obligation-templates/change", async (c) => {
+  try {
+    return c.json(changeObligationFrom(c.get("handles"), { workspaceId: c.get("workspaceId") }, await c.req.json()));
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+commandRoutes.post("/commands/obligation-templates/archive", async (c) => {
+  try {
+    return c.json(archiveObligationTemplate(c.get("handles"), { workspaceId: c.get("workspaceId") }, await c.req.json()));
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+commandRoutes.post("/commands/obligation-one-off", async (c) => {
+  try {
+    return c.json(createOneOffObligation(c.get("handles"), { workspaceId: c.get("workspaceId") }, await c.req.json()));
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+commandRoutes.post("/commands/pay-obligation", async (c) => {
+  try {
+    const body = (await c.req.json()) as Record<string, unknown>;
+    const result = recordObligationPayment(c.get("handles"), { workspaceId: c.get("workspaceId") }, {
+      ...body,
+      capturedAt: typeof body.capturedAt === "string" ? body.capturedAt : utcNowIso(),
+    });
+    return c.json(result);
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+commandRoutes.post("/commands/skip-obligation", async (c) => {
+  try {
+    return c.json(skipObligation(c.get("handles"), { workspaceId: c.get("workspaceId") }, await c.req.json()));
   } catch (error) {
     const mapped = mapError(error);
     return c.json(mapped.body, mapped.status);

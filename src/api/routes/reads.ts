@@ -1,7 +1,8 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import {
   cardDetail,
   comingCardPayments,
+  comingUp,
   currentMonthSpend,
   cycleDetail,
   home,
@@ -11,13 +12,18 @@ import {
   listCategories,
   listPeople,
   monthReview,
+  obligationDetail,
   personDetail,
   suggestPersonAllocations,
   listPendingSurplus,
 } from "../../db/reads.js";
 import type { SqliteHandles } from "../../db/client.js";
-import { isoDate } from "../../domain/calendar/isoDate.js";
+import { isoDate, type IsoDate } from "../../domain/calendar/isoDate.js";
+import { COMING_UP_FILTERS, type ComingUpFilter } from "../../domain/engine/comingUp.js";
 import { mapError } from "../auth/guard.js";
+import { listObligationTemplates } from "../../app/obligations.js";
+import { ensureObligationInstances } from "../../app/ensureObligationInstances.js";
+import { todayKolkata } from "../../domain/calendar/kolkata.js";
 
 type Env = {
   Variables: {
@@ -27,6 +33,15 @@ type Env = {
 };
 
 export const readRoutes = new Hono<Env>();
+
+function requestAsOf(c: Context<Env>): IsoDate {
+  const asOf = c.req.query("asOf");
+  return asOf ? isoDate(asOf) : todayKolkata();
+}
+
+function prepareObligationReads(c: Context<Env>, asOf: IsoDate) {
+  ensureObligationInstances(c.get("handles"), c.get("workspaceId"), asOf);
+}
 
 readRoutes.get("/accounts", (c) => {
   try {
@@ -112,6 +127,30 @@ readRoutes.get("/cycles/:id", (c) => {
   }
 });
 
+readRoutes.get("/coming-up", (c) => {
+  try {
+    const asOf = requestAsOf(c);
+    prepareObligationReads(c, asOf);
+    const raw = c.req.query("filter") ?? "all_open";
+    const filter = (COMING_UP_FILTERS as readonly string[]).includes(raw)
+      ? (raw as ComingUpFilter)
+      : "all_open";
+    return c.json(comingUp(c.get("handles"), c.get("workspaceId"), asOf, filter));
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+readRoutes.get("/obligations/:id", (c) => {
+  try {
+    return c.json(obligationDetail(c.get("handles"), c.get("workspaceId"), c.req.param("id")));
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
 readRoutes.get("/coming-card-payments", (c) => {
   try {
     return c.json({ items: comingCardPayments(c.get("handles"), c.get("workspaceId")) });
@@ -169,10 +208,23 @@ readRoutes.get("/surplus", (c) => {
   }
 });
 
+readRoutes.get("/obligation-templates", (c) => {
+  try {
+    prepareObligationReads(c, todayKolkata());
+    return c.json({
+      templates: listObligationTemplates(c.get("handles"), c.get("workspaceId")),
+    });
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
 readRoutes.get("/home", (c) => {
   try {
-    const asOf = c.req.query("asOf");
-    return c.json(home(c.get("handles"), c.get("workspaceId"), asOf ? isoDate(asOf) : undefined));
+    const asOf = requestAsOf(c);
+    prepareObligationReads(c, asOf);
+    return c.json(home(c.get("handles"), c.get("workspaceId"), asOf));
   } catch (error) {
     const mapped = mapError(error);
     return c.json(mapped.body, mapped.status);

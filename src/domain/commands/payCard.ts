@@ -115,6 +115,7 @@ export function payCard(
     loanId: null,
     billingCycleId: cycle.id,
     fundingCycleId: null,
+    obligationInstanceId: null,
     categoryId: null,
     channel: input.channel ?? null,
     merchant: null,

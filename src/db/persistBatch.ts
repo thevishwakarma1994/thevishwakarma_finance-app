@@ -8,6 +8,7 @@ import {
   eventShares,
   financialEvents,
   fundingCycles,
+  obligationInstances,
   openingPositions,
   postings,
   reservationLedger,
@@ -79,6 +80,27 @@ export function persistBatch(
         .run();
     }
 
+    const nextInstances = batch.obligationInstances ?? [];
+    if (nextInstances.length > 0) {
+      handles.db
+        .insert(obligationInstances)
+        .values(
+          nextInstances.map((instance) => ({
+            id: instance.id,
+            workspaceId,
+            templateId: instance.templateId,
+            nameSnapshot: instance.nameSnapshot,
+            dueOn: instance.dueOn,
+            amountPaise: instance.amountPaise,
+            prioritySnapshot: instance.prioritySnapshot,
+            status: instance.status,
+            fundingCycleId: instance.fundingCycleId,
+            paidEventId: instance.paidEventId,
+          })),
+        )
+        .run();
+    }
+
     if (batch.events.length > 0) {
       handles.db
         .insert(financialEvents)
@@ -93,6 +115,7 @@ export function persistBatch(
             accountId: event.accountId,
             creditCardId: event.creditCardId,
             billingCycleId: event.billingCycleId,
+            obligationInstanceId: event.obligationInstanceId ?? null,
             categoryId: event.categoryId,
             channel: event.channel,
             merchant: event.merchant,
@@ -293,6 +316,17 @@ export function persistBatch(
           salaryEventId: patch.salaryEventId,
         })
         .where(eq(fundingCycles.id, patch.id))
+        .run();
+    }
+
+    for (const patch of batch.obligationInstanceUpdates ?? []) {
+      handles.db
+        .update(obligationInstances)
+        .set({
+          status: patch.status,
+          paidEventId: patch.paidEventId,
+        })
+        .where(eq(obligationInstances.id, patch.id))
         .run();
     }
 

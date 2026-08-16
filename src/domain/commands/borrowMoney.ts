@@ -48,6 +48,7 @@ export function borrowMoney(
     loanId: null,
     billingCycleId: null,
     fundingCycleId: null,
+    obligationInstanceId: null,
     categoryId: null,
     channel: null,
     merchant: null,

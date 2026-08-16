@@ -87,6 +87,7 @@ export function recordIncome(
     loanId: null,
     billingCycleId: null,
     fundingCycleId,
+    obligationInstanceId: null,
     categoryId: null,
     channel: null,
     merchant: null,

@@ -12,6 +12,8 @@ import { CardDetail } from "./pages/CardDetail.js";
 import { CycleDetail } from "./pages/CycleDetail.js";
 import { People } from "./pages/People.js";
 import { PersonDetail } from "./pages/PersonDetail.js";
+import { ComingUp } from "./pages/ComingUp.js";
+import { ObligationDetail } from "./pages/ObligationDetail.js";
 
 function pathOf(): string {
   return window.location.pathname;
@@ -71,6 +73,7 @@ export function App() {
   const cardMatch = /^\/card\/([^/]+)$/.exec(current);
   const cycleMatch = /^\/cycle\/([^/]+)$/.exec(current);
   const personMatch = /^\/person\/([^/]+)$/.exec(current);
+  const obligationMatch = /^\/obligation\/([^/]+)$/.exec(current);
 
   return (
     <div className="app">
@@ -99,6 +102,14 @@ export function App() {
         <StsExplain onBack={() => navigate("/")} />
       ) : current === "/can-i-spend" ? (
         <CanISpend onBack={() => navigate("/")} />
+      ) : current === "/coming-up" ? (
+        <ComingUp
+          onBack={() => navigate("/")}
+          onOpenCycle={(cycleId) => navigate(`/cycle/${cycleId}`)}
+          onOpenObligation={(id) => navigate(`/obligation/${id}`)}
+        />
+      ) : obligationMatch?.[1] ? (
+        <ObligationDetail instanceId={obligationMatch[1]} onBack={() => navigate("/coming-up")} />
       ) : current === "/money" ? (
         <Money
           onOpenMonth={() => navigate("/month")}
@@ -116,6 +127,8 @@ export function App() {
           onOpenMonth={() => navigate("/month")}
           onOpenPeople={() => navigate("/people")}
           onOpenCycle={(cycleId) => navigate(`/cycle/${cycleId}`)}
+          onOpenComingUp={() => navigate("/coming-up")}
+          onOpenObligation={(id) => navigate(`/obligation/${id}`)}
           onAdd={() => navigate("/add")}
           onSignedOut={() => {
             setAuthed(false);

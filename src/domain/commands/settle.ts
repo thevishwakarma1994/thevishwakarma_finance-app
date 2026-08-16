@@ -149,6 +149,7 @@ export function buildSettlementBatch(input: {
     loanId: null,
     billingCycleId: null,
     fundingCycleId: null,
+    obligationInstanceId: null,
     categoryId: null,
     channel: input.settle.channel ?? null,
     merchant: null,

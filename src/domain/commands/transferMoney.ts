@@ -65,6 +65,7 @@ export function transferMoney(
     loanId: null,
     billingCycleId: null,
     fundingCycleId: null,
+    obligationInstanceId: null,
     categoryId: null,
     channel: input.channel ?? null,
     merchant: null,

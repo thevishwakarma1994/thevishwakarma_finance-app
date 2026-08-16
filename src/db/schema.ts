@@ -134,6 +134,7 @@ export const financialEvents = sqliteTable(
     accountId: text("account_id").references(() => accounts.id),
     creditCardId: text("credit_card_id").references(() => creditCards.id),
     billingCycleId: text("billing_cycle_id").references(() => billingCycles.id),
+    obligationInstanceId: text("obligation_instance_id"),
     categoryId: text("category_id").references(() => categories.id),
     channel: text("channel"),
     merchant: text("merchant"),
@@ -144,6 +145,7 @@ export const financialEvents = sqliteTable(
     index("events_workspace_occurred").on(table.workspaceId, table.occurredOn),
     index("events_workspace_meaning_occurred").on(table.workspaceId, table.meaning, table.occurredOn),
     index("events_card_cycle").on(table.creditCardId, table.billingCycleId),
+    index("events_obligation_instance").on(table.obligationInstanceId),
   ],
 );
 
@@ -397,6 +399,46 @@ export const fundingCycles = sqliteTable(
   ],
 );
 
+export const obligationTemplates = sqliteTable(
+  "obligation_templates",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id),
+    name: text("name").notNull(),
+    priority: text("priority").notNull(),
+    dueRule: text("due_rule").notNull(),
+    defaultAccountId: text("default_account_id").references(() => accounts.id),
+    loanId: text("loan_id"),
+    effectiveFrom: text("effective_from").notNull(),
+    effectiveTo: text("effective_to"),
+  },
+  (table) => [index("obligation_templates_workspace_from").on(table.workspaceId, table.effectiveFrom, table.effectiveTo)],
+);
+
+export const obligationInstances = sqliteTable(
+  "obligation_instances",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id),
+    templateId: text("template_id").references(() => obligationTemplates.id),
+    nameSnapshot: text("name_snapshot").notNull(),
+    dueOn: text("due_on").notNull(),
+    amountPaise: integer("amount_paise").notNull(),
+    prioritySnapshot: text("priority_snapshot").notNull(),
+    status: text("status").notNull(),
+    fundingCycleId: text("funding_cycle_id").references(() => fundingCycles.id),
+    paidEventId: text("paid_event_id").references(() => financialEvents.id),
+  },
+  (table) => [
+    index("obligation_instances_workspace_due_status").on(table.workspaceId, table.dueOn, table.status),
+    index("obligation_instances_funding_cycle").on(table.fundingCycleId),
+  ],
+);
+
 export const schema = {
   workspaces,
   sessions,
@@ -417,4 +459,6 @@ export const schema = {
   surplusCases,
   incomePolicies,
   fundingCycles,
+  obligationTemplates,
+  obligationInstances,
 };

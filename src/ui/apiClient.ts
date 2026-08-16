@@ -630,6 +630,28 @@ export function previewOrCommitResolveSurplus(body: {
   });
 }
 
+export type ComingUpItem = {
+  kind: "obligation" | "billing_cycle";
+  id: string;
+  name: string;
+  dueOn: string;
+  amountPaise: number;
+  remainingPaise: number;
+  reservedPaise: number;
+  unfundedPaise: number;
+  type: "obligation" | "card";
+  priority: "must_pay" | "committed" | "planned";
+  fundingCycleId: string | null;
+  fundingPeriodLabel: string | null;
+  status: string;
+  overdue: boolean;
+  uncertainWindow: boolean;
+  delayedSalary: boolean;
+  cardId: string | null;
+  cycleId: string | null;
+  instanceId: string | null;
+};
+
 export type HomeView = {
   asOf: string;
   currentCycleSafeToSpend: number;
@@ -651,7 +673,7 @@ export type HomeView = {
     sign: number;
     uncertainWindow: boolean;
   }[];
-  coming: ComingCardPayment[];
+  coming: ComingUpItem[];
   monthSpentPaise: number;
   previousMonthSpentPaise: number;
   people: PersonListItem[];
@@ -678,6 +700,114 @@ export type AffordabilityView = {
   }[];
   conclusion: { code: "blocked" | "tight" | "comfortable"; reasons: string[] };
 };
+
+export type ComingUpView = {
+  asOf: string;
+  filter: string;
+  filterAvailable: boolean;
+  filterUnavailableReason: string | null;
+  items: ComingUpItem[];
+};
+
+export function fetchComingUp(filter = "all_open", asOf?: string) {
+  const params = new URLSearchParams({ filter });
+  if (asOf) params.set("asOf", asOf);
+  return request<ComingUpView>(`/api/coming-up?${params.toString()}`);
+}
+
+export function fetchObligation(id: string) {
+  return request<{
+    id: string;
+    templateId: string | null;
+    nameSnapshot: string;
+    dueOn: string;
+    amountPaise: number;
+    prioritySnapshot: string;
+    status: string;
+    remainingPaise: number;
+    defaultAccountId: string | null;
+  }>(`/api/obligations/${id}`);
+}
+
+export function fetchObligationTemplates() {
+  return request<{
+    templates: {
+      id: string;
+      name: string;
+      priority: string;
+      dueRule: { dayOfMonth: number };
+      effectiveFrom: string;
+      effectiveTo: string | null;
+      amountPaise: number | null;
+    }[];
+  }>("/api/obligation-templates");
+}
+
+export function createObligationTemplate(body: {
+  name: string;
+  priority: "must_pay" | "committed" | "planned";
+  dayOfMonth: number;
+  amountPaise: number;
+  defaultAccountId?: string | null;
+  effectiveFrom: string;
+}) {
+  return request<{ id: string }>("/api/commands/obligation-templates", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function changeObligationFrom(body: {
+  templateId: string;
+  effectiveFrom: string;
+  amountPaise?: number;
+  priority?: "must_pay" | "committed" | "planned";
+  name?: string;
+}) {
+  return request<{ id: string }>("/api/commands/obligation-templates/change", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function archiveObligationTemplate(body: { templateId: string; effectiveTo: string }) {
+  return request<{ id: string }>("/api/commands/obligation-templates/archive", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function createOneOffObligation(body: {
+  name: string;
+  dueOn: string;
+  amountPaise: number;
+  priority: "must_pay" | "committed" | "planned";
+}) {
+  return request<{ id: string }>("/api/commands/obligation-one-off", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function previewOrCommitPayObligation(body: {
+  occurredOn: string;
+  instanceId: string;
+  accountId: string;
+  amountPaise: number;
+  commit: boolean;
+}) {
+  return request<CommandResult>("/api/commands/pay-obligation", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function skipObligation(body: { instanceId: string }) {
+  return request<{ id: string; status: string }>("/api/commands/skip-obligation", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
 
 export function simulateAffordability(body: {
   amountPaise: number;

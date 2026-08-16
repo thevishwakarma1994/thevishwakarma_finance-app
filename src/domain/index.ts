@@ -66,7 +66,13 @@ export { receiveSettlement, type ReceiveSettlementInput } from "./commands/recei
 export { paySettlement, type PaySettlementInput } from "./commands/paySettlement.js";
 export { resolveSurplus, type ResolveSurplusInput } from "./commands/resolveSurplus.js";
 export { suggestAllocations, type SuggestableClaim, type SuggestedAllocation } from "./commands/suggestAllocations.js";
-export { payCard, type PayCardInput } from "./commands/payCard.js";
+export {
+  recordObligationPayment,
+  skipObligationInstance,
+  type RecordObligationPaymentInput,
+} from "./commands/recordObligationPayment.js";
+export { generateObligationInstances, INSTANCE_GENERATION_MONTHS_BACK, INSTANCE_GENERATION_MONTHS_FORWARD } from "./obligations/generate.js";
+export { comingUpItems, filterComingUp } from "./engine/comingUp.js";
 export { personPosition, type PersonPosition } from "./people/position.js";
 export { accountAvailability, requireAvailable } from "./engine/liquidity.js";
 export { evaluateSafeToSpend, inThisNumberTotal } from "./engine/evaluateSafeToSpend.js";

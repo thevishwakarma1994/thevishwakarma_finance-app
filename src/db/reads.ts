@@ -13,8 +13,9 @@ import { suggestAllocations, suggestableClaimsFor } from "../domain/commands/sug
 import { claimLabel } from "../domain/commands/settle.js";
 import { accountAvailability } from "../domain/engine/liquidity.js";
 import { evaluateSafeToSpend } from "../domain/engine/evaluateSafeToSpend.js";
-import { reservedTowardCycle } from "../domain/reservations/derive.js";
+import { comingUpItems, filterComingUp, type ComingUpFilter } from "../domain/engine/comingUp.js";
 import { cycleCardLabel } from "../domain/reservations/create.js";
+import { reservedTowardCycle } from "../domain/reservations/derive.js";
 import { loadSnapshot } from "./loadSnapshot.js";
 import { loadCardRule } from "./config.js";
 import { categories, financialEvents, postings } from "./schema.js";
@@ -522,6 +523,41 @@ export function cycleDetail(
   };
 }
 
+export function comingUp(
+  handles: SqliteHandles,
+  workspaceId: string,
+  asOf = todayKolkata(),
+  filter: ComingUpFilter = "all_open",
+) {
+  const snapshot = loadSnapshot(handles, workspaceId, asOf);
+  const items = comingUpItems(snapshot, asOf);
+  return filterComingUp(items, snapshot, asOf, filter);
+}
+
+export function comingUpPreview(handles: SqliteHandles, workspaceId: string, asOf = todayKolkata()) {
+  return comingUp(handles, workspaceId, asOf, "all_open").items.slice(0, 5);
+}
+
+export function obligationDetail(handles: SqliteHandles, workspaceId: string, instanceId: string) {
+  const snapshot = loadSnapshot(handles, workspaceId);
+  const instance = snapshot.obligationInstances.find((item) => item.id === instanceId);
+  if (!instance) {
+    throw new DomainError("obligation_not_found", "Obligation not found");
+  }
+  const items = comingUpItems(snapshot, todayKolkata());
+  const row = items.find((item) => item.instanceId === instance.id);
+  const template = instance.templateId
+    ? snapshot.obligationTemplates.find((item) => item.id === instance.templateId)
+    : null;
+  return {
+    ...instance,
+    remainingPaise: instance.status === "open" ? instance.amountPaise : 0,
+    coming: row ?? null,
+    template: template ?? null,
+    defaultAccountId: template?.defaultAccountId ?? null,
+  };
+}
+
 export function comingCardPayments(
   handles: SqliteHandles,
   workspaceId: string,
@@ -756,7 +792,7 @@ export function home(handles: SqliteHandles, workspaceId: string, asOf = todayKo
     .filter((person) => person.netPaise !== 0)
     .sort((left, right) => Math.abs(right.netPaise) - Math.abs(left.netPaise))
     .slice(0, 2);
-  const coming = comingCardPayments(handles, workspaceId, asOf).slice(0, 5);
+  const coming = comingUpPreview(handles, workspaceId, asOf);
   const next = sts.fundingCycles.find((cycle) => cycle.id === sts.nextFundingCycleId);
   const active = sts.fundingCycles.find((cycle) => cycle.id === sts.activeFundingCycleId);
   return {

@@ -7,11 +7,16 @@ import {
   createAccount,
   createCard,
   createCategory,
+  archiveObligationTemplate,
+  changeObligationFrom,
+  createObligationTemplate,
+  createOneOffObligation,
   fetchAccounts,
   fetchCards,
   fetchCategories,
   fetchComingCardPayments,
   fetchMonth,
+  fetchObligationTemplates,
   fetchPendingSurplus,
   fetchPeople,
   previewOrCommitOpening,
@@ -66,6 +71,20 @@ export function Money({ onSignedOut, onOpenMonth, onOpenCard, onOpenCycle }: Pro
   const [renameAccountName, setRenameAccountName] = useState("");
   const [renameCategoryId, setRenameCategoryId] = useState<string | null>(null);
   const [renameCategoryName, setRenameCategoryName] = useState("");
+  const [templates, setTemplates] = useState<
+    { id: string; name: string; priority: string; dueRule: { dayOfMonth: number }; effectiveFrom: string; effectiveTo: string | null }[]
+  >([]);
+  const [oblName, setOblName] = useState("Rent");
+  const [oblDay, setOblDay] = useState("5");
+  const [oblAmount, setOblAmount] = useState("12000");
+  const [oblPriority, setOblPriority] = useState<"must_pay" | "committed" | "planned">("must_pay");
+  const [oneOffName, setOneOffName] = useState("");
+  const [oneOffDue, setOneOffDue] = useState<string>(todayKolkata());
+  const [oneOffAmount, setOneOffAmount] = useState("");
+  const [editTemplateId, setEditTemplateId] = useState("");
+  const [editFrom, setEditFrom] = useState<string>(todayKolkata());
+  const [editAmount, setEditAmount] = useState("");
+  const [archiveTo, setArchiveTo] = useState<string>(todayKolkata());
 
   function load() {
     return Promise.all([
@@ -76,7 +95,8 @@ export function Money({ onSignedOut, onOpenMonth, onOpenCard, onOpenCycle }: Pro
       fetchComingCardPayments(),
       fetchPeople(),
       fetchPendingSurplus(),
-    ]).then(([accountData, monthData, categoryData, cardData, comingData, peopleData, surplusData]) => {
+      fetchObligationTemplates(),
+    ]).then(([accountData, monthData, categoryData, cardData, comingData, peopleData, surplusData, templateData]) => {
       setAccounts(accountData.accounts);
       setMonth(monthData);
       setCategories(categoryData.categories);
@@ -84,30 +104,20 @@ export function Money({ onSignedOut, onOpenMonth, onOpenCard, onOpenCycle }: Pro
       setComing(comingData.items);
       setPeople(peopleData.people);
       setSurplus(surplusData.items);
+      setTemplates(templateData.templates);
+      if (accountData.accounts[0]) {
+        setNewCardPaymentAccountId(accountData.accounts[0].id);
+      }
+      if (templateData.templates[0]) {
+        setEditTemplateId((current) => current || templateData.templates[0]?.id || "");
+      }
     });
   }
 
   useEffect(() => {
-    Promise.all([
-      fetchAccounts(),
-      fetchMonth(),
-      fetchCategories(),
-      fetchCards(),
-      fetchComingCardPayments(),
-      fetchPeople(),
-      fetchPendingSurplus(),
-    ])
-      .then(([accountData, monthData, categoryData, cardData, comingData, peopleData, surplusData]) => {
-        setAccounts(accountData.accounts);
-        setMonth(monthData);
-        setCategories(categoryData.categories);
-        setCards(cardData.cards);
-        setComing(comingData.items);
-        setPeople(peopleData.people);
-        setSurplus(surplusData.items);
-        if (accountData.accounts[0]) {
-          setNewCardPaymentAccountId(accountData.accounts[0].id);
-        }
+    load()
+      .then(() => {
+        /* loaded */
       })
       .catch((caught: unknown) => {
         setError(caught instanceof ApiError ? caught.message : "Could not load accounts");
@@ -648,6 +658,159 @@ export function Money({ onSignedOut, onOpenMonth, onOpenCard, onOpenCycle }: Pro
             </label>
             <button className="secondary" type="submit">
               Add category
+            </button>
+          </form>
+        </section>
+        <section className="card">
+          <h2>Obligations</h2>
+          {templates.map((template) => (
+            <p key={template.id} className="muted">
+              {template.name} · day {template.dueRule.dayOfMonth} · {template.priority.replace("_", " ")}
+              {template.effectiveTo ? ` · ends ${template.effectiveTo}` : ""}
+            </p>
+          ))}
+          <form
+            className="stack"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const amountPaise = parseInr(oblAmount);
+              void createObligationTemplate({
+                name: oblName,
+                priority: oblPriority,
+                dayOfMonth: Number(oblDay),
+                amountPaise,
+                effectiveFrom: todayKolkata(),
+              })
+                .then(() => load())
+                .catch((caught: unknown) => {
+                  setError(caught instanceof ApiError ? caught.message : "Could not save obligation");
+                });
+            }}
+          >
+            <label>
+              Recurring name
+              <input value={oblName} onChange={(event) => setOblName(event.target.value)} required />
+            </label>
+            <label>
+              Due day
+              <input value={oblDay} onChange={(event) => setOblDay(event.target.value)} required />
+            </label>
+            <label>
+              Amount
+              <input value={oblAmount} onChange={(event) => setOblAmount(event.target.value)} required />
+            </label>
+            <label>
+              Priority
+              <select
+                value={oblPriority}
+                onChange={(event) =>
+                  setOblPriority(event.target.value as "must_pay" | "committed" | "planned")
+                }
+              >
+                <option value="must_pay">Must pay</option>
+                <option value="committed">Committed</option>
+                <option value="planned">Planned</option>
+              </select>
+            </label>
+            <button className="secondary" type="submit">
+              Add recurring
+            </button>
+          </form>
+          {templates.length > 0 ? (
+            <form
+              className="stack"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (!editTemplateId) return;
+                const amountPaise = parseInr(editAmount);
+                void changeObligationFrom({
+                  templateId: editTemplateId,
+                  effectiveFrom: editFrom,
+                  amountPaise,
+                  priority: oblPriority,
+                })
+                  .then(() => load())
+                  .catch((caught: unknown) => {
+                    setError(caught instanceof ApiError ? caught.message : "Could not change obligation");
+                  });
+              }}
+            >
+              <label>
+                Change from date
+                <select value={editTemplateId} onChange={(event) => setEditTemplateId(event.target.value)}>
+                  {templates.map((template) => (
+                    <option key={template.id} value={template.id}>
+                      {template.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Effective from
+                <input type="date" value={editFrom} onChange={(event) => setEditFrom(event.target.value)} required />
+              </label>
+              <label>
+                New amount
+                <input value={editAmount} onChange={(event) => setEditAmount(event.target.value)} required />
+              </label>
+              <button className="secondary" type="submit">
+                Apply from date
+              </button>
+            </form>
+          ) : null}
+          {templates.length > 0 ? (
+            <form
+              className="stack"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (!editTemplateId) return;
+                void archiveObligationTemplate({ templateId: editTemplateId, effectiveTo: archiveTo })
+                  .then(() => load())
+                  .catch((caught: unknown) => {
+                    setError(caught instanceof ApiError ? caught.message : "Could not end obligation");
+                  });
+              }}
+            >
+              <label>
+                End on
+                <input type="date" value={archiveTo} onChange={(event) => setArchiveTo(event.target.value)} required />
+              </label>
+              <button className="secondary" type="submit">
+                Archive template
+              </button>
+            </form>
+          ) : null}
+          <form
+            className="stack"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const amountPaise = parseInr(oneOffAmount);
+              void createOneOffObligation({
+                name: oneOffName,
+                dueOn: oneOffDue,
+                amountPaise,
+                priority: oblPriority,
+              })
+                .then(() => load())
+                .catch((caught: unknown) => {
+                  setError(caught instanceof ApiError ? caught.message : "Could not save one-off");
+                });
+            }}
+          >
+            <label>
+              One-off name
+              <input value={oneOffName} onChange={(event) => setOneOffName(event.target.value)} required />
+            </label>
+            <label>
+              Due
+              <input type="date" value={oneOffDue} onChange={(event) => setOneOffDue(event.target.value)} required />
+            </label>
+            <label>
+              Amount
+              <input value={oneOffAmount} onChange={(event) => setOneOffAmount(event.target.value)} required />
+            </label>
+            <button className="secondary" type="submit">
+              Add one-off
             </button>
           </form>
         </section>

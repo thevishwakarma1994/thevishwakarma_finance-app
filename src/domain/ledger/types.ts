@@ -288,6 +288,7 @@ export type FinancialEvent = {
   loanId: EntityId | null;
   billingCycleId: EntityId | null;
   fundingCycleId: EntityId | null;
+  obligationInstanceId: EntityId | null;
   categoryId: EntityId | null;
   channel: string | null;
   merchant: string | null;
@@ -392,6 +393,42 @@ export type ExtraObligation = {
   priority: ObligationPriority;
 };
 
+export const OBLIGATION_INSTANCE_STATUSES = ["open", "paid", "skipped"] as const;
+export type ObligationInstanceStatus = (typeof OBLIGATION_INSTANCE_STATUSES)[number];
+
+export type DueRule = {
+  dayOfMonth: number;
+};
+
+export type ObligationTemplate = {
+  id: EntityId;
+  name: string;
+  priority: ObligationPriority;
+  dueRule: DueRule;
+  defaultAccountId: EntityId | null;
+  loanId: EntityId | null;
+  effectiveFrom: IsoDate;
+  effectiveTo: IsoDate | null;
+};
+
+export type ObligationInstance = {
+  id: EntityId;
+  templateId: EntityId | null;
+  nameSnapshot: string;
+  dueOn: IsoDate;
+  amountPaise: Paise;
+  prioritySnapshot: ObligationPriority;
+  status: ObligationInstanceStatus;
+  fundingCycleId: EntityId | null;
+  paidEventId: EntityId | null;
+};
+
+export type ObligationInstanceUpdate = {
+  id: EntityId;
+  status: ObligationInstanceStatus;
+  paidEventId: EntityId | null;
+};
+
 export type BudgetRecord = {
   categoryId: EntityId;
   calendarYear: number;
@@ -425,6 +462,8 @@ export type LedgerSnapshot = {
   fundingCycles: FundingCycleRecord[];
   cardRules: CardRuleBinding[];
   extraObligations: ExtraObligation[];
+  obligationTemplates: ObligationTemplate[];
+  obligationInstances: ObligationInstance[];
   budgets: BudgetRecord[];
 };
 
@@ -462,6 +501,8 @@ export type ProposedBatch = {
   surplusCaseUpdates?: SurplusCaseUpdate[];
   fundingCycles?: FundingCycleRecord[];
   fundingCycleUpdates?: FundingCycleUpdate[];
+  obligationInstances?: ObligationInstance[];
+  obligationInstanceUpdates?: ObligationInstanceUpdate[];
 };
 
 export class DomainError extends Error {

@@ -103,6 +103,7 @@ export function recordCardSpend(
     loanId: null,
     billingCycleId: cycle.id,
     fundingCycleId: null,
+    obligationInstanceId: null,
     categoryId: headerCategoryId,
     channel: input.channel ?? "card",
     merchant: input.merchant ?? null,

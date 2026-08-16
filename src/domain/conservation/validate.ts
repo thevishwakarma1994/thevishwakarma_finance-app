@@ -214,18 +214,30 @@ export function assertConservation(
   if (meaning === "pay_obligation") {
     const accountDecrease = paise(-accountDeltas(batch));
     const cardDecrease = paise(-cardDeltas(batch));
-    if (accountDecrease !== cardDecrease || accountDecrease <= 0) {
-      throw new DomainError(
-        "conservation_card_payment",
-        "Account decrease must equal card liability decrease",
-      );
-    }
     if (expenseSum(batch) !== paise(0)) {
-      throw new DomainError("conservation_card_payment", "A card payment is not personal spending");
+      throw new DomainError("conservation_obligation_payment", "Paying an obligation is not personal spending");
     }
     if (incomeSum(batch) !== paise(0)) {
-      throw new DomainError("conservation_card_payment", "A card payment is not income");
+      throw new DomainError("conservation_obligation_payment", "Paying an obligation is not income");
     }
+    if (cardDecrease > 0) {
+      if (accountDecrease !== cardDecrease || accountDecrease <= 0) {
+        throw new DomainError(
+          "conservation_card_payment",
+          "Account decrease must equal card liability decrease",
+        );
+      }
+      return;
+    }
+    const paidUpdate = (batch.obligationInstanceUpdates ?? []).find((item) => item.status === "paid");
+    const eventAmount = sumPaise(batch.events.map((event) => event.amountPaise));
+    if (!paidUpdate || accountDecrease <= 0 || accountDecrease !== eventAmount) {
+      throw new DomainError(
+        "conservation_obligation_payment",
+        "Account decrease must equal the obligation remaining that was settled",
+      );
+    }
+    return;
   }
 
   if (meaning === "settlement_in") {
@@ -304,6 +316,7 @@ export function assertBatchConservation(batch: ProposedBatch): void {
       surplusCases: (batch.surplusCases ?? []).filter((item) =>
         item.eventId ? sliceEventIds(batch, meaning).has(item.eventId) : false,
       ),
+      obligationInstanceUpdates: batch.obligationInstanceUpdates,
     };
     assertConservation(meaning, slice);
   }

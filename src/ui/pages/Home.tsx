@@ -9,6 +9,8 @@ type Props = {
   onOpenMonth: () => void;
   onOpenPeople: () => void;
   onOpenCycle: (cycleId: string) => void;
+  onOpenComingUp: () => void;
+  onOpenObligation: (id: string) => void;
   onAdd: () => void;
   onSignedOut: () => void;
 };
@@ -35,6 +37,8 @@ export function Home({
   onOpenMonth,
   onOpenPeople,
   onOpenCycle,
+  onOpenComingUp,
+  onOpenObligation,
   onAdd,
   onSignedOut,
 }: Props) {
@@ -110,23 +114,40 @@ export function Home({
           </div>
           {home.coming.length > 0 ? (
             <section>
-              <h2>Coming up</h2>
+              <div className="row">
+                <h2>Coming up</h2>
+                <button className="linkish" type="button" onClick={onOpenComingUp}>
+                  See all
+                </button>
+              </div>
               {home.coming.map((item) => (
                 <button
-                  key={item.cycleId}
+                  key={`${item.kind}-${item.id}`}
                   className="card link-card"
                   type="button"
-                  onClick={() => onOpenCycle(item.cycleId)}
+                  onClick={() => {
+                    if (item.cycleId) onOpenCycle(item.cycleId);
+                    else if (item.instanceId) onOpenObligation(item.instanceId);
+                  }}
                 >
                   <div className="row">
-                    <span>{item.cardLabel}</span>
+                    <span>
+                      {item.dueOn} · {item.name}
+                    </span>
                     <strong>{formatInr(paise(item.remainingPaise))}</strong>
                   </div>
-                  <p className="muted">Due {item.dueOn}</p>
+                  <p className="muted">
+                    {item.overdue ? "Overdue" : item.uncertainWindow ? "Uncertain salary window" : "Open"}
+                  </p>
                 </button>
               ))}
             </section>
-          ) : null}
+          ) : (
+            <button className="card link-card" type="button" onClick={onOpenComingUp}>
+              <h2>Coming up</h2>
+              <p className="muted">See all upcoming payments</p>
+            </button>
+          )}
           <button className="card link-card" type="button" onClick={onOpenMonth}>
             <div className="row">
               <span>This month</span>

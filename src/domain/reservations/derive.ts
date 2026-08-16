@@ -113,21 +113,32 @@ export function applyReservationDelta(
   };
 }
 
+export function reservationsForRef(
+  reservations: LedgerReservation[],
+  ref: { type: LedgerReservation["obligationRef"]["type"]; id: string },
+): LedgerReservation[] {
+  return reservations.filter(
+    (reservation) =>
+      reservation.obligationRef.type === ref.type && reservation.obligationRef.id === ref.id,
+  );
+}
+
+export function reservedToward(
+  reservations: LedgerReservation[],
+  ref: { type: LedgerReservation["obligationRef"]["type"]; id: string },
+): Paise {
+  return paise(
+    reservationsForRef(reservations, ref).reduce((sum, reservation) => sum + reservation.remainingPaise, 0),
+  );
+}
+
 export function reservationsForCycle(
   reservations: LedgerReservation[],
   cycleId: string,
 ): LedgerReservation[] {
-  return reservations.filter(
-    (reservation) =>
-      reservation.obligationRef.type === "billing_cycle" && reservation.obligationRef.id === cycleId,
-  );
+  return reservationsForRef(reservations, { type: "billing_cycle", id: cycleId });
 }
 
 export function reservedTowardCycle(reservations: LedgerReservation[], cycleId: string): Paise {
-  return paise(
-    reservationsForCycle(reservations, cycleId).reduce(
-      (sum, reservation) => sum + reservation.remainingPaise,
-      0,
-    ),
-  );
+  return reservedToward(reservations, { type: "billing_cycle", id: cycleId });
 }

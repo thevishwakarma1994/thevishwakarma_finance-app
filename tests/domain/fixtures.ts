@@ -170,6 +170,22 @@ export function reservationFixture(
   };
 }
 
+export function obligationInstanceFixture(
+  overrides: Partial<LedgerSnapshot["obligationInstances"][number]> & { name?: string } = {},
+): LedgerSnapshot["obligationInstances"][number] {
+  return {
+    id: overrides.id ?? newId(),
+    templateId: overrides.templateId ?? null,
+    nameSnapshot: overrides.nameSnapshot ?? overrides.name ?? "Rent",
+    dueOn: overrides.dueOn ?? isoDate("2026-08-18"),
+    amountPaise: overrides.amountPaise ?? paiseOf(5_000),
+    prioritySnapshot: overrides.prioritySnapshot ?? "must_pay",
+    status: overrides.status ?? "open",
+    fundingCycleId: overrides.fundingCycleId ?? null,
+    paidEventId: overrides.paidEventId ?? null,
+  };
+}
+
 export function snapshotFixture(overrides: Partial<LedgerSnapshot> = {}): LedgerSnapshot {
   const accounts = overrides.accounts ?? [accountFixture({ balancePaise: paiseOf(50_000) })];
   return {
@@ -194,6 +210,8 @@ export function snapshotFixture(overrides: Partial<LedgerSnapshot> = {}): Ledger
     fundingCycles: overrides.fundingCycles ?? [],
     cardRules: overrides.cardRules ?? [],
     extraObligations: overrides.extraObligations ?? [],
+    obligationTemplates: overrides.obligationTemplates ?? [],
+    obligationInstances: overrides.obligationInstances ?? [],
     budgets: overrides.budgets ?? [],
   };
 }

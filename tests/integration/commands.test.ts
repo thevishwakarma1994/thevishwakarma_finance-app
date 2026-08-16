@@ -193,6 +193,7 @@ describe("opening, income, and expense persistence", () => {
             loanId: null,
             billingCycleId: null,
             fundingCycleId: null,
+            obligationInstanceId: null,
             categoryId: null,
             channel: null,
             merchant: null,
