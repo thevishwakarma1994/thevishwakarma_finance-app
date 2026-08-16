@@ -7,6 +7,7 @@ import { loadSnapshot } from "../db/loadSnapshot.js";
 import { persistBatch } from "../db/persistBatch.js";
 import type { SqliteHandles } from "../db/client.js";
 import type { WorkspaceContext } from "./context.js";
+import { assertWorkspaceOwned } from "./ownership.js";
 
 const inputSchema = z.object({
   surplusCaseId: z.string().min(1),
@@ -31,6 +32,11 @@ export function resolveSurplus(
   raw: unknown,
 ) {
   const input = inputSchema.parse(raw);
+  assertWorkspaceOwned(handles, context.workspaceId, [
+    { type: "surplus", id: input.surplusCaseId },
+    input.claimId ? { type: "claim" as const, id: input.claimId } : null,
+    input.billingCycleId ? { type: "cycle" as const, id: input.billingCycleId } : null,
+  ]);
   const occurredOn = isoDate(input.occurredOn ?? todayKolkata());
   const snapshot = loadSnapshot(handles, context.workspaceId, occurredOn);
   const result = resolveSurplusDomain(

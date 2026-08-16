@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { count } from "drizzle-orm";
+import { count, eq } from "drizzle-orm";
 import { newId } from "../domain/ids.js";
 import { utcNowIso } from "../domain/calendar/kolkata.js";
 import { accounts, categories, workspaces } from "./schema.js";
@@ -43,6 +43,8 @@ export function applyMigrations(handles: SqliteHandles, migrationsDir = drizzleD
   seedWorkspace(handles);
 }
 
+export const LEGACY_WORKSPACE_NAME = "Development (legacy)";
+
 function seedWorkspace(handles: SqliteHandles): void {
   const existing = handles.db.select({ value: count() }).from(workspaces).get();
   if ((existing?.value ?? 0) > 0) {
@@ -53,7 +55,7 @@ function seedWorkspace(handles: SqliteHandles): void {
   const now = utcNowIso();
   handles.db.insert(workspaces).values({
     id: workspaceId,
-    name: "Personal",
+    name: LEGACY_WORKSPACE_NAME,
     createdAt: now,
   }).run();
 
@@ -80,7 +82,14 @@ function seedWorkspace(handles: SqliteHandles): void {
     .run();
 }
 
+/** Test/dev helper: the unowned seeded workspace, never a Firebase personal book. */
 export function getSoleWorkspaceId(handles: SqliteHandles): string {
+  const legacy = handles.db
+    .select()
+    .from(workspaces)
+    .where(eq(workspaces.name, LEGACY_WORKSPACE_NAME))
+    .get();
+  if (legacy) return legacy.id;
   const row = handles.db.select().from(workspaces).get();
   if (!row) {
     throw new Error("Workspace has not been seeded");

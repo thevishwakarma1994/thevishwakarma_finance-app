@@ -1,73 +1,55 @@
-import { getCookie } from "hono/cookie";
 import type { Context, Next } from "hono";
 import { ZodError } from "zod";
 import { DomainError } from "../../domain/ledger/types.js";
 import type { SqliteHandles } from "../../db/client.js";
-import { SESSION_COOKIE, readSession } from "./session.js";
-import { readPasswordHashFromEnv, verifyPassword } from "./password.js";
+import { provisionUserWorkspace, type VerifiedIdentity } from "../../app/provisionUser.js";
+
+export type VerifyIdToken = (token: string) => Promise<VerifiedIdentity>;
 
 type Env = {
   Variables: {
     workspaceId: string;
+    userId: string;
     handles: SqliteHandles;
+    verifyIdToken: VerifyIdToken;
   };
 };
 
-const loginAttempts = new Map<string, number[]>();
-
-export function isPublicApi(method: string, path: string): boolean {
-  return method === "POST" && path === "/api/login";
+export function bearerToken(header: string | undefined): string | null {
+  if (!header) return null;
+  const [scheme, token] = header.split(" ");
+  if (!scheme || !token) return null;
+  if (scheme.toLowerCase() !== "bearer") return null;
+  return token.trim() || null;
 }
 
-export function rateLimitLogin(key: string, windowMs = 10 * 60 * 1000, max = 8): boolean {
-  const now = Date.now();
-  const recent = (loginAttempts.get(key) ?? []).filter((stamp) => now - stamp < windowMs);
-  if (recent.length >= max) {
-    loginAttempts.set(key, recent);
-    return false;
-  }
-  recent.push(now);
-  loginAttempts.set(key, recent);
-  return true;
-}
-
-export function clearLoginAttempts(key: string): void {
-  loginAttempts.delete(key);
-}
-
-export function resetLoginAttempts(): void {
-  loginAttempts.clear();
-}
-
-export async function requireSession(c: Context<Env>, next: Next) {
-  if (isPublicApi(c.req.method, c.req.path)) {
-    await next();
-    return;
-  }
-
-  const handles = c.get("handles");
-  const token = getCookie(c, SESSION_COOKIE);
+export async function requireFirebaseAuth(c: Context<Env>, next: Next) {
+  const token = bearerToken(c.req.header("authorization"));
   if (!token) {
-    return c.json({ error: "unauthenticated" }, 401);
+    return c.json({ error: "unauthenticated", message: "Missing Firebase token" }, 401);
   }
-  const session = readSession(handles, token);
-  if (!session) {
-    return c.json({ error: "unauthenticated" }, 401);
+
+  let identity: VerifiedIdentity;
+  try {
+    identity = await c.get("verifyIdToken")(token);
+  } catch {
+    return c.json({ error: "unauthenticated", message: "Invalid Firebase token" }, 401);
   }
-  c.set("workspaceId", session.workspaceId);
+  if (!identity.uid) {
+    return c.json({ error: "unauthenticated", message: "Invalid Firebase token" }, 401);
+  }
+
+  try {
+    const access = provisionUserWorkspace(c.get("handles"), identity);
+    c.set("workspaceId", access.workspaceId);
+    c.set("userId", access.userId);
+  } catch (error) {
+    if (error instanceof DomainError && error.code === "user_disabled") {
+      return c.json({ error: error.code, message: error.message }, 403);
+    }
+    throw error;
+  }
   await next();
-}
-
-export function passwordFromEnv(): string {
-  const hash = readPasswordHashFromEnv();
-  if (!hash) {
-    throw new Error("APP_PASSWORD_HASH is not set");
-  }
-  return hash;
-}
-
-export function checkPassword(password: string): boolean {
-  return verifyPassword(password, passwordFromEnv());
 }
 
 export function originAllowed(origin: string | undefined, host: string | undefined): boolean {
@@ -105,24 +87,28 @@ export async function requireOrigin(c: Context, next: Next) {
 
 export function mapError(
   error: unknown,
-): { status: 400 | 404 | 409 | 500; body: { error: string; message: string } } {
+): { status: 400 | 403 | 404 | 409 | 500; body: { error: string; message: string } } {
   if (error instanceof DomainError) {
     const status =
-      error.code === "insufficient_balance" ||
-      error.code === "insufficient_available" ||
-      error.code === "duplicate_category" ||
-      error.code === "payment_exceeds_outstanding"
-        ? 409
-        : error.code === "account_not_found" ||
-            error.code === "category_not_found" ||
-            error.code === "card_not_found" ||
-            error.code === "cycle_not_found" ||
-            error.code === "person_not_found" ||
-            error.code === "claim_not_found" ||
-            error.code === "surplus_not_found" ||
-            error.code === "reservation_not_found"
-          ? 404
-          : 400;
+      error.code === "user_disabled"
+        ? 403
+        : error.code === "insufficient_balance" ||
+            error.code === "insufficient_available" ||
+            error.code === "duplicate_category" ||
+            error.code === "payment_exceeds_outstanding"
+          ? 409
+          : error.code === "account_not_found" ||
+              error.code === "category_not_found" ||
+              error.code === "card_not_found" ||
+              error.code === "cycle_not_found" ||
+              error.code === "person_not_found" ||
+              error.code === "claim_not_found" ||
+              error.code === "surplus_not_found" ||
+              error.code === "reservation_not_found" ||
+              error.code === "obligation_not_found" ||
+              error.code === "obligation_template_not_found"
+            ? 404
+            : 400;
     return { status, body: { error: error.code, message: error.message } };
   }
   if (error instanceof ZodError) {

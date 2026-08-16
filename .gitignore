@@ -11,6 +11,8 @@ data
 *.db
 *-wal
 *-shm
+*firebase-adminsdk*.json
+*serviceAccount*.json
 .DS_Store
 dev-dist
 .pnpm-store

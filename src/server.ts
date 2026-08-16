@@ -5,9 +5,9 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { openDatabase } from "./db/client.js";
 import { applyMigrations } from "./db/migrate.js";
 import { createApp } from "./api/app.js";
-import { assertProductionPasswordConfig } from "./api/auth/password.js";
+import { assertFirebaseAdminConfig } from "./api/auth/firebaseAdmin.js";
 
-assertProductionPasswordConfig();
+assertFirebaseAdminConfig();
 
 const port = Number(process.env.PORT ?? 3000);
 const databasePath = process.env.DATABASE_PATH ?? "data/app.sqlite";

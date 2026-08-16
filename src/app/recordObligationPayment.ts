@@ -6,6 +6,7 @@ import { loadSnapshot } from "../db/loadSnapshot.js";
 import { persistBatch } from "../db/persistBatch.js";
 import type { SqliteHandles } from "../db/client.js";
 import type { WorkspaceContext } from "./context.js";
+import { assertWorkspaceOwned } from "./ownership.js";
 
 const inputSchema = z.object({
   occurredOn: z.string(),
@@ -24,6 +25,10 @@ export function recordObligationPayment(
   raw: unknown,
 ) {
   const input = inputSchema.parse(raw);
+  assertWorkspaceOwned(handles, context.workspaceId, [
+    { type: "obligation", id: input.instanceId },
+    { type: "account", id: input.accountId },
+  ]);
   const occurredOn = isoDate(input.occurredOn);
   const snapshot = loadSnapshot(handles, context.workspaceId, occurredOn);
   const result = recordObligationPaymentDomain(

@@ -11,7 +11,6 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint src tests",
-    "hash-password": "tsx src/scripts/hash-password.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx --env-file=.env src/db/migrate.ts"
   },
@@ -19,6 +18,8 @@
     "@hono/node-server": "^2.1.1",
     "better-sqlite3": "^13.0.3",
     "drizzle-orm": "^0.45.2",
+    "firebase": "^12.17.1",
+    "firebase-admin": "^14.2.0",
     "hono": "^4.13.2",
     "luxon": "^3.7.2",
     "react": "^19.2.8",

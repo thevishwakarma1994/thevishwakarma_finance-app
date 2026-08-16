@@ -136,6 +136,23 @@ select {
   font-size: 0.9rem;
 }
 
+.or-divider {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.or-divider::before,
+.or-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+
 .hero-number {
   font-size: 2rem;
   font-weight: 700;

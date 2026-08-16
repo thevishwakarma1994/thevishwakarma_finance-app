@@ -6,15 +6,41 @@ export const workspaces = sqliteTable("workspaces", {
   createdAt: text("created_at").notNull(),
 });
 
-export const sessions = sqliteTable("sessions", {
-  id: text("id").primaryKey(),
-  tokenHash: text("token_hash").notNull().unique(),
-  workspaceId: text("workspace_id")
-    .notNull()
-    .references(() => workspaces.id),
-  createdAt: text("created_at").notNull(),
-  expiresAt: text("expires_at").notNull(),
-});
+export const users = sqliteTable(
+  "users",
+  {
+    id: text("id").primaryKey(),
+    firebaseUid: text("firebase_uid").notNull(),
+    displayName: text("display_name"),
+    primaryEmail: text("primary_email"),
+    status: text("status").notNull(),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("users_firebase_uid").on(table.firebaseUid),
+    index("users_status").on(table.status),
+  ],
+);
+
+export const workspaceMemberships = sqliteTable(
+  "workspace_memberships",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id),
+    role: text("role").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("workspace_memberships_user_workspace").on(table.userId, table.workspaceId),
+    index("workspace_memberships_workspace").on(table.workspaceId),
+  ],
+);
 
 export const accounts = sqliteTable(
   "accounts",
@@ -441,7 +467,8 @@ export const obligationInstances = sqliteTable(
 
 export const schema = {
   workspaces,
-  sessions,
+  users,
+  workspaceMemberships,
   accounts,
   creditCards,
   configVersions,

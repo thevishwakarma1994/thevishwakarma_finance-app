@@ -1,3 +1,5 @@
+import { currentIdToken, signOutFirebase } from "./firebase.js";
+
 export type ConsequencePreview = {
   effects: { kind: string; label: string; deltaPaise: number }[];
   classifications: { spent: number; income: number; invested: number; moved: number };
@@ -206,12 +208,15 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (init.body && !headers.has("content-type")) {
     headers.set("content-type", "application/json");
   }
+  const token = await currentIdToken();
+  if (token) {
+    headers.set("authorization", `Bearer ${token}`);
+  }
   const response = await fetch(path, {
     ...init,
-    credentials: "include",
     headers,
   });
-  if (response.status === 401 && path !== "/api/me" && path !== "/api/login") {
+  if (response.status === 401 && path !== "/api/me") {
     if (window.location.pathname !== "/sign-in") {
       window.location.assign("/sign-in");
     }
@@ -229,18 +234,11 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 export { ApiError };
 
 export function getMe() {
-  return request<{ authenticated: boolean }>("/api/me");
+  return request<{ authenticated: boolean; userId: string; workspaceId: string }>("/api/me");
 }
 
-export function signIn(password: string) {
-  return request<{ ok: true }>("/api/login", {
-    method: "POST",
-    body: JSON.stringify({ password }),
-  });
-}
-
-export function signOut() {
-  return request<{ ok: true }>("/api/logout", { method: "POST" });
+export async function signOut() {
+  await signOutFirebase();
 }
 
 export function fetchAccounts() {

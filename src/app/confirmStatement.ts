@@ -13,6 +13,7 @@ import { persistBatch } from "../db/persistBatch.js";
 import { withTransaction } from "../db/tx.js";
 import type { SqliteHandles } from "../db/client.js";
 import type { WorkspaceContext } from "./context.js";
+import { assertWorkspaceOwned } from "./ownership.js";
 
 const inputSchema = z.object({
   cycleId: z.string().min(1),
@@ -27,6 +28,7 @@ export function confirmStatement(
   raw: unknown,
 ) {
   const input = inputSchema.parse(raw);
+  assertWorkspaceOwned(handles, context.workspaceId, [{ type: "cycle", id: input.cycleId }]);
   const snapshot = loadSnapshot(handles, context.workspaceId, isoDate(input.actualStatementOn));
   const cycle = snapshot.billingCycles.find((item) => item.id === input.cycleId);
   if (!cycle) {

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { getMe } from "./apiClient.js";
+import { completeGoogleRedirect, firebaseConfigured, subscribeAuth } from "./firebase.js";
 import { SignIn } from "./pages/SignIn.js";
 import { Home } from "./pages/Home.js";
 import { StsExplain } from "./pages/StsExplain.js";
@@ -21,7 +22,7 @@ function pathOf(): string {
 
 export function App() {
   const [path, setPath] = useState(pathOf);
-  const [ready, setReady] = useState(false);
+  const [ready, setReady] = useState(() => !firebaseConfigured());
   const [authed, setAuthed] = useState(false);
 
   useEffect(() => {
@@ -31,21 +32,42 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    if (!firebaseConfigured()) {
+      return;
+    }
     let cancelled = false;
-    getMe()
-      .then(() => {
+    let unsubscribe = () => {};
+
+    async function confirmSession() {
+      try {
+        await getMe();
         if (!cancelled) setAuthed(true);
-      })
-      .catch(() => {
+      } catch {
         if (!cancelled) setAuthed(false);
-      })
-      .finally(() => {
+      } finally {
         if (!cancelled) setReady(true);
+      }
+    }
+
+    void completeGoogleRedirect().catch(() => null).then(() => {
+      if (cancelled) return;
+      unsubscribe = subscribeAuth((user) => {
+        if (!user) {
+          if (!cancelled) {
+            setAuthed(false);
+            setReady(true);
+          }
+          return;
+        }
+        void confirmSession();
       });
+    });
+
     return () => {
       cancelled = true;
+      unsubscribe();
     };
-  }, [path]);
+  }, []);
 
   function navigate(to: string) {
     window.history.pushState({}, "", to);

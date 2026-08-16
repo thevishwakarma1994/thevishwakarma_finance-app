@@ -3,7 +3,8 @@ import { bodyLimit } from "hono/body-limit";
 import { secureHeaders } from "hono/secure-headers";
 import type { SqliteHandles } from "../db/client.js";
 import { authRoutes } from "./auth/routes.js";
-import { requireOrigin, requireSession } from "./auth/guard.js";
+import { requireFirebaseAuth, requireOrigin, type VerifyIdToken } from "./auth/guard.js";
+import { verifyFirebaseIdToken } from "./auth/firebaseAdmin.js";
 import { commandRoutes } from "./routes/commands.js";
 import { readRoutes } from "./routes/reads.js";
 
@@ -11,15 +12,22 @@ export type AppEnv = {
   Variables: {
     handles: SqliteHandles;
     workspaceId: string;
+    userId: string;
+    verifyIdToken: VerifyIdToken;
   };
 };
 
-export function createApp(handles: SqliteHandles) {
+export function createApp(
+  handles: SqliteHandles,
+  options: { verifyIdToken?: VerifyIdToken } = {},
+) {
   const app = new Hono<AppEnv>();
+  const verifyIdToken = options.verifyIdToken ?? verifyFirebaseIdToken;
 
   app.use("*", secureHeaders());
   app.use("*", async (c, next) => {
     c.set("handles", handles);
+    c.set("verifyIdToken", verifyIdToken);
     await next();
   });
   app.use(
@@ -30,7 +38,7 @@ export function createApp(handles: SqliteHandles) {
     }),
   );
   app.use("/api/*", requireOrigin);
-  app.use("/api/*", requireSession);
+  app.use("/api/*", requireFirebaseAuth);
   app.route("/api", authRoutes);
   app.route("/api", readRoutes);
   app.route("/api", commandRoutes);

@@ -1,6 +1,6 @@
 # Stage 5 — Technical Architecture & Persistence
 
-**Status:** Proposed, plus future public-use constraint (one workspace, portable SQL). Do not scaffold or implement features yet. Do not implement SaaS (registration, orgs, billing, roles, multi-user UI).
+**Status:** Stage 14 — Firebase Auth adapter + per-user Personal workspaces. SQLite remains the financial database. Do not migrate to PostgreSQL or deploy in this stage.
 
 **Locked inputs:** `docs/04-financial-domain-model.md` (behaviour), `docs/03-information-architecture-ux.md` (UX). Shopping/receipts: `docs/06-shopping-receipts-amendment.md`. This document does not restate financial rules.
 
@@ -17,7 +17,7 @@ Phone-first means capture from a phone. That requires an HTTP app, not a laptop-
 | ---------- | ------------------------------------------------------------------------------------------ | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
 | Language   | TypeScript (strict)                                                                        | One language for UI, API, domain, tests                              | Python: weaker shared types across UI/engine                                                 |
 | UI         | Vite + React 19 + CSS modules (or vanilla-extract)                                         | Fast local loop, PWA-capable, no RSC cache surprises around money    | Next.js: extra caching/runtime for no SEO need. Expo: store + native tax for a personal tool |
-| API        | Hono, same Node process as static UI                                                       | Tiny, typed, easy session middleware                                 | Separate Nest/Express service: ceremony                                                      |
+| API        | Hono, same Node process as static UI                                                       | Tiny, typed middleware                                               | Separate Nest/Express service: ceremony                                                      |
 | Domain     | Pure TS package folder `src/domain`                                                        | Testable with no HTTP, no DB, no React                               | Calculations inside components                                                               |
 | DB         | SQLite 3, WAL, `PRAGMA foreign_keys=ON`                                                    | One user, ACID, zero daemon locally, file backup                     | Postgres V1: extra process. Browser-SQLite: backup/corruption risk                           |
 | Driver     | `better-sqlite3`                                                                           | Synchronous transactions; no interleaved awaits inside a money write | async `sql.js`                                                                               |
@@ -27,7 +27,7 @@ Phone-first means capture from a phone. That requires an HTTP app, not a laptop-
 | Money      | branded `Paise` integer                                                                    | Never `number` rupees in domain                                      |                                                                                              |
 | Tests      | Vitest                                                                                     | Domain unit + SQLite integration in one runner                       | Jest                                                                                         |
 | E2E        | Playwright, few smoke paths                                                                | After Home exists                                                    | Heavy Cypress                                                                                |
-| Auth       | Single password, httpOnly session cookie (`src/api/auth` only)                             | One operator; replaceable later without touching domain              | OAuth, JWT, Better Auth, users table, orgs                                                   |
+| Auth       | Firebase Auth adapter (`src/api/auth` only): Google + email/password                       | External identity stays out of the financial engine                  | Password session, client-supplied uid/workspaceId, phone OTP (later)                         |
 | Deploy     | One Node service + SQLite volume (Fly.io or equivalent) + file backup (Litestream → R2/S3) | Phone can reach it; ~one machine                                     | Kubernetes, serverless DB, multi-tenant infra                                                |
 | Local      | `pnpm dev`: Vite + Hono + `data/app.sqlite`                                                | Seconds to start                                                     | Docker Compose required for hello-world                                                      |
 
@@ -38,7 +38,7 @@ Phone-first means capture from a phone. That requires an HTTP app, not a laptop-
 src/domain     pure engine (no drizzle, no react, no workspace/user/auth types)
 src/db         schema, migrations, snapshot loader (workspace-scoped SQL)
 src/app        command handlers: resolve workspace → load snapshot → domain → persist
-src/api        Hono routes + auth/session only
+src/api        Hono routes + Firebase token verification only
 src/ui         React, talks only to /api
 tests/domain
 tests/integration
@@ -46,14 +46,19 @@ tests/integration
 
 UI must not import `src/db` or writing commands. It may import `src/domain/types` and display-format helpers only.
 
-**Ownership boundary:** V1 has exactly **one** `workspaces` row. Application code loads that workspace’s ledger and passes a `LedgerSnapshot` into the engine.
+**Ownership boundary:** Firebase is an authentication adapter, not the financial database. Verified identity maps to an internal user and membership; the engine still sees only a workspace ledger.
 
 ```
-API session → workspaceId
+Firebase ID token
+  → Admin verifyIdToken() → firebase uid
+  → internal User → WorkspaceMembership → Workspace
+  → WorkspaceContext { workspaceId }
   → src/app / src/db: loadSnapshot(workspaceId)
-  → src/domain: evaluate / command(snapshot)   // no workspaceId, no userId
+  → src/domain: evaluate / command(snapshot)   // no workspaceId, no userId, no firebaseUid
   → src/db: persistBatch(workspaceId, batch)
 ```
+
+V1: each newly provisioned Firebase user receives exactly one empty Personal workspace as `owner`. The Stage 1–13 development book is preserved as `Development (legacy)` and is **not** attached to new users.
 
 ---
 
@@ -81,12 +86,12 @@ src/db
   persistBatch.ts         (workspaceId, ProposedBatch) → rows, inside a transaction
 
 src/app
-  context.ts              WorkspaceContext { workspaceId } from session; never imported by domain
+  context.ts              WorkspaceContext { workspaceId } from membership; never imported by domain
   recordSplit.ts          Zod → loadSnapshot(workspaceId) → domain.command → conserve → persist
   …one file per command
 
 src/api
-  auth/                   login, session cookie, maps session → workspaceId
+  auth/                   Bearer Firebase ID token → verifyIdToken → provision User/membership
   routes/commands.ts
   routes/reads.ts
 
@@ -121,13 +126,29 @@ Domain types (`Paise`, `IsoDate`, ledger structs) live in `src/domain`. Drizzle 
 
 ### 3.0 Workspace ownership
 
-V1 has exactly one workspace. No registration, orgs, members, or roles.
+Financial tables remain workspace-scoped. Identity lives beside them, not on events or postings.
 
 ```
 workspaces
-  id TEXT PK          -- UUIDv7, generated at first migrate/seed
-  name TEXT NOT NULL  -- e.g. "Personal"
+  id TEXT PK
+  name TEXT NOT NULL  -- "Personal" for new users; existing book renamed "Development (legacy)"
   created_at TEXT NOT NULL
+
+users
+  id TEXT PK                 -- application UUIDv7
+  firebase_uid TEXT UNIQUE   -- external identity only
+  display_name TEXT
+  primary_email TEXT
+  status TEXT NOT NULL       -- active | disabled
+  created_at, updated_at TEXT
+
+workspace_memberships
+  id TEXT PK
+  user_id TEXT FK users
+  workspace_id TEXT FK workspaces
+  role TEXT NOT NULL         -- V1: owner; enum-shaped for later roles
+  created_at TEXT
+  UNIQUE (user_id, workspace_id)
 ```
 
 Every financial table listed in §3.1 (including child tables: postings, event_shares, allocations, reservation_ledger) has:
@@ -136,11 +157,13 @@ Every financial table listed in §3.1 (including child tables: postings, event_s
 workspace_id TEXT NOT NULL REFERENCES workspaces(id)
 ```
 
-`src/db` sets `workspace_id` on insert from `WorkspaceContext`. Clients cannot choose it. Queries for money always include `WHERE workspace_id = ?`.
+`src/db` sets `workspace_id` on insert from `WorkspaceContext`. Clients cannot choose it. Queries for money always include `WHERE workspace_id = ?`. Command IDs (account, card, person, claim, cycle, obligation, category, …) are also checked with reusable workspace-ownership validation before persist.
 
 Unique keys that are “one per book” become composite with `workspace_id` (e.g. funding cycle `(workspace_id, year, month)`, budgets `(workspace_id, category_id, year, month)`, openings `(workspace_id, kind, subject_id)`, billing `(workspace_id, credit_card_id, expected_statement_on)`, at most one primary salary account per workspace — **application-enforced** uniqueness, not a SQLite partial index).
 
-V1 seed: insert one workspace; all commands use that id. Future public use adds `users` + `workspace_members` **without** changing event/posting/claim semantics.
+First valid Firebase request is idempotent: find `users.firebase_uid`, else create User + Personal workspace + owner membership. Repeated login must not create another workspace. Shared workspaces, invitations, and switching UI are not implemented.
+
+The pre-auth development workspace is preserved and left unowned. Do not auto-assign it to the first Firebase account. A later one-time admin assignment can attach it if needed.
 
 ### 3.1 Tables
 
@@ -538,20 +561,7 @@ Applying an opening **creates** the seeded claim / cycle / implicit opening post
 
 Index `(workspace_id, key, subject_id, effective_from)`. No overlapping intervals per `(workspace_id, key, subject_id)`.
 
-#### `sessions`
-
-Auth only. Not a financial table. Replaceable when real users exist.
-
-
-| Column                 | Type                 | Notes                                      |
-| ---------------------- | -------------------- | ------------------------------------------ |
-| id                     | TEXT PK              | random                                     |
-| token_hash             | TEXT NOT NULL UNIQUE | sha256 of cookie                           |
-| workspace_id           | TEXT FK workspaces   | V1: always the single workspace            |
-| created_at, expires_at | TEXT                 | UTC                                        |
-
-
-No `user_id` in V1. A future `user_id` (nullable then required) can be added without changing financial tables.
+Auth tables are `users` and `workspace_memberships` (§3.0). The previous password `sessions` table is removed. Firebase ID tokens are verified on each request and are not stored.
 
 
 
@@ -570,8 +580,9 @@ No `user_id` in V1. A future `user_id` (nullable then required) can be added wit
 | Global reserved pool                                  | `SUM` of reservation remaining |
 | Receivable/Payable                                    | `claims.direction`             |
 | Payment channel directory                             | CHECK list V1                  |
-| User, org, role, invitation, subscription             | **None in V1**                 |
-| Workspace                                             | One row in `workspaces`        |
+| Invitation, org, team, workspace switcher             | **None in V1**                 |
+| User / membership                                     | `users` + `workspace_memberships` |
+| Workspace                                             | Personal per user; plus unowned `Development (legacy)` |
 
 
 
@@ -740,26 +751,48 @@ Salary window days 4–8: construct dates as `${year}-${month}-${day}` in Kolkat
 
 
 
-## 9. Auth & security (one operator, isolated)
+## 9. Auth & security (Firebase adapter, workspace isolation)
 
-No `users` table. No registration, orgs, invitations, roles, billing, or multi-user UI.
+Firebase Authentication is the **identity adapter**. SQLite remains the financial database. Do not put `firebase_uid`, email, or userId on `LedgerSnapshot`, events, postings, STS, or affordability.
 
-Keep auth in `src/api/auth` only:
+```
+Firebase client (Google or email/password)
+  → Firebase ID token
+  → Authorization: Bearer
+  → Hono requireFirebaseAuth
+  → Admin SDK verifyIdToken(token, true)
+  → firebase uid
+  → internal User (provisioned on first request)
+  → WorkspaceMembership
+  → WorkspaceContext { workspaceId }
+  → financial read/write
+```
 
-- Env `APP_PASSWORD_HASH` (argon2id/scrypt). Login sets httpOnly `Secure` `SameSite=Lax` session cookie; id stored hashed in `sessions` with the single `workspace_id`.
-- All `/api/*` except `POST /api/login` require a valid session.
-- Session → `workspaceId` is resolved **before** `src/app`. Financial commands receive workspace context from the app layer, never from the request body as a tenant picker.
+Never trust client-provided uid, email, or workspaceId.
+
+Keep auth in `src/api/auth` plus `src/app/provisionUser.ts` / `src/app/ownership.ts`:
+
+- Public web config: `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_APP_ID` (and optional sender/bucket).
+- Server: `FIREBASE_PROJECT_ID` plus Admin credentials (`GOOGLE_APPLICATION_CREDENTIALS`, `FIREBASE_SERVICE_ACCOUNT_JSON`, or `FIREBASE_CLIENT_EMAIL` + `FIREBASE_PRIVATE_KEY`). Never commit the service account.
+- All `/api/*` require a valid Firebase ID token. Missing/invalid/revoked/Firebase-disabled → 401 (`verifyIdToken(token, true)`). Internal `users.status=disabled` → 403. Responses do not expose Auth error codes.
+- First login provisioning is transactional and idempotent. Same `firebase_uid` never yields a second internal user or a second personal workspace.
+- Do not merge accounts by email. Separate Firebase identities stay separate users.
 - Helmet-like headers, JSON body size limit.
 - SQLite file outside web root (`../data/app.sqlite`), mode 600.
-- Secrets only in env / Fly secrets. Never commit `.env`.
-- Bind production to HTTPS (Fly terminates TLS).
-- Rate-limit login (in-memory is enough).
-- Backup encryption at rest via bucket encryption; do not expose `/data`.
-- CORS: same-origin only (UI and API same host).
+- Secrets only in env. Never commit `.env`.
+- CORS: same-origin only (UI and API same host in production; Vite proxies `/api` locally).
 
-Replacing this later with real user authentication must not change `src/domain` command signatures or STS. Only `src/api/auth` and `sessions` (plus a future `users` / `workspace_members` pair) change.
+**Local Firebase Console (required to sign in on localhost, not required for `pnpm test`):**
 
-**Not V1:** OAuth, magic links, roles, per-row RLS, Cloudflare Access (optional later).
+1. Open project `thevishwakarmafinanceapp`.
+2. Enable **Google** and **Email/Password** providers.
+3. Authorized domains: include `localhost`.
+4. Copy the web app config into `.env` as `VITE_FIREBASE_*`.
+5. Create a service-account key for Admin SDK and point `GOOGLE_APPLICATION_CREDENTIALS` (or the other Admin env vars) at it. Do not commit the JSON.
+
+Phone OTP, family workspaces, invitations, and workspace switching are not in this stage.
+
+**Not V1:** phone OTP, magic links, org/team UI, per-row RLS.
 
 ---
 
@@ -874,12 +907,12 @@ Application (auth + workspaceId)
 
 **A future public launch should mainly add:**
 
-1. Real User authentication (replace `src/api/auth` password session)
-2. User ↔ Workspace membership table
-3. Workspace isolation (already: `workspace_id` on financial rows + query scoping)
+1. Real User authentication — **done (Firebase adapter)**
+2. User ↔ Workspace membership table — **done (owner-only V1)**
+3. Workspace isolation (financial `workspace_id` plus membership + ownership checks)
 4. PostgreSQL, if scale requires it (replace `src/db` driver/adapter; same schema shapes)
-5. Authorization (which user may use which workspace)
-6. Onboarding (create workspace, not new event semantics)
+5. Shared workspaces, invitations, extra roles
+6. Onboarding beyond empty Personal books
 7. Deployment and observability
 
 **It must not require rewriting:**

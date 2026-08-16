@@ -1,44 +1,55 @@
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  DEVELOPMENT_DEFAULT_PASSWORD,
-  assertProductionPasswordConfig,
-  hashPassword,
-} from "../../src/api/auth/password.js";
+import { assertFirebaseAdminConfig } from "../../src/api/auth/firebaseAdmin.js";
 
-const originalEnv = process.env.NODE_ENV;
-const originalHash = process.env.APP_PASSWORD_HASH;
+const originalEnv = {
+  NODE_ENV: process.env.NODE_ENV,
+  FIREBASE_PROJECT_ID: process.env.FIREBASE_PROJECT_ID,
+  FIREBASE_SERVICE_ACCOUNT_JSON: process.env.FIREBASE_SERVICE_ACCOUNT_JSON,
+  FIREBASE_CLIENT_EMAIL: process.env.FIREBASE_CLIENT_EMAIL,
+  FIREBASE_PRIVATE_KEY: process.env.FIREBASE_PRIVATE_KEY,
+  GOOGLE_APPLICATION_CREDENTIALS: process.env.GOOGLE_APPLICATION_CREDENTIALS,
+};
 
 afterEach(() => {
-  process.env.NODE_ENV = originalEnv;
-  if (originalHash === undefined) {
-    delete process.env.APP_PASSWORD_HASH;
-  } else {
-    process.env.APP_PASSWORD_HASH = originalHash;
+  for (const [key, value] of Object.entries(originalEnv)) {
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
   }
 });
 
-describe("production password config", () => {
-  it("allows the documented development default outside production", () => {
+describe("Firebase Admin production config", () => {
+  it("allows missing admin credentials outside production", () => {
     process.env.NODE_ENV = "development";
-    process.env.APP_PASSWORD_HASH = hashPassword(DEVELOPMENT_DEFAULT_PASSWORD);
-    expect(() => assertProductionPasswordConfig()).not.toThrow();
+    delete process.env.FIREBASE_PROJECT_ID;
+    delete process.env.GOOGLE_APPLICATION_CREDENTIALS;
+    delete process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+    expect(() => assertFirebaseAdminConfig()).not.toThrow();
   });
 
-  it("refuses startup when production hash is missing", () => {
+  it("refuses startup when production project id is missing", () => {
     process.env.NODE_ENV = "production";
-    delete process.env.APP_PASSWORD_HASH;
-    expect(() => assertProductionPasswordConfig()).toThrow(/required in production/);
+    delete process.env.FIREBASE_PROJECT_ID;
+    process.env.GOOGLE_APPLICATION_CREDENTIALS = "/tmp/unused.json";
+    expect(() => assertFirebaseAdminConfig()).toThrow(/FIREBASE_PROJECT_ID/);
   });
 
-  it("refuses startup when production hash is the documented development default", () => {
+  it("refuses startup when production admin credentials are missing", () => {
     process.env.NODE_ENV = "production";
-    process.env.APP_PASSWORD_HASH = hashPassword(DEVELOPMENT_DEFAULT_PASSWORD);
-    expect(() => assertProductionPasswordConfig()).toThrow(/development default/);
+    process.env.FIREBASE_PROJECT_ID = "thevishwakarmafinanceapp";
+    delete process.env.GOOGLE_APPLICATION_CREDENTIALS;
+    delete process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+    delete process.env.FIREBASE_CLIENT_EMAIL;
+    delete process.env.FIREBASE_PRIVATE_KEY;
+    expect(() => assertFirebaseAdminConfig()).toThrow(/Firebase Admin credentials/);
   });
 
-  it("allows a distinct production hash", () => {
+  it("allows production when a service-account path is configured", () => {
     process.env.NODE_ENV = "production";
-    process.env.APP_PASSWORD_HASH = hashPassword("distinct-production-secret");
-    expect(() => assertProductionPasswordConfig()).not.toThrow();
+    process.env.FIREBASE_PROJECT_ID = "thevishwakarmafinanceapp";
+    process.env.GOOGLE_APPLICATION_CREDENTIALS = "/tmp/service-account.json";
+    expect(() => assertFirebaseAdminConfig()).not.toThrow();
   });
 });

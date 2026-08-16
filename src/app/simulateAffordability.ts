@@ -6,6 +6,7 @@ import { simulateAffordability as simulateAffordabilityDomain } from "../domain/
 import { loadSnapshot } from "../db/loadSnapshot.js";
 import type { SqliteHandles } from "../db/client.js";
 import type { WorkspaceContext } from "./context.js";
+import { assertWorkspaceOwned } from "./ownership.js";
 
 const inputSchema = z.object({
   amountPaise: z.number().int().positive(),
@@ -23,6 +24,12 @@ export function simulateAffordability(
   raw: unknown,
 ) {
   const input = inputSchema.parse(raw);
+  assertWorkspaceOwned(handles, context.workspaceId, [
+    "accountId" in input.funding
+      ? { type: "account" as const, id: input.funding.accountId }
+      : { type: "card" as const, id: input.funding.creditCardId },
+    input.categoryId ? { type: "category" as const, id: input.categoryId } : null,
+  ]);
   const occurredOn = isoDate(input.occurredOn ?? todayKolkata());
   const snapshot = loadSnapshot(handles, context.workspaceId, occurredOn);
   const meaning = "accountId" in input.funding ? "spend_account" : "spend_card";

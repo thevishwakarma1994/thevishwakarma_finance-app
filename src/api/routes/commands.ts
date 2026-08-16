@@ -35,6 +35,7 @@ type Env = {
   Variables: {
     handles: SqliteHandles;
     workspaceId: string;
+    userId: string;
   };
 };
 

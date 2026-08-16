@@ -128,7 +128,7 @@ export function Money({ onSignedOut, onOpenMonth, onOpenCard, onOpenCycle }: Pro
     try {
       await signOut();
     } catch {
-      // Cookie/session may already be gone.
+      // Firebase client may already be signed out.
     }
     onSignedOut();
   }

@@ -14,6 +14,7 @@ import { obligationInstances, obligationTemplates } from "../db/schema.js";
 import { eq } from "drizzle-orm";
 import type { SqliteHandles } from "../db/client.js";
 import type { WorkspaceContext } from "./context.js";
+import { assertWorkspaceOwned } from "./ownership.js";
 import { withTransaction } from "../db/tx.js";
 
 const prioritySchema = z.enum(["must_pay", "committed", "planned"]);
@@ -54,6 +55,11 @@ export function createObligationTemplate(
 ) {
   const input = createTemplateSchema.parse(raw);
   parseDueRule({ dayOfMonth: input.dayOfMonth });
+  if (input.defaultAccountId) {
+    assertWorkspaceOwned(handles, context.workspaceId, [
+      { type: "account", id: input.defaultAccountId },
+    ]);
+  }
   const id = newId();
   const effectiveFrom = isoDate(input.effectiveFrom);
   withTransaction(handles, () => {

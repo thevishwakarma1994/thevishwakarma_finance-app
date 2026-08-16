@@ -7,6 +7,7 @@ import { persistBatch } from "../db/persistBatch.js";
 import { loadCardRule } from "../db/config.js";
 import type { SqliteHandles } from "../db/client.js";
 import type { WorkspaceContext } from "./context.js";
+import { assertWorkspaceOwned } from "./ownership.js";
 
 const inputSchema = z.object({
   occurredOn: z.string(),
@@ -45,6 +46,13 @@ export function recordSplit(
   raw: unknown,
 ) {
   const input = inputSchema.parse(raw);
+  assertWorkspaceOwned(handles, context.workspaceId, [
+    input.source.type === "account"
+      ? { type: "account" as const, id: input.source.accountId }
+      : { type: "card" as const, id: input.source.creditCardId },
+    ...input.personShares.map((share) => ({ type: "person" as const, id: share.personId })),
+    ...input.allocations.map((allocation) => ({ type: "category" as const, id: allocation.categoryId })),
+  ]);
   const occurredOn = isoDate(input.occurredOn);
   const snapshot = loadSnapshot(handles, context.workspaceId, occurredOn);
   const source =
