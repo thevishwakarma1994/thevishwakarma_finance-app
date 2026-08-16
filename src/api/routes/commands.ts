@@ -3,6 +3,9 @@ import { utcNowIso } from "../../domain/calendar/kolkata.js";
 import { applyOpening } from "../../app/applyOpening.js";
 import { recordIncome } from "../../app/recordIncome.js";
 import { recordExpense } from "../../app/recordExpense.js";
+import { transferMoney } from "../../app/transferMoney.js";
+import { createAccount, updateAccount } from "../../app/accounts.js";
+import { createCategory, updateCategory } from "../../app/categories.js";
 import type { SqliteHandles } from "../../db/client.js";
 import { mapError } from "../auth/guard.js";
 
@@ -48,6 +51,60 @@ commandRoutes.post("/commands/expense", async (c) => {
       capturedAt: typeof body.capturedAt === "string" ? body.capturedAt : utcNowIso(),
     });
     return c.json(result);
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+commandRoutes.post("/commands/transfer", async (c) => {
+  try {
+    const body = (await c.req.json()) as Record<string, unknown>;
+    const result = transferMoney(c.get("handles"), { workspaceId: c.get("workspaceId") }, {
+      ...body,
+      capturedAt: typeof body.capturedAt === "string" ? body.capturedAt : utcNowIso(),
+    });
+    return c.json(result);
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+commandRoutes.post("/accounts", async (c) => {
+  try {
+    const body = await c.req.json();
+    return c.json(createAccount(c.get("handles"), { workspaceId: c.get("workspaceId") }, body));
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+commandRoutes.post("/accounts/update", async (c) => {
+  try {
+    const body = await c.req.json();
+    return c.json(updateAccount(c.get("handles"), { workspaceId: c.get("workspaceId") }, body));
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+commandRoutes.post("/categories", async (c) => {
+  try {
+    const body = await c.req.json();
+    return c.json(createCategory(c.get("handles"), { workspaceId: c.get("workspaceId") }, body));
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+commandRoutes.post("/categories/update", async (c) => {
+  try {
+    const body = await c.req.json();
+    return c.json(updateCategory(c.get("handles"), { workspaceId: c.get("workspaceId") }, body));
   } catch (error) {
     const mapped = mapError(error);
     return c.json(mapped.body, mapped.status);

@@ -1,7 +1,7 @@
 export { paise, addPaise, sumPaise, absPaise, type Paise } from "./money/paise.js";
 export { parseInr, formatInr, formatInrDelta, rupeesToPaise, paiseToRupees } from "./money/inr.js";
 export { isoDate, isoDateParts, isoMonth, inCalendarMonth, type IsoDate } from "./calendar/isoDate.js";
-export { todayKolkata, utcNowIso, kolkataMonthEnd, kolkataMonthStart, KOLKATA } from "./calendar/kolkata.js";
+export { todayKolkata, utcNowIso, kolkataMonthEnd, kolkataMonthStart, kolkataAddMonths, KOLKATA } from "./calendar/kolkata.js";
 export { newId, type EntityId } from "./ids.js";
 export {
   DomainError,
@@ -27,3 +27,4 @@ export {
   type RecordExpenseInput,
   type ExpenseAllocation,
 } from "./commands/recordExpense.js";
+export { transferMoney, type TransferMoneyInput } from "./commands/transferMoney.js";

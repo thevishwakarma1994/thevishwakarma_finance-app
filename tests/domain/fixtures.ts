@@ -31,8 +31,8 @@ export function snapshotFixture(overrides: Partial<LedgerSnapshot> = {}): Ledger
   return {
     accounts,
     categories: overrides.categories ?? [
-      { id: "cat-grocery", parentId: null, name: "Grocery" },
-      { id: "cat-household", parentId: null, name: "Household" },
+      { id: "cat-grocery", parentId: null, name: "Grocery", archivedAt: null },
+      { id: "cat-household", parentId: null, name: "Household", archivedAt: null },
     ],
     events: overrides.events ?? [],
     postings: overrides.postings ?? [],

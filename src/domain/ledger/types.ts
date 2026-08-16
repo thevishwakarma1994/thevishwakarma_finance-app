@@ -42,6 +42,7 @@ export type CategoryRecord = {
   id: EntityId;
   parentId: EntityId | null;
   name: string;
+  archivedAt: string | null;
 };
 
 export type FinancialEvent = {
@@ -50,6 +51,7 @@ export type FinancialEvent = {
   occurredOn: IsoDate;
   capturedAt: string;
   amountPaise: Paise;
+  /** For `transfer`, this is the source account. Destination is the positive account posting. */
   accountId: EntityId | null;
   creditCardId: EntityId | null;
   loanId: EntityId | null;

@@ -7,12 +7,13 @@ import {
   fetchCategories,
   previewOrCommitExpense,
   previewOrCommitIncome,
+  previewOrCommitTransfer,
   type Account,
   type Category,
   type ConsequencePreview,
 } from "../apiClient.js";
 
-type Intent = "income" | "expense" | null;
+type Intent = "income" | "expense" | "transfer" | null;
 
 type Props = {
   onDone: () => void;
@@ -23,6 +24,7 @@ export function Add({ onDone }: Props) {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [accountId, setAccountId] = useState("");
+  const [toAccountId, setToAccountId] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [amount, setAmount] = useState("");
   const [occurredOn, setOccurredOn] = useState<string>(todayKolkata());
@@ -38,6 +40,7 @@ export function Add({ onDone }: Props) {
         setAccounts(accountData.accounts);
         setCategories(categoryData.categories);
         setAccountId(accountData.accounts[0]?.id ?? "");
+        setToAccountId(accountData.accounts[1]?.id ?? accountData.accounts[0]?.id ?? "");
         setCategoryId(categoryData.categories[0]?.id ?? "");
       })
       .catch((caught: unknown) => {
@@ -57,6 +60,15 @@ export function Add({ onDone }: Props) {
           amountPaise,
           accountId,
           kind,
+          commit: false,
+        });
+        setPreview(result.preview);
+      } else if (intent === "transfer") {
+        const result = await previewOrCommitTransfer({
+          occurredOn,
+          amountPaise,
+          fromAccountId: accountId,
+          toAccountId,
           commit: false,
         });
         setPreview(result.preview);
@@ -90,6 +102,14 @@ export function Add({ onDone }: Props) {
           kind,
           commit: true,
         });
+      } else if (intent === "transfer") {
+        await previewOrCommitTransfer({
+          occurredOn,
+          amountPaise,
+          fromAccountId: accountId,
+          toAccountId,
+          commit: true,
+        });
       } else {
         await previewOrCommitExpense({
           occurredOn,
@@ -119,6 +139,9 @@ export function Add({ onDone }: Props) {
           </button>
           <button className="secondary" type="button" onClick={() => setIntent("expense")}>
             I spent money
+          </button>
+          <button className="secondary" type="button" onClick={() => setIntent("transfer")}>
+            Move money
           </button>
         </main>
       </>
@@ -154,7 +177,9 @@ export function Add({ onDone }: Props) {
   return (
     <>
       <header className="header">
-        <h1>{intent === "income" ? "I got paid" : "I spent money"}</h1>
+        <h1>
+          {intent === "income" ? "I got paid" : intent === "transfer" ? "Move money" : "I spent money"}
+        </h1>
       </header>
       <main className="page">
         <form className="card stack" onSubmit={onPreview}>
@@ -168,7 +193,7 @@ export function Add({ onDone }: Props) {
             />
           </label>
           <label>
-            Account
+            {intent === "transfer" ? "From" : "Account"}
             <select value={accountId} onChange={(event) => setAccountId(event.target.value)}>
               {accounts.map((account) => (
                 <option key={account.id} value={account.id}>
@@ -177,6 +202,18 @@ export function Add({ onDone }: Props) {
               ))}
             </select>
           </label>
+          {intent === "transfer" ? (
+            <label>
+              To
+              <select value={toAccountId} onChange={(event) => setToAccountId(event.target.value)}>
+                {accounts.map((account) => (
+                  <option key={account.id} value={account.id}>
+                    {account.displayName}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           {intent === "income" ? (
             <label>
               Kind
@@ -185,7 +222,7 @@ export function Add({ onDone }: Props) {
                 <option value="other">Other income</option>
               </select>
             </label>
-          ) : (
+          ) : intent === "expense" ? (
             <>
               <label>
                 Category
@@ -202,7 +239,7 @@ export function Add({ onDone }: Props) {
                 <input value={merchant} onChange={(event) => setMerchant(event.target.value)} />
               </label>
             </>
-          )}
+          ) : null}
           <label>
             Date
             <input type="date" value={occurredOn} onChange={(event) => setOccurredOn(event.target.value)} />

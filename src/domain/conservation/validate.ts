@@ -68,6 +68,33 @@ export function assertConservation(
     if (incomeSum(batch) !== paise(0)) {
       throw new DomainError("conservation_expense", "Expense cannot create income");
     }
+    return;
+  }
+
+  if (meaning === "transfer") {
+    const byAccount = batch.postings.filter((posting) => posting.accountId);
+    const sourceDecrease = paise(
+      -sumPaise(byAccount.filter((posting) => posting.amountPaise < 0).map((posting) => posting.amountPaise)),
+    );
+    const destinationIncrease = sumPaise(
+      byAccount.filter((posting) => posting.amountPaise > 0).map((posting) => posting.amountPaise),
+    );
+    if (
+      sourceDecrease !== destinationIncrease ||
+      sourceDecrease <= 0 ||
+      accountDeltas(batch) !== paise(0)
+    ) {
+      throw new DomainError(
+        "conservation_transfer",
+        "Source decrease must equal destination increase",
+      );
+    }
+    if (expenseSum(batch) !== paise(0)) {
+      throw new DomainError("conservation_transfer", "A transfer cannot create expense");
+    }
+    if (incomeSum(batch) !== paise(0)) {
+      throw new DomainError("conservation_transfer", "A transfer cannot create income");
+    }
   }
 }
 

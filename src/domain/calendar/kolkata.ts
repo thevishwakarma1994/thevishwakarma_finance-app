@@ -33,6 +33,15 @@ export function kolkataMonthEnd(value: IsoDate): IsoDate {
   return isoDate(formatted);
 }
 
+export function kolkataAddMonths(value: IsoDate, months: number): IsoDate {
+  const shifted = DateTime.fromISO(value, { zone: KOLKATA }).plus({ months });
+  const formatted = shifted.toISODate();
+  if (!formatted) {
+    throw new Error("Could not shift calendar month");
+  }
+  return isoDate(formatted);
+}
+
 export function parseIsoDateInKolkata(value: IsoDate): DateTime {
   const dt = DateTime.fromISO(value, { zone: KOLKATA });
   if (!dt.isValid) {

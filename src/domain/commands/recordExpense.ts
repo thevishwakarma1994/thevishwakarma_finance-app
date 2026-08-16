@@ -33,7 +33,7 @@ export function recordExpense(
   snapshot: LedgerSnapshot,
 ): { batch: ProposedBatch; preview: ConsequencePreview } {
   const account = snapshot.accounts.find((item) => item.id === input.accountId);
-  if (!account) {
+  if (!account || account.status !== "active") {
     throw new DomainError("account_not_found", "Account not found");
   }
   if (input.allocations.length === 0) {
@@ -44,7 +44,7 @@ export function recordExpense(
     if (allocation.amountPaise <= 0) {
       throw new DomainError("invalid_amount", "Each allocation must be greater than zero");
     }
-    if (!snapshot.categories.some((category) => category.id === allocation.categoryId)) {
+    if (!snapshot.categories.some((category) => category.id === allocation.categoryId && !category.archivedAt)) {
       throw new DomainError("category_not_found", "Category not found");
     }
   }

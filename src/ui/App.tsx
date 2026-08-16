@@ -4,6 +4,7 @@ import { SignIn } from "./pages/SignIn.js";
 import { Money } from "./pages/Money.js";
 import { Activity } from "./pages/Activity.js";
 import { Add } from "./pages/Add.js";
+import { MonthReview } from "./pages/MonthReview.js";
 
 function pathOf(): string {
   return window.location.pathname;
@@ -67,11 +68,16 @@ export function App() {
         <Activity />
       ) : current === "/add" ? (
         <Add onDone={() => navigate("/activity")} />
+      ) : current === "/month" ? (
+        <MonthReview onOpenActivity={(href) => navigate(href)} />
       ) : (
-        <Money onSignedOut={() => {
-          setAuthed(false);
-          navigate("/sign-in");
-        }} />
+        <Money
+          onOpenMonth={() => navigate("/month")}
+          onSignedOut={() => {
+            setAuthed(false);
+            navigate("/sign-in");
+          }}
+        />
       )}
       <nav className="nav">
         <a className={current === "/money" ? "active" : ""} href="/money" onClick={(event) => {

@@ -108,7 +108,7 @@ export function mapError(
 ): { status: 400 | 404 | 409 | 500; body: { error: string; message: string } } {
   if (error instanceof DomainError) {
     const status =
-      error.code === "insufficient_balance"
+      error.code === "insufficient_balance" || error.code === "duplicate_category"
         ? 409
         : error.code === "account_not_found" || error.code === "category_not_found"
           ? 404

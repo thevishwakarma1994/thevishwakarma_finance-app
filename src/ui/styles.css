@@ -177,6 +177,25 @@ select {
   gap: 0.2rem;
 }
 
-.event strong {
-  font-size: 1rem;
+.event-transfer {
+  border-color: #99f6e4;
+}
+
+.link-card {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.6rem;
+}
+
+.actions .secondary,
+.actions .linkish {
+  width: auto;
+  padding: 0.45rem 0.7rem;
 }

@@ -76,6 +76,7 @@ export function loadSnapshot(handles: SqliteHandles, workspaceId: string): Ledge
       id: row.id,
       parentId: row.parentId,
       name: row.name,
+      archivedAt: row.archivedAt,
     })),
     events: eventRows.map((row) => ({
       id: row.id,

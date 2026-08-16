@@ -12,18 +12,26 @@ export type Account = {
   mask: string | null;
   isPrimarySalary: boolean;
   balancePaise: number;
+  hasOpening: boolean;
 };
 
-export type Category = { id: string; name: string };
+export type Category = {
+  id: string;
+  name: string;
+  parentId: string | null;
+  archivedAt: string | null;
+};
 
 export type ActivityEvent = {
   id: string;
-  meaning: "income" | "spend_account";
+  meaning: "income" | "spend_account" | "transfer";
   occurredOn: string;
   amountPaise: number;
   accountName: string | null;
+  fromAccountName: string | null;
+  toAccountName: string | null;
   merchant: string | null;
-  categories: { name: string; amountPaise: number }[];
+  categories: { id: string | null; name: string; amountPaise: number }[];
   incomeKind: "salary" | "other" | null;
 };
 
@@ -31,6 +39,16 @@ export type MonthSpend = {
   asOf: string;
   month: string;
   spentPaise: number;
+};
+
+export type MonthReview = {
+  asOf: string;
+  month: string;
+  spentPaise: number;
+  previousMonth: string;
+  previousSpentPaise: number;
+  differencePaise: number;
+  categories: { categoryId: string; name: string; spentPaise: number }[];
 };
 
 export type CommandResult = {
@@ -100,12 +118,61 @@ export function fetchCategories() {
   return request<{ categories: Category[] }>("/api/categories");
 }
 
-export function fetchActivity() {
-  return request<{ events: ActivityEvent[] }>("/api/activity");
+export function fetchActivity(filter: { categoryId?: string; month?: string } = {}) {
+  const params = new URLSearchParams();
+  if (filter.categoryId) params.set("categoryId", filter.categoryId);
+  if (filter.month) params.set("month", filter.month);
+  const query = params.toString();
+  return request<{ events: ActivityEvent[] }>(`/api/activity${query ? `?${query}` : ""}`);
 }
 
 export function fetchMonth() {
   return request<MonthSpend>("/api/month");
+}
+
+export function fetchMonthReview(month?: string) {
+  const query = month ? `?month=${encodeURIComponent(month)}` : "";
+  return request<MonthReview>(`/api/month-review${query}`);
+}
+
+export function createAccount(body: {
+  displayName: string;
+  kind: "bank" | "cash";
+  mask?: string | null;
+  isPrimarySalary?: boolean;
+  openingBalancePaise?: number;
+  openingEffectiveOn?: string;
+}) {
+  return request<{ id: string }>("/api/accounts", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function updateAccount(body: {
+  accountId: string;
+  displayName?: string;
+  isPrimarySalary?: boolean;
+  status?: "active" | "archived";
+}) {
+  return request<{ id: string }>("/api/accounts/update", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function createCategory(body: { name: string; parentId?: string | null }) {
+  return request<{ id: string }>("/api/categories", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function updateCategory(body: { categoryId: string; name?: string; archive?: boolean }) {
+  return request<{ id: string }>("/api/categories/update", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }
 
 export function previewOrCommitOpening(body: {
@@ -142,6 +209,20 @@ export function previewOrCommitExpense(body: {
   commit: boolean;
 }) {
   return request<CommandResult>("/api/commands/expense", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function previewOrCommitTransfer(body: {
+  occurredOn: string;
+  amountPaise: number;
+  fromAccountId: string;
+  toAccountId: string;
+  notes?: string | null;
+  commit: boolean;
+}) {
+  return request<CommandResult>("/api/commands/transfer", {
     method: "POST",
     body: JSON.stringify(body),
   });

@@ -27,7 +27,7 @@ export function recordIncome(
   snapshot: LedgerSnapshot,
 ): { batch: ProposedBatch; preview: ConsequencePreview } {
   const account = snapshot.accounts.find((item) => item.id === input.accountId);
-  if (!account) {
+  if (!account || account.status !== "active") {
     throw new DomainError("account_not_found", "Account not found");
   }
   if (input.amountPaise <= 0) {
