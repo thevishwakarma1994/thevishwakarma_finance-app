@@ -7,8 +7,10 @@ import {
   todayKolkata,
 } from "../domain/calendar/kolkata.js";
 import { formatCardLabel } from "../domain/cycle/lifecycle.js";
-import { DomainError, type LedgerBillingCycle } from "../domain/ledger/types.js";
+import { DomainError, type ClaimDirection, type LedgerBillingCycle } from "../domain/ledger/types.js";
 import { personPosition } from "../domain/people/position.js";
+import { suggestAllocations, suggestableClaimsFor } from "../domain/commands/suggestAllocations.js";
+import { claimLabel } from "../domain/commands/settle.js";
 import { loadSnapshot } from "./loadSnapshot.js";
 import { loadCardRule } from "./config.js";
 import { categories, financialEvents, postings } from "./schema.js";
@@ -70,7 +72,9 @@ export function listActivity(
         event.meaning === "pay_obligation" ||
         event.meaning === "split" ||
         event.meaning === "lend" ||
-        event.meaning === "borrow",
+        event.meaning === "borrow" ||
+        event.meaning === "settlement_in" ||
+        event.meaning === "settlement_out",
     )
     .filter((event) => {
       if (!filter.month) return true;
@@ -120,9 +124,15 @@ export function listActivity(
           isUser: share.isUser,
         }));
       const claim = snapshot.claims.find((item) => item.originatingEventId === event.id);
+      const settlementRows = snapshot.settlementAllocations.filter((item) => item.eventId === event.id);
+      const settlementPersonId = settlementRows
+        .map((row) => snapshot.claims.find((item) => item.id === row.claimId)?.personId)
+        .find((id) => id);
       const counterparty = claim
         ? snapshot.people.find((person) => person.id === claim.personId)
-        : undefined;
+        : settlementPersonId
+          ? snapshot.people.find((person) => person.id === settlementPersonId)
+          : undefined;
       const userShare = shares.find((share) => share.isUser);
       const otherOwned =
         event.meaning === "spend_card" &&
@@ -156,6 +166,14 @@ export function listActivity(
         counterpartyName: counterparty?.name ?? shares.find((share) => !share.isUser)?.personName ?? null,
         otherOwned,
         personalAmountPaise: expensePostings.reduce((sum, posting) => sum + posting.amountPaise, 0),
+        allocations: settlementRows.map((row) => {
+          const allocatedClaim = snapshot.claims.find((item) => item.id === row.claimId);
+          return {
+            claimId: row.claimId,
+            amountPaise: row.amountPaise,
+            label: allocatedClaim ? claimLabel(allocatedClaim, snapshot) : "Claim",
+          };
+        }),
       };
     });
 }
@@ -463,8 +481,8 @@ export function personDetail(handles: SqliteHandles, workspaceId: string, person
   const opening = snapshot.openings.find(
     (item) => item.kind === "person" && item.subjectId === person.id,
   );
-  const openClaims = snapshot.claims
-    .filter((claim) => claim.personId === person.id && claim.status === "open")
+  const claimViews = snapshot.claims
+    .filter((claim) => claim.personId === person.id)
     .map((claim) => {
       const event = claim.originatingEventId
         ? snapshot.events.find((item) => item.id === claim.originatingEventId)
@@ -475,11 +493,14 @@ export function personDetail(handles: SqliteHandles, workspaceId: string, person
       const card = cycle
         ? snapshot.creditCards.find((item) => item.id === cycle.creditCardId)
         : undefined;
+      const settledAmountPaise = paise(claim.originalAmountPaise - claim.openAmountPaise);
       return {
         id: claim.id,
         kind: claim.kind,
         direction: claim.direction,
+        status: claim.status,
         originalAmountPaise: claim.originalAmountPaise,
+        settledAmountPaise,
         openAmountPaise: claim.openAmountPaise,
         originatingEventId: claim.originatingEventId,
         originatingMeaning: event?.meaning ?? null,
@@ -491,12 +512,17 @@ export function personDetail(handles: SqliteHandles, workspaceId: string, person
         note: claim.note,
       };
     });
+  const openClaims = claimViews.filter((claim) => claim.status === "open");
   const eventIds = new Set<string>();
   for (const claim of snapshot.claims.filter((item) => item.personId === person.id)) {
     if (claim.originatingEventId) eventIds.add(claim.originatingEventId);
   }
   for (const share of snapshot.eventShares.filter((item) => item.personId === person.id)) {
     eventIds.add(share.eventId);
+  }
+  for (const allocation of snapshot.settlementAllocations) {
+    const claim = snapshot.claims.find((item) => item.id === allocation.claimId);
+    if (claim?.personId === person.id) eventIds.add(allocation.eventId);
   }
   const history = listActivity(handles, workspaceId).filter((event) => eventIds.has(event.id));
   return {
@@ -511,6 +537,33 @@ export function personDetail(handles: SqliteHandles, workspaceId: string, person
     hasOpening: Boolean(opening),
     openingEffectiveOn: opening?.effectiveOn ?? null,
     openClaims,
+    claims: claimViews,
     history,
+  };
+}
+
+export function suggestPersonAllocations(
+  handles: SqliteHandles,
+  workspaceId: string,
+  personId: string,
+  amountPaise: number,
+  direction: ClaimDirection,
+) {
+  const snapshot = loadSnapshot(handles, workspaceId);
+  const person = snapshot.people.find((item) => item.id === personId);
+  if (!person) {
+    throw new DomainError("person_not_found", "Person not found");
+  }
+  const claims = suggestableClaimsFor(snapshot, personId, direction);
+  return {
+    allocations: suggestAllocations(claims, paise(amountPaise)),
+    claims: snapshot.claims
+      .filter((claim) => claim.personId === personId && claim.direction === direction && claim.status === "open")
+      .map((claim) => ({
+        id: claim.id,
+        kind: claim.kind,
+        openAmountPaise: claim.openAmountPaise,
+        label: claimLabel(claim, snapshot),
+      })),
   };
 }

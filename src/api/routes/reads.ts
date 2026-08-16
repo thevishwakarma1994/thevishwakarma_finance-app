@@ -11,6 +11,7 @@ import {
   listPeople,
   monthReview,
   personDetail,
+  suggestPersonAllocations,
 } from "../../db/reads.js";
 import type { SqliteHandles } from "../../db/client.js";
 import { isoDate } from "../../domain/calendar/isoDate.js";
@@ -130,6 +131,27 @@ readRoutes.get("/people", (c) => {
 readRoutes.get("/people/:id", (c) => {
   try {
     return c.json(personDetail(c.get("handles"), c.get("workspaceId"), c.req.param("id")));
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+readRoutes.get("/people/:id/suggest-allocations", (c) => {
+  try {
+    const amountPaise = Number(c.req.query("amountPaise") ?? "0");
+    const direction = (c.req.query("direction") === "user_owes_them"
+      ? "user_owes_them"
+      : "they_owe_user") as "they_owe_user" | "user_owes_them";
+    return c.json(
+      suggestPersonAllocations(
+        c.get("handles"),
+        c.get("workspaceId"),
+        c.req.param("id"),
+        Number.isFinite(amountPaise) ? amountPaise : 0,
+        direction,
+      ),
+    );
   } catch (error) {
     const mapped = mapError(error);
     return c.json(mapped.body, mapped.status);

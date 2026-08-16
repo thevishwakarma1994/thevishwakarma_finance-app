@@ -116,7 +116,8 @@ export function mapError(
             error.code === "category_not_found" ||
             error.code === "card_not_found" ||
             error.code === "cycle_not_found" ||
-            error.code === "person_not_found"
+            error.code === "person_not_found" ||
+            error.code === "claim_not_found"
           ? 404
           : 400;
     return { status, body: { error: error.code, message: error.message } };

@@ -223,6 +223,47 @@ export function assertConservation(
       throw new DomainError("conservation_card_payment", "A card payment is not income");
     }
   }
+
+  if (meaning === "settlement_in") {
+    const accountIncrease = accountDeltas(batch);
+    const claimDecrease = paise(-claimPortion(batch));
+    if (accountIncrease !== claimDecrease || accountIncrease <= 0) {
+      throw new DomainError(
+        "conservation_settlement_in",
+        "Account increase must equal confirmed claim reductions",
+      );
+    }
+    if (expenseSum(batch) !== paise(0)) {
+      throw new DomainError("conservation_settlement_in", "A settlement received is not personal spending");
+    }
+    if (incomeSum(batch) !== paise(0)) {
+      throw new DomainError("conservation_settlement_in", "A settlement received is not income");
+    }
+    if (cardDeltas(batch) !== paise(0)) {
+      throw new DomainError("conservation_settlement_in", "Receiving a settlement does not change card liability");
+    }
+    return;
+  }
+
+  if (meaning === "settlement_out") {
+    const accountDecrease = paise(-accountDeltas(batch));
+    const claimDecrease = paise(-claimPortion(batch));
+    if (accountDecrease !== claimDecrease || accountDecrease <= 0) {
+      throw new DomainError(
+        "conservation_settlement_out",
+        "Account decrease must equal confirmed payable claim reductions",
+      );
+    }
+    if (expenseSum(batch) !== paise(0)) {
+      throw new DomainError("conservation_settlement_out", "Paying someone is not personal spending");
+    }
+    if (incomeSum(batch) !== paise(0)) {
+      throw new DomainError("conservation_settlement_out", "Paying someone is not income");
+    }
+    if (cardDeltas(batch) !== paise(0)) {
+      throw new DomainError("conservation_settlement_out", "Paying someone does not change card liability");
+    }
+  }
 }
 
 export function assertBatchConservation(batch: ProposedBatch): void {

@@ -14,8 +14,11 @@ import {
   previewOrCommitIncome,
   previewOrCommitLend,
   previewOrCommitPayCard,
+  previewOrCommitPaySettlement,
+  previewOrCommitReceiveSettlement,
   previewOrCommitSplit,
   previewOrCommitTransfer,
+  fetchSettlementSuggestion,
   type Account,
   type CardListItem,
   type Category,
@@ -24,7 +27,7 @@ import {
   type PersonListItem,
 } from "../apiClient.js";
 
-type Intent = "income" | "expense" | "transfer" | "card_spend" | "pay_card" | "split" | "lend" | "borrow" | null;
+type Intent = "income" | "expense" | "transfer" | "card_spend" | "pay_card" | "split" | "lend" | "borrow" | "settlement_in" | "settlement_out" | null;
 type CardOwnership = "mine" | "theirs" | "split";
 
 type Props = {
@@ -51,6 +54,7 @@ export function Add({ onDone }: Props) {
   const [personShareRows, setPersonShareRows] = useState<{ personId: string; amount: string }[]>([
     { personId: "", amount: "" },
   ]);
+  const [settlementRows, setSettlementRows] = useState<{ claimId: string; label: string; openPaise: number; amount: string }[]>([]);
   const [amount, setAmount] = useState("");
   const [occurredOn, setOccurredOn] = useState<string>(todayKolkata());
   const [kind, setKind] = useState<"salary" | "other">("salary");
@@ -142,6 +146,15 @@ export function Add({ onDone }: Props) {
     }
     if (intent === "borrow") {
       return previewOrCommitBorrow({ occurredOn, accountId, personId, amountPaise, commit });
+    }
+    if (intent === "settlement_in" || intent === "settlement_out") {
+      const allocations = settlementRows
+        .filter((row) => row.claimId && row.amount.trim())
+        .map((row) => ({ claimId: row.claimId, amountPaise: parseInr(row.amount) }));
+      const body = { occurredOn, accountId, personId, amountPaise, allocations, commit };
+      return intent === "settlement_in"
+        ? previewOrCommitReceiveSettlement(body)
+        : previewOrCommitPaySettlement(body);
     }
     if (intent === "split" || (intent === "card_spend" && ownership === "split")) {
       const personShares = personShareRows
@@ -245,6 +258,12 @@ export function Add({ onDone }: Props) {
           <button className="secondary" type="button" onClick={() => setIntent("borrow")}>
             I borrowed money
           </button>
+          <button className="secondary" type="button" onClick={() => setIntent("settlement_in")}>
+            They paid me
+          </button>
+          <button className="secondary" type="button" onClick={() => setIntent("settlement_out")}>
+            I paid them
+          </button>
           <button className="secondary" type="button" onClick={() => setIntent("pay_card")}>
             I paid a card
           </button>
@@ -302,6 +321,10 @@ export function Add({ onDone }: Props) {
                 ? "I lent money"
                 : intent === "borrow"
                   ? "I borrowed money"
+                  : intent === "settlement_in"
+                    ? "They paid me"
+                    : intent === "settlement_out"
+                      ? "I paid them"
                   : "I spent money";
 
   const showSplitFields = intent === "split" || (intent === "card_spend" && ownership === "split");
@@ -464,10 +487,16 @@ export function Add({ onDone }: Props) {
               </button>
             </>
           ) : null}
-          {intent === "lend" || intent === "borrow" ? (
+          {intent === "lend" || intent === "borrow" || intent === "settlement_in" || intent === "settlement_out" ? (
             <label>
               Person
-              <select value={personId} onChange={(event) => setPersonId(event.target.value)}>
+              <select
+                value={personId}
+                onChange={(event) => {
+                  setPersonId(event.target.value);
+                  setSettlementRows([]);
+                }}
+              >
                 {activePeople.map((person) => (
                   <option key={person.id} value={person.id}>
                     {person.name}
@@ -475,6 +504,55 @@ export function Add({ onDone }: Props) {
                 ))}
               </select>
             </label>
+          ) : null}
+          {intent === "settlement_in" || intent === "settlement_out" ? (
+            <>
+              <button
+                className="secondary"
+                type="button"
+                onClick={() => {
+                  if (!personId || !amount.trim()) return;
+                  void fetchSettlementSuggestion(
+                    personId,
+                    parseInr(amount),
+                    intent === "settlement_in" ? "they_owe_user" : "user_owes_them",
+                  )
+                    .then((data) => {
+                      const byId = new Map(data.allocations.map((item) => [item.claimId, item.amountPaise]));
+                      setSettlementRows(
+                        data.claims.map((claim) => ({
+                          claimId: claim.id,
+                          label: claim.label,
+                          openPaise: claim.openAmountPaise,
+                          amount: ((byId.get(claim.id) ?? 0) / 100).toString(),
+                        })),
+                      );
+                    })
+                    .catch((caught: unknown) => {
+                      setError(caught instanceof Error ? caught.message : "Could not suggest allocations");
+                    });
+                }}
+              >
+                Suggest allocation
+              </button>
+              {settlementRows.map((row, index) => (
+                <label key={row.claimId}>
+                  {row.label} (open {(row.openPaise / 100).toFixed(2)})
+                  <input
+                    inputMode="decimal"
+                    value={row.amount}
+                    onChange={(event) => {
+                      const next = [...settlementRows];
+                      const current = next[index];
+                      if (!current) return;
+                      next[index] = { ...current, amount: event.target.value };
+                      setSettlementRows(next);
+                    }}
+                  />
+                </label>
+              ))}
+              <p className="muted">Review which claims this will reduce before continuing.</p>
+            </>
           ) : null}
           {intent === "pay_card" ? (
             <>

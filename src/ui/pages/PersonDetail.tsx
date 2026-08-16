@@ -125,16 +125,19 @@ export function PersonDetail({ personId, onBack }: Props) {
           </button>
         </form>
         <section className="card stack">
-          <p>Open claims</p>
-          {data.openClaims.length === 0 ? <p className="muted">None open.</p> : null}
-          {data.openClaims.map((claim) => (
+          <p>Claims</p>
+          {(data.claims ?? data.openClaims).length === 0 ? <p className="muted">None yet.</p> : null}
+          {(data.claims ?? data.openClaims).map((claim) => (
             <article key={claim.id}>
               <div className="row">
                 <strong>{claimKindLabel(claim.kind)}</strong>
                 <span>{formatInr(paise(claim.openAmountPaise))}</span>
               </div>
               <p className="muted">
-                {claim.direction === "they_owe_user" ? "They owe you" : "You owe them"}
+                {claim.status === "settled" ? "Settled" : "Open"}
+                {claim.direction === "they_owe_user" ? " · They owe you" : " · You owe them"}
+                {` · original ${formatInr(paise(claim.originalAmountPaise))}`}
+                {` · settled ${formatInr(paise(claim.settledAmountPaise ?? claim.originalAmountPaise - claim.openAmountPaise))}`}
                 {claim.originatingMeaning ? ` · ${claim.originatingMeaning.replaceAll("_", " ")}` : ""}
                 {claim.originatingMerchant ? ` · ${claim.originatingMerchant}` : ""}
                 {claim.cardLabel ? ` · ${claim.cardLabel}` : ""}
@@ -143,7 +146,6 @@ export function PersonDetail({ personId, onBack }: Props) {
               </p>
             </article>
           ))}
-          <p className="muted">Settlements come later.</p>
         </section>
         {!data.hasOpening ? (
           <form className="card stack" onSubmit={(event) => void onOpening(event)}>
@@ -183,7 +185,11 @@ export function PersonDetail({ personId, onBack }: Props) {
             <article key={event.id}>
               <div className="row">
                 <strong>
-                  {event.merchant ?? event.meaning.replaceAll("_", " ")}
+                  {event.meaning === "settlement_in"
+                    ? `${event.counterpartyName ?? data.name} paid you`
+                    : event.meaning === "settlement_out"
+                      ? `You paid ${event.counterpartyName ?? data.name}`
+                      : (event.merchant ?? event.meaning.replaceAll("_", " "))}
                 </strong>
                 <span>{formatInr(paise(event.amountPaise))}</span>
               </div>

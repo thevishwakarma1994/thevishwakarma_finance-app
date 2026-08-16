@@ -8,6 +8,8 @@ import { recordCardSpend } from "../../app/recordCardSpend.js";
 import { recordSplit } from "../../app/recordSplit.js";
 import { lendMoney } from "../../app/lendMoney.js";
 import { borrowMoney } from "../../app/borrowMoney.js";
+import { receiveSettlement } from "../../app/receiveSettlement.js";
+import { paySettlement } from "../../app/paySettlement.js";
 import { payCard } from "../../app/payCard.js";
 import { confirmStatement } from "../../app/confirmStatement.js";
 import { createAccount, updateAccount } from "../../app/accounts.js";
@@ -229,6 +231,34 @@ commandRoutes.post("/commands/borrow", async (c) => {
   try {
     const body = (await c.req.json()) as Record<string, unknown>;
     const result = borrowMoney(c.get("handles"), { workspaceId: c.get("workspaceId") }, {
+      ...body,
+      capturedAt: typeof body.capturedAt === "string" ? body.capturedAt : utcNowIso(),
+    });
+    return c.json(result);
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+commandRoutes.post("/commands/receive-settlement", async (c) => {
+  try {
+    const body = (await c.req.json()) as Record<string, unknown>;
+    const result = receiveSettlement(c.get("handles"), { workspaceId: c.get("workspaceId") }, {
+      ...body,
+      capturedAt: typeof body.capturedAt === "string" ? body.capturedAt : utcNowIso(),
+    });
+    return c.json(result);
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+commandRoutes.post("/commands/pay-settlement", async (c) => {
+  try {
+    const body = (await c.req.json()) as Record<string, unknown>;
+    const result = paySettlement(c.get("handles"), { workspaceId: c.get("workspaceId") }, {
       ...body,
       capturedAt: typeof body.capturedAt === "string" ? body.capturedAt : utcNowIso(),
     });

@@ -41,6 +41,12 @@ function titleOf(event: ActivityEvent): string {
   if (event.meaning === "pay_obligation") {
     return `Paid ${formatInr(paise(event.amountPaise))} to ${event.cardLabel ?? "card"}`;
   }
+  if (event.meaning === "settlement_in") {
+    return `${event.counterpartyName ?? "Someone"} paid you ${formatInr(paise(event.amountPaise))}`;
+  }
+  if (event.meaning === "settlement_out") {
+    return `You paid ${event.counterpartyName ?? "someone"} ${formatInr(paise(event.amountPaise))}`;
+  }
   return event.merchant ?? "Spending";
 }
 
@@ -76,7 +82,7 @@ export function Activity() {
         {events.length === 0 ? <p className="muted">No movements yet.</p> : null}
         {events.map((event) => (
           <article
-            className={`card event${event.meaning === "transfer" || event.meaning === "pay_obligation" || event.meaning === "lend" || event.meaning === "borrow" || event.otherOwned ? " event-transfer" : ""}`}
+            className={`card event${event.meaning === "transfer" || event.meaning === "pay_obligation" || event.meaning === "lend" || event.meaning === "borrow" || event.meaning === "settlement_in" || event.meaning === "settlement_out" || event.otherOwned ? " event-transfer" : ""}`}
             key={event.id}
           >
             <div className="row">
@@ -89,7 +95,9 @@ export function Activity() {
                       event.meaning === "pay_obligation" ||
                       event.meaning === "split" ||
                       event.meaning === "lend" ||
-                      event.meaning === "borrow"
+                      event.meaning === "borrow" ||
+                      event.meaning === "settlement_in" ||
+                      event.meaning === "settlement_out"
                     ? event.occurredOn
                     : formatInrDelta(paise(-event.amountPaise))}
               </span>
@@ -101,16 +109,27 @@ export function Activity() {
                   ? `${event.occurredOn}${event.accountName ? ` · ${event.accountName}` : ""}${event.cardLabel ? ` · ${event.cardLabel}` : ""}${event.personalAmountPaise > 0 ? ` · Your share ${formatInr(paise(event.personalAmountPaise))}` : " · Not your spend"}`
                   : event.meaning === "lend" || event.meaning === "borrow"
                     ? `${event.occurredOn}${event.accountName ? ` · ${event.accountName}` : ""} · Not spending`
+                    : event.meaning === "settlement_in" || event.meaning === "settlement_out"
+                      ? `${event.occurredOn}${event.accountName ? ` · ${event.accountName}` : ""} · Not income or spending`
                     : event.meaning === "pay_obligation"
                       ? event.occurredOn
                       : `${event.occurredOn}${event.accountName ? ` · ${event.accountName}` : ""}`}
             </p>
             {event.meaning === "transfer" ? <p className="muted">{event.occurredOn}</p> : null}
+            {event.meaning === "settlement_in" || event.meaning === "settlement_out"
+              ? event.allocations.map((allocation) => (
+                  <p className="muted" key={`${event.id}-${allocation.claimId}`}>
+                    {formatInr(paise(allocation.amountPaise))} → {allocation.label}
+                  </p>
+                ))
+              : null}
             {event.meaning === "spend_card" ||
             event.meaning === "pay_obligation" ||
             event.meaning === "split" ||
             event.meaning === "lend" ||
-            event.meaning === "borrow"
+            event.meaning === "borrow" ||
+            event.meaning === "settlement_in" ||
+            event.meaning === "settlement_out"
               ? null
               : event.categories.map((category) => (
                   <p className="muted" key={`${event.id}-${category.name}`}>

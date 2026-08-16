@@ -17,6 +17,7 @@ import type {
   PersonStatus,
 } from "../domain/ledger/types.js";
 import { isAccountOpeningPayload } from "../domain/ledger/types.js";
+import { enrichClaim } from "../domain/claims/derive.js";
 import {
   accounts,
   billingCycles,
@@ -28,6 +29,7 @@ import {
   openingPositions,
   people,
   postings,
+  settlementAllocations,
 } from "./schema.js";
 import type { SqliteHandles } from "./client.js";
 
@@ -85,6 +87,11 @@ export function loadSnapshot(
     .select()
     .from(eventShares)
     .where(eq(eventShares.workspaceId, workspaceId))
+    .all();
+  const allocationRows = handles.db
+    .select()
+    .from(settlementAllocations)
+    .where(eq(settlementAllocations.workspaceId, workspaceId))
     .all();
 
   const openings: OpeningPosition[] = openingRows.map((row) => {
@@ -191,19 +198,32 @@ export function loadSnapshot(
     ruleSnapshot: parseCardCycleRule(JSON.parse(row.ruleSnapshot)),
   }));
 
-  const ledgerClaims: LedgerClaim[] = claimRows.map((row) => ({
+  const loadedAllocations = allocationRows.map((row) => ({
     id: row.id,
-    personId: row.personId,
-    direction: row.direction as ClaimDirection,
-    kind: row.kind as ClaimKind,
-    originalAmountPaise: paise(row.originalAmountPaise),
-    originatingEventId: row.originatingEventId,
-    openingPositionId: row.openingPositionId,
-    billingCycleId: row.billingCycleId,
-    note: row.note,
-    status: row.status as ClaimStatus,
-    openAmountPaise: paise(row.originalAmountPaise),
+    eventId: row.eventId,
+    claimId: row.claimId,
+    amountPaise: paise(row.amountPaise),
+    createsReservation: row.createsReservation === 1,
+    reservationId: row.reservationId,
   }));
+
+  const ledgerClaims: LedgerClaim[] = claimRows.map((row) =>
+    enrichClaim(
+      {
+        id: row.id,
+        personId: row.personId,
+        direction: row.direction as ClaimDirection,
+        kind: row.kind as ClaimKind,
+        originalAmountPaise: paise(row.originalAmountPaise),
+        originatingEventId: row.originatingEventId,
+        openingPositionId: row.openingPositionId,
+        billingCycleId: row.billingCycleId,
+        note: row.note,
+        status: row.status as ClaimStatus,
+      },
+      loadedAllocations,
+    ),
+  );
 
   return {
     accounts: ledgerAccounts,
@@ -229,6 +249,7 @@ export function loadSnapshot(
       amountPaise: paise(row.amountPaise),
       isUser: row.isUser === 1,
     })),
+    settlementAllocations: loadedAllocations,
     events,
     postings: ledgerPostings,
     openings,

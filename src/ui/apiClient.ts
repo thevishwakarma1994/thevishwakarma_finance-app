@@ -32,7 +32,9 @@ export type ActivityEvent = {
     | "pay_obligation"
     | "split"
     | "lend"
-    | "borrow";
+    | "borrow"
+    | "settlement_in"
+    | "settlement_out";
   occurredOn: string;
   amountPaise: number;
   accountName: string | null;
@@ -46,6 +48,7 @@ export type ActivityEvent = {
   counterpartyName: string | null;
   otherOwned: boolean;
   personalAmountPaise: number;
+  allocations: { claimId: string; amountPaise: number; label: string }[];
 };
 
 export type CardCycleView = {
@@ -130,24 +133,29 @@ export type PersonListItem = {
   group: "they_owe_you" | "you_owe" | "settled";
 };
 
+export type PersonClaim = {
+  id: string;
+  kind: string;
+  direction: string;
+  status: string;
+  originalAmountPaise: number;
+  settledAmountPaise: number;
+  openAmountPaise: number;
+  originatingEventId: string | null;
+  originatingMeaning: string | null;
+  originatingMerchant: string | null;
+  occurredOn: string | null;
+  billingCycleId: string | null;
+  cycleStatementOn: string | null;
+  cardLabel: string | null;
+  note: string | null;
+};
+
 export type PersonDetail = PersonListItem & {
   hasOpening: boolean;
   openingEffectiveOn: string | null;
-  openClaims: {
-    id: string;
-    kind: string;
-    direction: string;
-    originalAmountPaise: number;
-    openAmountPaise: number;
-    originatingEventId: string | null;
-    originatingMeaning: string | null;
-    originatingMerchant: string | null;
-    occurredOn: string | null;
-    billingCycleId: string | null;
-    cycleStatementOn: string | null;
-    cardLabel: string | null;
-    note: string | null;
-  }[];
+  openClaims: PersonClaim[];
+  claims: PersonClaim[];
   history: ActivityEvent[];
 };
 
@@ -511,6 +519,49 @@ export function previewOrCommitBorrow(body: {
   commit: boolean;
 }) {
   return request<CommandResult>("/api/commands/borrow", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function fetchSettlementSuggestion(
+  personId: string,
+  amountPaise: number,
+  direction: "they_owe_user" | "user_owes_them",
+) {
+  const params = new URLSearchParams({
+    amountPaise: String(amountPaise),
+    direction,
+  });
+  return request<{
+    allocations: { claimId: string; amountPaise: number }[];
+    claims: { id: string; kind: string; openAmountPaise: number; label: string }[];
+  }>(`/api/people/${personId}/suggest-allocations?${params.toString()}`);
+}
+
+export function previewOrCommitReceiveSettlement(body: {
+  occurredOn: string;
+  accountId: string;
+  personId: string;
+  amountPaise: number;
+  allocations: { claimId: string; amountPaise: number }[];
+  commit: boolean;
+}) {
+  return request<CommandResult>("/api/commands/receive-settlement", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function previewOrCommitPaySettlement(body: {
+  occurredOn: string;
+  accountId: string;
+  personId: string;
+  amountPaise: number;
+  allocations: { claimId: string; amountPaise: number }[];
+  commit: boolean;
+}) {
+  return request<CommandResult>("/api/commands/pay-settlement", {
     method: "POST",
     body: JSON.stringify(body),
   });

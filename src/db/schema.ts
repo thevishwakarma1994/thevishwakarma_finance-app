@@ -235,6 +235,30 @@ export const eventShares = sqliteTable(
   (table) => [index("event_shares_event").on(table.eventId)],
 );
 
+export const settlementAllocations = sqliteTable(
+  "settlement_allocations",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id),
+    eventId: text("event_id")
+      .notNull()
+      .references(() => financialEvents.id),
+    claimId: text("claim_id")
+      .notNull()
+      .references(() => claims.id),
+    amountPaise: integer("amount_paise").notNull(),
+    createsReservation: integer("creates_reservation").notNull(),
+    reservationId: text("reservation_id"),
+  },
+  (table) => [
+    uniqueIndex("settlement_event_claim").on(table.eventId, table.claimId),
+    index("settlement_allocations_claim").on(table.claimId),
+    index("settlement_allocations_workspace").on(table.workspaceId),
+  ],
+);
+
 export const openingPositions = sqliteTable(
   "opening_positions",
   {
@@ -267,4 +291,5 @@ export const schema = {
   people,
   claims,
   eventShares,
+  settlementAllocations,
 };

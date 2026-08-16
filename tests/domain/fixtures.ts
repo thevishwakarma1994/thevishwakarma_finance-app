@@ -5,6 +5,7 @@ import type {
   CreditCardRecord,
   LedgerAccount,
   LedgerBillingCycle,
+  LedgerClaim,
   LedgerSnapshot,
   PersonRecord,
   ProposedBatch,
@@ -82,6 +83,23 @@ export function personFixture(overrides: Partial<PersonRecord> = {}): PersonReco
   };
 }
 
+export function claimFixture(overrides: Partial<LedgerClaim> = {}): LedgerClaim {
+  const original = overrides.originalAmountPaise ?? paiseOf(2_000);
+  return {
+    id: overrides.id ?? newId(),
+    personId: overrides.personId ?? newId(),
+    direction: overrides.direction ?? "they_owe_user",
+    kind: overrides.kind ?? "direct_loan",
+    originalAmountPaise: original,
+    originatingEventId: overrides.originatingEventId ?? null,
+    openingPositionId: overrides.openingPositionId ?? null,
+    billingCycleId: overrides.billingCycleId ?? null,
+    note: overrides.note ?? null,
+    status: overrides.status ?? "open",
+    openAmountPaise: overrides.openAmountPaise ?? original,
+  };
+}
+
 export function snapshotFixture(overrides: Partial<LedgerSnapshot> = {}): LedgerSnapshot {
   const accounts = overrides.accounts ?? [accountFixture({ balancePaise: paiseOf(50_000) })];
   return {
@@ -95,6 +113,7 @@ export function snapshotFixture(overrides: Partial<LedgerSnapshot> = {}): Ledger
     billingCycles: overrides.billingCycles ?? [],
     claims: overrides.claims ?? [],
     eventShares: overrides.eventShares ?? [],
+    settlementAllocations: overrides.settlementAllocations ?? [],
     events: overrides.events ?? [],
     postings: overrides.postings ?? [],
     openings: overrides.openings ?? [],

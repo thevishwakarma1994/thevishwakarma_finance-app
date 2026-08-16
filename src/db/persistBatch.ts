@@ -1,6 +1,7 @@
 import { utcNowIso } from "../domain/calendar/kolkata.js";
 import { assertBatchConservation } from "../domain/conservation/validate.js";
 import { DomainError, isAccountOpeningPayload, type ProposedBatch } from "../domain/ledger/types.js";
+import { eq } from "drizzle-orm";
 import {
   billingCycles,
   claims,
@@ -8,6 +9,7 @@ import {
   financialEvents,
   openingPositions,
   postings,
+  settlementAllocations,
 } from "./schema.js";
 import type { SqliteHandles } from "./client.js";
 import { withTransaction } from "./tx.js";
@@ -136,6 +138,28 @@ export function persistBatch(
           })),
         )
         .run();
+    }
+
+    const allocations = batch.settlementAllocations ?? [];
+    if (allocations.length > 0) {
+      handles.db
+        .insert(settlementAllocations)
+        .values(
+          allocations.map((allocation) => ({
+            id: allocation.id,
+            workspaceId,
+            eventId: allocation.eventId,
+            claimId: allocation.claimId,
+            amountPaise: allocation.amountPaise,
+            createsReservation: allocation.createsReservation ? 1 : 0,
+            reservationId: allocation.reservationId,
+          })),
+        )
+        .run();
+    }
+
+    for (const patch of batch.claimStatusUpdates ?? []) {
+      handles.db.update(claims).set({ status: patch.status }).where(eq(claims.id, patch.id)).run();
     }
 
     if (batch.postings.length > 0) {

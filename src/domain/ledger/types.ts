@@ -113,6 +113,20 @@ export type EventShare = {
   isUser: boolean;
 };
 
+export type SettlementAllocation = {
+  id: EntityId;
+  eventId: EntityId;
+  claimId: EntityId;
+  amountPaise: Paise;
+  createsReservation: boolean;
+  reservationId: EntityId | null;
+};
+
+export type ClaimStatusUpdate = {
+  id: EntityId;
+  status: ClaimStatus;
+};
+
 export const BILLING_CYCLE_STATUSES = [
   "open",
   "statement_expected",
@@ -231,6 +245,7 @@ export type LedgerSnapshot = {
   billingCycles: LedgerBillingCycle[];
   claims: LedgerClaim[];
   eventShares: EventShare[];
+  settlementAllocations: SettlementAllocation[];
   events: FinancialEvent[];
   postings: Posting[];
   openings: OpeningPosition[];
@@ -261,6 +276,8 @@ export type ProposedBatch = {
   billingCycles?: BillingCycleRecord[];
   claims?: ClaimRecord[];
   eventShares?: EventShare[];
+  settlementAllocations?: SettlementAllocation[];
+  claimStatusUpdates?: ClaimStatusUpdate[];
 };
 
 export class DomainError extends Error {
