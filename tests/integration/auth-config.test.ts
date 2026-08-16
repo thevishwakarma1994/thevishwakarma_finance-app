@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { assertFirebaseAdminConfig } from "../../src/api/auth/firebaseAdmin.js";
+import {
+  assertFirebaseAdminConfig,
+  normalizeFirebasePrivateKey,
+} from "../../src/api/auth/firebaseAdmin.js";
 
 const originalEnv = {
   NODE_ENV: process.env.NODE_ENV,
@@ -44,6 +47,15 @@ describe("Firebase Admin production config", () => {
     delete process.env.FIREBASE_CLIENT_EMAIL;
     delete process.env.FIREBASE_PRIVATE_KEY;
     expect(() => assertFirebaseAdminConfig()).toThrow(/Firebase Admin credentials/);
+  });
+
+  it("normalizes escaped newlines in FIREBASE_PRIVATE_KEY", () => {
+    const normalized = normalizeFirebasePrivateKey(
+      "-----BEGIN PRIVATE KEY-----\\nMII\\n-----END PRIVATE KEY-----\\n",
+    );
+    expect(normalized).toContain("-----BEGIN PRIVATE KEY-----");
+    expect(normalized).toContain("\nMII\n");
+    expect(normalized).not.toContain("\\n");
   });
 
   it("allows production when a service-account path is configured", async () => {

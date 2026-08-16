@@ -7,11 +7,13 @@ import { applyMigrations } from "./db/migrate.js";
 import { describeDatabaseConfig, resolveDatabaseConfig } from "./db/env.js";
 import { createApp } from "./api/app.js";
 import { assertFirebaseAdminConfig } from "./api/auth/firebaseAdmin.js";
+import { isSpaFallbackPath, serverBindHostname } from "./http/listen.js";
 
 assertFirebaseAdminConfig();
 
 const port = Number(process.env.PORT ?? 3000);
 const production = process.env.NODE_ENV === "production";
+const hostname = serverBindHostname();
 const databaseConfig = resolveDatabaseConfig();
 console.log(describeDatabaseConfig(databaseConfig));
 
@@ -23,15 +25,14 @@ const app = createApp(handles);
 if (production) {
   const dist = "dist";
   app.use("/*", async (c, next) => {
-    if (c.req.path.startsWith("/api")) {
+    if (!isSpaFallbackPath(c.req.path)) {
       await next();
       return;
     }
-    await next();
+    return serveStatic({ root: dist })(c, next);
   });
-  app.use("/*", serveStatic({ root: dist }));
   app.get("*", async (c, next) => {
-    if (c.req.path.startsWith("/api")) {
+    if (!isSpaFallbackPath(c.req.path)) {
       await next();
       return;
     }
@@ -40,8 +41,8 @@ if (production) {
   });
 }
 
-const server = serve({ fetch: app.fetch, port, hostname: "127.0.0.1" }, (info) => {
-  console.log(`API listening on http://127.0.0.1:${info.port}`);
+const server = serve({ fetch: app.fetch, port, hostname }, (info) => {
+  console.log(`API listening on port ${info.port}`);
 });
 
 async function shutdown(): Promise<void> {

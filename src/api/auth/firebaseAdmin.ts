@@ -2,13 +2,19 @@ import { initializeApp, cert, getApps, type App, type ServiceAccount } from "fir
 import { getAuth } from "firebase-admin/auth";
 import type { VerifiedIdentity } from "../../app/provisionUser.js";
 
+export function normalizeFirebasePrivateKey(raw: string): string {
+  return raw.replace(/\\n/g, "\n").trim();
+}
+
 function credentialFromEnv() {
   const json = process.env.FIREBASE_SERVICE_ACCOUNT_JSON?.trim();
   if (json) {
     return cert(JSON.parse(json) as ServiceAccount);
   }
   const clientEmail = process.env.FIREBASE_CLIENT_EMAIL?.trim();
-  const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n").trim();
+  const privateKey = process.env.FIREBASE_PRIVATE_KEY
+    ? normalizeFirebasePrivateKey(process.env.FIREBASE_PRIVATE_KEY)
+    : "";
   const projectId = process.env.FIREBASE_PROJECT_ID?.trim();
   if (clientEmail && privateKey && projectId) {
     return cert({ projectId, clientEmail, privateKey });

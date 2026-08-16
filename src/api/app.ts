@@ -30,6 +30,7 @@ export function createApp(
     c.set("verifyIdToken", verifyIdToken);
     await next();
   });
+  app.get("/health", (c) => c.json({ ok: true }));
   app.use(
     "/api/*",
     bodyLimit({

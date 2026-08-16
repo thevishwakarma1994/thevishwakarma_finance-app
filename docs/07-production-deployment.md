@@ -1,6 +1,6 @@
 # Production PostgreSQL persistence
 
-**Status:** Neon production PostgreSQL exists and the Stage 15A schema is applied. SQLite remains the local/dev/test default. Do not deploy to Render in this checkpoint (Stage 15C). Do not enter real financial data.
+**Status:** Neon production PostgreSQL exists and the Stage 15A schema is applied. Render web service configuration is in `render.yaml`. Do not merge to `main`. Do not enter real financial data.
 
 Firebase remains authentication only. Neon is PostgreSQL infrastructure only.
 
@@ -84,7 +84,7 @@ Fresh production initialization:
 2. Export `DATABASE_URL` and production Firebase env on the host
 3. `NODE_ENV=production pnpm db:migrate`
 4. Confirm `schema_migrations` (see below)
-5. Start the Node process only in a later Render checkpoint (`pnpm start` after a UI build)
+5. Start the Node process (`pnpm start` after `pnpm build`). On Render this is the start command; locally export env vars (do not rely on a missing `.env` file).
 
 There is no SQLite→Postgres data copy. There is no production financial data to migrate. PostgreSQL migrations do **not** seed `Development (legacy)` or sample accounts, categories, income, cards, people, obligations, or transactions.
 
@@ -156,4 +156,32 @@ Keep using SQLite for `pnpm dev` and `pnpm test` unless `DATABASE_URL` / `TEST_D
 - One financial command = one database transaction (`src/db/tx.ts` + `persistBatch`)
 - Obligation materialization uses `INSERT ... ON CONFLICT DO NOTHING` against the partial unique index `(workspace_id, template_id, due_on) WHERE template_id IS NOT NULL`
 
-Render deployment, host `DATABASE_URL` on Render, backups, custom domain, and live authenticated smoke tests belong to Stage 15C. Do not enter real financial data in this checkpoint.
+---
+
+## Render web service
+
+Blueprint: `render.yaml` (free Node web service). Same origin: Vite UI and Hono API on one Render hostname.
+
+| | Command |
+|---|---|
+| Build | `pnpm install --frozen-lockfile --prod=false && pnpm build` |
+| Start | `pnpm start` → `NODE_ENV=production tsx src/server.ts` |
+
+`pnpm start` does **not** load a local `.env` file (that file does not exist on Render). Environment comes from the host.
+
+Required Render env (dashboard secrets, never in git):
+
+- `NODE_ENV=production`
+- `DATABASE_URL` — Neon **production** database only. Never `TEST_DATABASE_URL`. Never the `contract-tests` branch.
+- `FIREBASE_PROJECT_ID`
+- `FIREBASE_CLIENT_EMAIL`
+- `FIREBASE_PRIVATE_KEY` — PEM with `\n` for newlines
+- `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_APP_ID`
+- optional: `VITE_FIREBASE_MESSAGING_SENDER_ID`, `VITE_FIREBASE_STORAGE_BUCKET`
+- `APP_ORIGIN` — `https://<service>.onrender.com` (same-origin `Host` matching also works)
+
+Startup: open PostgreSQL → apply/check `drizzle-pg` migrations (idempotent, no legacy seed) → listen on `process.env.PORT` at `0.0.0.0`. SQLite is rejected.
+
+After the hostname exists, add it to Firebase Authentication **Authorized domains**. Keep `localhost`.
+
+Do not set `GOOGLE_APPLICATION_CREDENTIALS` to a laptop file path. Do not log secrets. Custom domain and backups belong to a later checkpoint.
