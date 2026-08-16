@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { isoDate } from "../../src/domain/calendar/isoDate.js";
 import { paise } from "../../src/domain/money/paise.js";
 import { newId } from "../../src/domain/ids.js";
-import { enrichBillingCycle } from "../../src/domain/cycle/lifecycle.js";
+import { enrichBillingCycle, obligationRemainingForSTS, paymentCap } from "../../src/domain/cycle/lifecycle.js";
 import type { BillingCycleRecord, FinancialEvent, Posting } from "../../src/domain/ledger/types.js";
 import { paiseOf } from "./fixtures.js";
 
@@ -94,6 +94,7 @@ describe("cycle remaining derivation", () => {
     expect(enriched.ledgerRemainingPaise).toBe(1_000_000);
     expect(enriched.statementRemainingPaise).toBe(1_050_000);
     expect(enriched.remainingPaise).toBe(1_000_000);
+    expect(enriched.obligationRemainingForSTS).toBe(1_050_000);
     expect(enriched.mismatch).toBe(true);
     expect(enriched.lifecycle).not.toBe("paid");
   });
@@ -113,8 +114,21 @@ describe("cycle remaining derivation", () => {
     );
     expect(enriched.statementRemainingPaise).toBe(0);
     expect(enriched.ledgerRemainingPaise).toBe(50_000);
+    expect(enriched.remainingPaise).toBe(0);
+    expect(enriched.obligationRemainingForSTS).toBe(50_000);
     expect(enriched.mismatch).toBe(true);
     expect(enriched.status).not.toBe("paid");
     expect(enriched.lifecycle).not.toBe("paid");
+  });
+});
+
+describe("payment cap vs STS obligation", () => {
+  it("keeps paymentCap as min and STS obligation as max", () => {
+    expect(paymentCap(paiseOf(10_000), paiseOf(10_500))).toBe(paiseOf(10_000));
+    expect(obligationRemainingForSTS(paiseOf(10_000), paiseOf(10_500))).toBe(paiseOf(10_500));
+    expect(paymentCap(paiseOf(10_000), paiseOf(9_500))).toBe(paiseOf(9_500));
+    expect(obligationRemainingForSTS(paiseOf(10_000), paiseOf(9_500))).toBe(paiseOf(10_000));
+    expect(paymentCap(paiseOf(10_000), paiseOf(10_000))).toBe(paiseOf(10_000));
+    expect(obligationRemainingForSTS(paiseOf(10_000), paiseOf(10_000))).toBe(paiseOf(10_000));
   });
 });

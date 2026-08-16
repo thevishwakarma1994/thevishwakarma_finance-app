@@ -7,6 +7,7 @@ import {
   claims,
   eventShares,
   financialEvents,
+  fundingCycles,
   openingPositions,
   postings,
   reservationLedger,
@@ -259,6 +260,39 @@ export function persistBatch(
           resolvedByEventId: patch.resolvedByEventId,
         })
         .where(eq(surplusCases.id, patch.id))
+        .run();
+    }
+
+    const nextFunding = batch.fundingCycles ?? [];
+    if (nextFunding.length > 0) {
+      handles.db
+        .insert(fundingCycles)
+        .values(
+          nextFunding.map((cycle) => ({
+            id: cycle.id,
+            workspaceId,
+            year: cycle.year,
+            month: cycle.month,
+            expectedWindowStart: cycle.expectedWindowStart,
+            expectedWindowEnd: cycle.expectedWindowEnd,
+            expectedAmountSnapshot: cycle.expectedAmountSnapshot,
+            actualArrivalOn: cycle.actualArrivalOn,
+            actualAmountPaise: cycle.actualAmountPaise,
+            salaryEventId: cycle.salaryEventId,
+          })),
+        )
+        .run();
+    }
+
+    for (const patch of batch.fundingCycleUpdates ?? []) {
+      handles.db
+        .update(fundingCycles)
+        .set({
+          actualArrivalOn: patch.actualArrivalOn,
+          actualAmountPaise: patch.actualAmountPaise,
+          salaryEventId: patch.salaryEventId,
+        })
+        .where(eq(fundingCycles.id, patch.id))
         .run();
     }
 

@@ -32,6 +32,8 @@ import {
   creditCards,
   eventShares,
   financialEvents,
+  fundingCycles,
+  incomePolicies,
   openingPositions,
   people,
   postings,
@@ -41,6 +43,7 @@ import {
   surplusCases,
 } from "./schema.js";
 import type { SqliteHandles } from "./client.js";
+import { loadCardRule } from "./config.js";
 
 export function loadSnapshot(
   handles: SqliteHandles,
@@ -116,6 +119,16 @@ export function loadSnapshot(
     .select()
     .from(surplusCases)
     .where(eq(surplusCases.workspaceId, workspaceId))
+    .all();
+  const policyRows = handles.db
+    .select()
+    .from(incomePolicies)
+    .where(eq(incomePolicies.workspaceId, workspaceId))
+    .all();
+  const fundingRows = handles.db
+    .select()
+    .from(fundingCycles)
+    .where(eq(fundingCycles.workspaceId, workspaceId))
     .all();
 
   const openings: OpeningPosition[] = openingRows.map((row) => {
@@ -322,6 +335,35 @@ export function loadSnapshot(
     events,
     postings: ledgerPostings,
     openings,
+    incomePolicies: policyRows.map((row) => ({
+      id: row.id,
+      expectedAmountPaise: paise(row.expectedAmountPaise),
+      windowStartDay: row.windowStartDay,
+      windowEndDay: row.windowEndDay,
+      typicalDay: row.typicalDay,
+      effectiveFrom: isoDate(row.effectiveFrom),
+      effectiveTo: row.effectiveTo ? isoDate(row.effectiveTo) : null,
+    })),
+    fundingCycles: fundingRows.map((row) => ({
+      id: row.id,
+      year: row.year,
+      month: row.month,
+      expectedWindowStart: isoDate(row.expectedWindowStart),
+      expectedWindowEnd: isoDate(row.expectedWindowEnd),
+      expectedAmountSnapshot: paise(row.expectedAmountSnapshot),
+      actualArrivalOn: row.actualArrivalOn ? isoDate(row.actualArrivalOn) : null,
+      actualAmountPaise: row.actualAmountPaise === null ? null : paise(row.actualAmountPaise),
+      salaryEventId: row.salaryEventId,
+    })),
+    cardRules: cardRows.flatMap((row) => {
+      try {
+        return [{ creditCardId: row.id, rule: loadCardRule(handles, workspaceId, row.id, asOf) }];
+      } catch {
+        return [];
+      }
+    }),
+    extraObligations: [],
+    budgets: [],
   };
 }
 

@@ -267,7 +267,10 @@ export type LedgerBillingCycle = BillingCycleRecord & {
   amountPaidPaise: Paise;
   ledgerRemainingPaise: Paise;
   statementRemainingPaise: Paise;
+  /** payCard payment cap: min(ledgerRemaining, statementRemaining). */
   remainingPaise: Paise;
+  /** STS obligation: max(ledgerRemaining, statementRemaining). */
+  obligationRemainingForSTS: Paise;
   mismatch: boolean;
   status: BillingCycleStatus;
   lifecycle: CycleLifecycle;
@@ -337,6 +340,72 @@ export type LedgerAccount = AccountRecord & {
   balancePaise: Paise;
 };
 
+export const FUNDING_CYCLE_STATUSES = [
+  "upcoming",
+  "window_open_unreceived",
+  "salary_delayed",
+  "active",
+  "closed",
+] as const;
+export type FundingCycleStatus = (typeof FUNDING_CYCLE_STATUSES)[number];
+
+export const OBLIGATION_PRIORITIES = ["must_pay", "committed", "planned"] as const;
+export type ObligationPriority = (typeof OBLIGATION_PRIORITIES)[number];
+
+export type IncomePolicy = {
+  id: EntityId;
+  expectedAmountPaise: Paise;
+  windowStartDay: number;
+  windowEndDay: number;
+  typicalDay: number | null;
+  effectiveFrom: IsoDate;
+  effectiveTo: IsoDate | null;
+};
+
+export type FundingCycleRecord = {
+  id: EntityId;
+  year: number;
+  month: number;
+  expectedWindowStart: IsoDate;
+  expectedWindowEnd: IsoDate;
+  expectedAmountSnapshot: Paise;
+  actualArrivalOn: IsoDate | null;
+  actualAmountPaise: Paise | null;
+  salaryEventId: EntityId | null;
+};
+
+export type LedgerFundingCycle = FundingCycleRecord & {
+  status: FundingCycleStatus;
+};
+
+export type CardRuleBinding = {
+  creditCardId: EntityId;
+  rule: CardCycleRule;
+};
+
+export type ExtraObligation = {
+  id: EntityId;
+  name: string;
+  dueOn: IsoDate;
+  remainingPaise: Paise;
+  reservedPaise: Paise;
+  priority: ObligationPriority;
+};
+
+export type BudgetRecord = {
+  categoryId: EntityId;
+  calendarYear: number;
+  calendarMonth: number;
+  amountPaise: Paise;
+};
+
+export type FundingCycleUpdate = {
+  id: EntityId;
+  actualArrivalOn: IsoDate;
+  actualAmountPaise: Paise;
+  salaryEventId: EntityId;
+};
+
 export type LedgerSnapshot = {
   accounts: LedgerAccount[];
   categories: CategoryRecord[];
@@ -352,6 +421,11 @@ export type LedgerSnapshot = {
   events: FinancialEvent[];
   postings: Posting[];
   openings: OpeningPosition[];
+  incomePolicies: IncomePolicy[];
+  fundingCycles: FundingCycleRecord[];
+  cardRules: CardRuleBinding[];
+  extraObligations: ExtraObligation[];
+  budgets: BudgetRecord[];
 };
 
 export type ConsequenceEffect = {
@@ -386,6 +460,8 @@ export type ProposedBatch = {
   reservationUpdates?: ReservationMutation[];
   surplusCases?: SurplusCaseRecord[];
   surplusCaseUpdates?: SurplusCaseUpdate[];
+  fundingCycles?: FundingCycleRecord[];
+  fundingCycleUpdates?: FundingCycleUpdate[];
 };
 
 export class DomainError extends Error {

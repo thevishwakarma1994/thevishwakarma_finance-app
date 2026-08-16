@@ -44,7 +44,9 @@ export {
   enrichBillingCycles,
   formatCardLabel,
   ledgerRemaining,
+  obligationRemainingForSTS,
   payablePaise,
+  paymentCap,
   remainingToIssuer,
   statementRemaining,
 } from "./cycle/lifecycle.js";
@@ -67,3 +69,11 @@ export { suggestAllocations, type SuggestableClaim, type SuggestedAllocation } f
 export { payCard, type PayCardInput } from "./commands/payCard.js";
 export { personPosition, type PersonPosition } from "./people/position.js";
 export { accountAvailability, requireAvailable } from "./engine/liquidity.js";
+export { evaluateSafeToSpend, inThisNumberTotal } from "./engine/evaluateSafeToSpend.js";
+export { simulateAffordability } from "./engine/simulateAffordability.js";
+export type {
+  AffordabilityProposal,
+  AffordabilityResult,
+  ExplanationItem,
+  SafeToSpendSnapshot,
+} from "./engine/types.js";

@@ -69,8 +69,19 @@ export function statementRemaining(
   return paise(billed - amountPaidPaise);
 }
 
+/** payCard() payment cap: never pay more than both ledger and statement still show. */
 export function payablePaise(ledgerRemainingPaise: Paise, statementRemainingPaise: Paise): Paise {
   return paise(Math.min(ledgerRemainingPaise, statementRemainingPaise));
+}
+
+export const paymentCap = payablePaise;
+
+/** Conservative remaining for Safe-to-Spend when ledger and statement disagree. */
+export function obligationRemainingForSTS(
+  ledgerRemainingPaise: Paise,
+  statementRemainingPaise: Paise,
+): Paise {
+  return paise(Math.max(ledgerRemainingPaise, statementRemainingPaise));
 }
 
 export function remainingToIssuer(
@@ -164,7 +175,11 @@ export function enrichBillingCycle(
   const mismatch =
     cycle.actualStatementAmountPaise !== null &&
     cycle.actualStatementAmountPaise !== expectedAmountPaise;
-  const remainingPaise = payablePaise(ledgerRemainingPaise, statementRemainingPaise);
+  const remainingPaise = paymentCap(ledgerRemainingPaise, statementRemainingPaise);
+  const obligationRemainingForSTSPaise = obligationRemainingForSTS(
+    ledgerRemainingPaise,
+    statementRemainingPaise,
+  );
   const status = deriveCycleStatus(
     cycle,
     {
@@ -183,6 +198,7 @@ export function enrichBillingCycle(
     ledgerRemainingPaise,
     statementRemainingPaise,
     remainingPaise,
+    obligationRemainingForSTS: obligationRemainingForSTSPaise,
     mismatch,
     status,
     lifecycle: deriveCycleLifecycle(status, {

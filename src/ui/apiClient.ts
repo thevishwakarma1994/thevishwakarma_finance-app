@@ -629,3 +629,64 @@ export function previewOrCommitResolveSurplus(body: {
     body: JSON.stringify(body),
   });
 }
+
+export type HomeView = {
+  asOf: string;
+  currentCycleSafeToSpend: number;
+  liquidTotal: number;
+  reservedTotal: number;
+  availableLiquid: number;
+  includedObligationsTotal: number;
+  salaryStatus: string | null;
+  salaryWindowStart: string | null;
+  salaryWindowEnd: string | null;
+  expectedSalaryPaise: number;
+  delayed: boolean;
+  incomePolicyConfigured: boolean;
+  riskFlags: string[];
+  explanationItems: {
+    group: string;
+    label: string;
+    amountPaise: number;
+    sign: number;
+    uncertainWindow: boolean;
+  }[];
+  coming: ComingCardPayment[];
+  monthSpentPaise: number;
+  previousMonthSpentPaise: number;
+  people: PersonListItem[];
+  accounts: { accountId: string; balancePaise: number; reservedActivePaise: number; pendingSurplusHeldPaise: number; availablePaise: number }[];
+};
+
+export function fetchHome(asOf?: string) {
+  const query = asOf ? `?asOf=${asOf}` : "";
+  return request<HomeView>(`/api/home${query}`);
+}
+
+export type AffordabilityView = {
+  currentBufferAfter: number;
+  baseline: { currentCycleSafeToSpend: number };
+  afterCurrent: { currentCycleSafeToSpend: number };
+  worstProjectedSafeToSpend: number;
+  worstCycleId: string | null;
+  cycleProjections: {
+    fundingCycleId: string;
+    year: number;
+    month: number;
+    expectedIncome: number;
+    projectedSafeToSpend: number;
+  }[];
+  conclusion: { code: "blocked" | "tight" | "comfortable"; reasons: string[] };
+};
+
+export function simulateAffordability(body: {
+  amountPaise: number;
+  occurredOn?: string;
+  funding: { accountId: string } | { creditCardId: string };
+  categoryId?: string;
+}) {
+  return request<AffordabilityView>("/api/commands/simulate-affordability", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}

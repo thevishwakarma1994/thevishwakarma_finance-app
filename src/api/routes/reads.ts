@@ -4,6 +4,7 @@ import {
   comingCardPayments,
   currentMonthSpend,
   cycleDetail,
+  home,
   listAccounts,
   listActivity,
   listCards,
@@ -162,6 +163,16 @@ readRoutes.get("/people/:id/suggest-allocations", (c) => {
 readRoutes.get("/surplus", (c) => {
   try {
     return c.json({ items: listPendingSurplus(c.get("handles"), c.get("workspaceId")) });
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+readRoutes.get("/home", (c) => {
+  try {
+    const asOf = c.req.query("asOf");
+    return c.json(home(c.get("handles"), c.get("workspaceId"), asOf ? isoDate(asOf) : undefined));
   } catch (error) {
     const mapped = mapError(error);
     return c.json(mapped.body, mapped.status);

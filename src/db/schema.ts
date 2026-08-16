@@ -358,6 +358,45 @@ export const openingPositions = sqliteTable(
   ],
 );
 
+export const incomePolicies = sqliteTable(
+  "income_policies",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id),
+    expectedAmountPaise: integer("expected_amount_paise").notNull(),
+    windowStartDay: integer("window_start_day").notNull(),
+    windowEndDay: integer("window_end_day").notNull(),
+    typicalDay: integer("typical_day"),
+    effectiveFrom: text("effective_from").notNull(),
+    effectiveTo: text("effective_to"),
+  },
+  (table) => [index("income_policies_workspace_from").on(table.workspaceId, table.effectiveFrom)],
+);
+
+export const fundingCycles = sqliteTable(
+  "funding_cycles",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id),
+    year: integer("year").notNull(),
+    month: integer("month").notNull(),
+    expectedWindowStart: text("expected_window_start").notNull(),
+    expectedWindowEnd: text("expected_window_end").notNull(),
+    expectedAmountSnapshot: integer("expected_amount_snapshot").notNull(),
+    actualArrivalOn: text("actual_arrival_on"),
+    actualAmountPaise: integer("actual_amount_paise"),
+    salaryEventId: text("salary_event_id").references(() => financialEvents.id),
+  },
+  (table) => [
+    uniqueIndex("funding_cycles_workspace_year_month").on(table.workspaceId, table.year, table.month),
+    index("funding_cycles_workspace_window").on(table.workspaceId, table.expectedWindowStart),
+  ],
+);
+
 export const schema = {
   workspaces,
   sessions,
@@ -376,4 +415,6 @@ export const schema = {
   reservations,
   reservationLedger,
   surplusCases,
+  incomePolicies,
+  fundingCycles,
 };

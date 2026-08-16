@@ -23,7 +23,8 @@ export function recordIncome(
   raw: unknown,
 ) {
   const input = inputSchema.parse(raw);
-  const snapshot = loadSnapshot(handles, context.workspaceId);
+  const occurredOn = isoDate(input.occurredOn);
+  const snapshot = loadSnapshot(handles, context.workspaceId, occurredOn);
   const result = recordIncomeDomain(
     {
       occurredOn: isoDate(input.occurredOn),

@@ -12,6 +12,7 @@ import { personPosition } from "../domain/people/position.js";
 import { suggestAllocations, suggestableClaimsFor } from "../domain/commands/suggestAllocations.js";
 import { claimLabel } from "../domain/commands/settle.js";
 import { accountAvailability } from "../domain/engine/liquidity.js";
+import { evaluateSafeToSpend } from "../domain/engine/evaluateSafeToSpend.js";
 import { reservedTowardCycle } from "../domain/reservations/derive.js";
 import { cycleCardLabel } from "../domain/reservations/create.js";
 import { loadSnapshot } from "./loadSnapshot.js";
@@ -744,4 +745,42 @@ export function listPendingSurplus(handles: SqliteHandles, workspaceId: string) 
         ],
       };
     });
+}
+
+export function home(handles: SqliteHandles, workspaceId: string, asOf = todayKolkata()) {
+  const snapshot = loadSnapshot(handles, workspaceId, asOf);
+  const sts = evaluateSafeToSpend(snapshot, asOf);
+  const month = currentMonthSpend(handles, workspaceId, asOf);
+  const previous = currentMonthSpend(handles, workspaceId, kolkataAddMonths(asOf, -1));
+  const people = listPeople(handles, workspaceId)
+    .filter((person) => person.netPaise !== 0)
+    .sort((left, right) => Math.abs(right.netPaise) - Math.abs(left.netPaise))
+    .slice(0, 2);
+  const coming = comingCardPayments(handles, workspaceId, asOf).slice(0, 5);
+  const next = sts.fundingCycles.find((cycle) => cycle.id === sts.nextFundingCycleId);
+  const active = sts.fundingCycles.find((cycle) => cycle.id === sts.activeFundingCycleId);
+  return {
+    asOf,
+    currentCycleSafeToSpend: sts.currentCycleSafeToSpend,
+    liquidTotal: sts.liquidTotal,
+    reservedTotal: sts.reservedTotal,
+    availableLiquid: sts.availableLiquid,
+    includedObligationsTotal: sts.includedObligationsTotal,
+    salaryStatus: next?.status ?? active?.status ?? null,
+    salaryWindowStart: sts.nextExpectedIncomeWindow.start,
+    salaryWindowEnd: sts.nextExpectedIncomeWindow.end,
+    expectedSalaryPaise: sts.nextExpectedIncomeWindow.expectedAmount,
+    delayed: sts.delayedFundingCycleIds.length > 0,
+    incomePolicyConfigured: sts.incomePolicyConfigured,
+    riskFlags: sts.riskFlags,
+    explanationItems: sts.explanationItems,
+    includedObligations: sts.includedObligations,
+    excludedFutureObligations: sts.excludedFutureObligations,
+    coming,
+    monthSpentPaise: month.spentPaise,
+    previousMonthSpentPaise: previous.spentPaise,
+    people,
+    accounts: sts.accounts,
+    fundingCycles: sts.fundingCycles,
+  };
 }

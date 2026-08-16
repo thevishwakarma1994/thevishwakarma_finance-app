@@ -4,14 +4,17 @@ import { newId } from "../ids.js";
 import { assertConservation } from "../conservation/validate.js";
 import type { IsoDate } from "../calendar/isoDate.js";
 import type { Paise } from "../money/paise.js";
+import { isoDateParts } from "../calendar/isoDate.js";
 import {
   DomainError,
   type ConsequencePreview,
   type FinancialEvent,
+  type FundingCycleRecord,
   type LedgerSnapshot,
   type Posting,
   type ProposedBatch,
 } from "../ledger/types.js";
+import { buildFundingCycle, policyAsOf } from "../funding/cycles.js";
 
 export type RecordIncomeInput = {
   occurredOn: IsoDate;
@@ -36,6 +39,43 @@ export function recordIncome(
 
   const eventId = newId();
   const pnl = input.kind === "salary" ? "income_salary" : "income_other";
+  let fundingCycleId: string | null = null;
+  let fundingCycles: FundingCycleRecord[] | undefined;
+  let fundingCycleUpdates: ProposedBatch["fundingCycleUpdates"];
+
+  if (input.kind === "salary") {
+    const parts = isoDateParts(input.occurredOn);
+    const existing = snapshot.fundingCycles.find(
+      (cycle) => cycle.year === parts.year && cycle.month === parts.month,
+    );
+    if (existing?.salaryEventId) {
+      throw new DomainError("duplicate_salary", "This salary period already has a salary event");
+    }
+    const policy = policyAsOf(snapshot.incomePolicies, input.occurredOn);
+    if (existing) {
+      fundingCycleId = existing.id;
+      fundingCycleUpdates = [
+        {
+          id: existing.id,
+          actualArrivalOn: input.occurredOn,
+          actualAmountPaise: input.amountPaise,
+          salaryEventId: eventId,
+        },
+      ];
+    } else if (policy) {
+      const cycle = buildFundingCycle(policy, parts.year, parts.month);
+      fundingCycleId = cycle.id;
+      fundingCycles = [
+        {
+          ...cycle,
+          actualArrivalOn: input.occurredOn,
+          actualAmountPaise: input.amountPaise,
+          salaryEventId: eventId,
+        },
+      ];
+    }
+  }
+
   const event: FinancialEvent = {
     id: eventId,
     meaning: "income",
@@ -46,7 +86,7 @@ export function recordIncome(
     creditCardId: null,
     loanId: null,
     billingCycleId: null,
-    fundingCycleId: null,
+    fundingCycleId,
     categoryId: null,
     channel: null,
     merchant: null,
@@ -81,7 +121,13 @@ export function recordIncome(
     },
   ];
 
-  const batch: ProposedBatch = { events: [event], postings, openings: [] };
+  const batch: ProposedBatch = {
+    events: [event],
+    postings,
+    openings: [],
+    fundingCycles,
+    fundingCycleUpdates,
+  };
   assertConservation("income", batch);
 
   const incomeLabel = input.kind === "salary" ? "Salary income" : "Other income";

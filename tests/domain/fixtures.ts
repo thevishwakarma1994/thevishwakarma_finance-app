@@ -3,6 +3,7 @@ import { newId } from "../../src/domain/ids.js";
 import { isoDate } from "../../src/domain/calendar/isoDate.js";
 import type {
   CreditCardRecord,
+  IncomePolicy,
   LedgerAccount,
   LedgerBillingCycle,
   LedgerClaim,
@@ -45,13 +46,24 @@ export function cardFixture(overrides: Partial<CreditCardRecord> = {}): CreditCa
 }
 
 export function cycleFixture(overrides: Partial<LedgerBillingCycle> = {}): LedgerBillingCycle {
-  const expected = overrides.expectedAmountPaise ?? paise(0);
   const paid = overrides.amountPaidPaise ?? paise(0);
-  const ledgerRemainingPaise = overrides.ledgerRemainingPaise ?? paise(expected - paid);
-  const statementRemainingPaise =
-    overrides.statementRemainingPaise ??
-    paise((overrides.actualStatementAmountPaise ?? expected) - paid);
-  const remaining = overrides.remainingPaise ?? paise(Math.min(ledgerRemainingPaise, statementRemainingPaise));
+  const expected = overrides.expectedAmountPaise ?? paise(0);
+  const remainingHint = overrides.remainingPaise;
+  const derivedLedger =
+    overrides.expectedAmountPaise !== undefined || overrides.amountPaidPaise !== undefined
+      ? paise(expected - paid)
+      : (remainingHint ?? paise(0));
+  const derivedStatement =
+    overrides.actualStatementAmountPaise !== undefined || overrides.expectedAmountPaise !== undefined
+      ? paise((overrides.actualStatementAmountPaise ?? expected) - paid)
+      : (remainingHint ?? paise(0));
+  const ledgerRemainingPaise = overrides.ledgerRemainingPaise ?? derivedLedger;
+  const statementRemainingPaise = overrides.statementRemainingPaise ?? derivedStatement;
+  const remaining =
+    overrides.remainingPaise ?? paise(Math.min(ledgerRemainingPaise, statementRemainingPaise));
+  const obligationRemainingForSTS =
+    overrides.obligationRemainingForSTS ??
+    paise(Math.max(ledgerRemainingPaise, statementRemainingPaise));
   return {
     id: overrides.id ?? newId(),
     creditCardId: overrides.creditCardId ?? newId(),
@@ -68,6 +80,7 @@ export function cycleFixture(overrides: Partial<LedgerBillingCycle> = {}): Ledge
     ledgerRemainingPaise,
     statementRemainingPaise,
     remainingPaise: remaining,
+    obligationRemainingForSTS,
     mismatch: overrides.mismatch ?? false,
     status: overrides.status ?? "open",
     lifecycle: overrides.lifecycle ?? "accumulating",
@@ -100,6 +113,63 @@ export function claimFixture(overrides: Partial<LedgerClaim> = {}): LedgerClaim 
   };
 }
 
+export function incomePolicyFixture(overrides: Partial<IncomePolicy> = {}): IncomePolicy {
+  return {
+    id: overrides.id ?? "policy-default",
+    expectedAmountPaise: overrides.expectedAmountPaise ?? paiseOf(79_200),
+    windowStartDay: overrides.windowStartDay ?? 4,
+    windowEndDay: overrides.windowEndDay ?? 8,
+    typicalDay: overrides.typicalDay ?? 5,
+    effectiveFrom: overrides.effectiveFrom ?? isoDate("2020-01-01"),
+    effectiveTo: overrides.effectiveTo ?? null,
+  };
+}
+
+export function fundingCycleFixture(
+  overrides: Partial<LedgerSnapshot["fundingCycles"][number]> = {},
+): LedgerSnapshot["fundingCycles"][number] {
+  const year = overrides.year ?? 2026;
+  const month = overrides.month ?? 8;
+  return {
+    id: overrides.id ?? `fc-${year}-${String(month).padStart(2, "0")}`,
+    year,
+    month,
+    expectedWindowStart: overrides.expectedWindowStart ?? isoDate(`${year}-${String(month).padStart(2, "0")}-04`),
+    expectedWindowEnd: overrides.expectedWindowEnd ?? isoDate(`${year}-${String(month).padStart(2, "0")}-08`),
+    expectedAmountSnapshot: overrides.expectedAmountSnapshot ?? paiseOf(79_200),
+    actualArrivalOn: overrides.actualArrivalOn ?? null,
+    actualAmountPaise: overrides.actualAmountPaise ?? null,
+    salaryEventId: overrides.salaryEventId ?? null,
+  };
+}
+
+export function reservationFixture(
+  overrides: Partial<LedgerSnapshot["reservations"][number]> = {},
+): LedgerSnapshot["reservations"][number] {
+  const original = overrides.amountOriginalPaise ?? paiseOf(10_000);
+  const consumed = overrides.amountConsumedPaise ?? paise(0);
+  const released = overrides.amountReleasedPaise ?? paise(0);
+  const reassigned = overrides.amountReassignedPaise ?? paise(0);
+  const surplusHeld = overrides.amountSurplusHeldPaise ?? paise(0);
+  const remaining =
+    overrides.remainingPaise ?? paise(original - consumed - released - reassigned - surplusHeld);
+  return {
+    id: overrides.id ?? newId(),
+    sourceAccountId: overrides.sourceAccountId ?? newId(),
+    amountOriginalPaise: original,
+    amountConsumedPaise: consumed,
+    amountReleasedPaise: released,
+    amountReassignedPaise: reassigned,
+    amountSurplusHeldPaise: surplusHeld,
+    status: overrides.status ?? "active",
+    obligationRef: overrides.obligationRef ?? { type: "billing_cycle", id: newId() },
+    originatingEventId: overrides.originatingEventId ?? null,
+    originatingClaimId: overrides.originatingClaimId ?? null,
+    createdOn: overrides.createdOn ?? isoDate("2026-08-16"),
+    remainingPaise: remaining,
+  };
+}
+
 export function snapshotFixture(overrides: Partial<LedgerSnapshot> = {}): LedgerSnapshot {
   const accounts = overrides.accounts ?? [accountFixture({ balancePaise: paiseOf(50_000) })];
   return {
@@ -120,6 +190,11 @@ export function snapshotFixture(overrides: Partial<LedgerSnapshot> = {}): Ledger
     events: overrides.events ?? [],
     postings: overrides.postings ?? [],
     openings: overrides.openings ?? [],
+    incomePolicies: overrides.incomePolicies ?? [incomePolicyFixture()],
+    fundingCycles: overrides.fundingCycles ?? [],
+    cardRules: overrides.cardRules ?? [],
+    extraObligations: overrides.extraObligations ?? [],
+    budgets: overrides.budgets ?? [],
   };
 }
 
