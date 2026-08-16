@@ -23,7 +23,9 @@ import { eq } from "drizzle-orm";
 import { schema } from "../../src/db/pg/schema.js";
 
 const postgresUrl = process.env.TEST_DATABASE_URL?.trim() ?? "";
-const describePg = postgresUrl ? describe : describe.skip;
+const describePg = postgresUrl ? describe.sequential : describe.skip;
+/** Remote Neon round-trips exceed Vitest's 5s default. Not a financial-behavior change. */
+const pgTimeoutMs = 120_000;
 
 const verifyIdToken: VerifyIdToken = async (token) => {
   if (token === "invalid") throw new Error("rejected");
@@ -53,7 +55,7 @@ async function json<T>(response: Response): Promise<T> {
   return (await response.json()) as T;
 }
 
-describePg("Stage 15 PostgreSQL persistence contract", () => {
+describePg("Stage 15 PostgreSQL persistence contract", { timeout: pgTimeoutMs }, () => {
   let handles: PostgresHandles;
   let app: ReturnType<typeof createApp>;
 
@@ -61,15 +63,15 @@ describePg("Stage 15 PostgreSQL persistence contract", () => {
     handles = openPostgresDatabase(postgresUrl);
     await applyPostgresMigrations(handles);
     app = createApp(handles, { verifyIdToken });
-  });
+  }, pgTimeoutMs);
 
   beforeEach(async () => {
     await truncatePostgresData(handles);
-  });
+  }, pgTimeoutMs);
 
   afterAll(async () => {
     await closeDatabase(handles);
-  });
+  }, pgTimeoutMs);
 
   async function provision(token: string) {
     const response = await api(app, token, "/api/me");

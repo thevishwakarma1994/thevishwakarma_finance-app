@@ -1,6 +1,6 @@
-# Stage 15A — Production PostgreSQL persistence
+# Production PostgreSQL persistence
 
-**Status:** PostgreSQL is the production database. SQLite remains the local/dev/test default until Stage 15B deployment. Do not deploy in this checkpoint.
+**Status:** Neon production PostgreSQL exists and the Stage 15A schema is applied. SQLite remains the local/dev/test default. Do not deploy to Render in this checkpoint (Stage 15C). Do not enter real financial data.
 
 Firebase remains authentication only. Neon is PostgreSQL infrastructure only.
 
@@ -28,17 +28,21 @@ Do not add `if (postgres)` / `if (sqlite)` in domain, app, API, or UI.
 
 ---
 
-## PostgreSQL setup (Neon)
+## Neon production database
 
-1. Create a Neon project. Copy the pooled or direct connection string.
-2. Put it in the host environment as `DATABASE_URL`. Never commit it.
-3. Use `sslmode=require` (Neon URLs already include this).
+The production database is a Neon PostgreSQL instance. It has been created and migrated with `drizzle-pg/0000_init.sql`.
+
+Keep the real connection string only in host/environment configuration (`DATABASE_URL`). Do not put production `DATABASE_URL` in local `.env` while developing against SQLite (`pnpm dev` would then write to production).
+
+Never commit, log, or paste the connection string into docs.
 
 Placeholder only:
 
 ```
 DATABASE_URL=postgresql://USER:PASSWORD@HOST/DB?sslmode=require
 ```
+
+SSL is taken from the connection string (`sslmode=require` on Neon URLs). Do not hard-code sslmode or credentials.
 
 ---
 
@@ -66,14 +70,54 @@ Runs `src/db/migrate.ts`, which selects the backend from env:
 - SQLite: applies `drizzle/*.sql` in order, then seeds `Development (legacy)` for local compatibility
 - PostgreSQL: applies `drizzle-pg/*.sql` against an empty database. **No legacy seed.** First Firebase user still gets an empty Personal workspace.
 
+Production migrate requires `DATABASE_URL` already in the process environment (shell export or host secret). Do not add it to local `.env` for SQLite development.
+
+```
+NODE_ENV=production pnpm db:migrate
+```
+
+`pnpm db:migrate` loads `.env` for other vars; an exported `DATABASE_URL` takes precedence. Re-running the command is idempotent: no schema changes, no duplicate tables, no duplicate `schema_migrations` row, checksum stays valid.
+
 Fresh production initialization:
 
-1. Empty Neon database
-2. Set `DATABASE_URL` and production Firebase env
-3. `pnpm db:migrate`
-4. Start the Node process (`pnpm start` after a UI build)
+1. Empty Neon production database (no unexpected tables or financial rows)
+2. Export `DATABASE_URL` and production Firebase env on the host
+3. `NODE_ENV=production pnpm db:migrate`
+4. Confirm `schema_migrations` (see below)
+5. Start the Node process only in a later Render checkpoint (`pnpm start` after a UI build)
 
-There is no SQLite→Postgres data copy in this stage. There is no production financial data to migrate.
+There is no SQLite→Postgres data copy. There is no production financial data to migrate. PostgreSQL migrations do **not** seed `Development (legacy)` or sample accounts, categories, income, cards, people, obligations, or transactions.
+
+---
+
+## Verify migration status
+
+Using a SQL client and the host-environment URL (do not echo it):
+
+```sql
+SELECT filename, checksum, applied_at FROM schema_migrations;
+```
+
+Expect one row: `0000_init.sql`, SHA-256 checksum (64 hex characters), `applied_at` set.
+
+```sql
+SELECT COUNT(*) FROM users;
+SELECT COUNT(*) FROM workspaces;
+SELECT COUNT(*) FROM financial_events;
+SELECT COUNT(*) FROM workspaces WHERE name = 'Development (legacy)';
+```
+
+Expect `0` until a real authenticated request provisions a user. Production must stay empty of users/workspaces until later deployment smoke testing.
+
+---
+
+## PostgreSQL contract tests (isolated target)
+
+`tests/integration/stage15-postgres.test.ts` runs only when `TEST_DATABASE_URL` is set. It inserts fixtures and truncates data tables (not `schema_migrations`).
+
+**Never point `TEST_DATABASE_URL` at the production database.** Use a separate Neon database or branch (schema-only or a copy parented on production). Test cleanup must not drop production objects.
+
+Local `pnpm test` without `TEST_DATABASE_URL` stays on SQLite. The PostgreSQL file uses a longer Vitest timeout so remote Neon round-trips can finish; that is latency, not a financial-behavior change.
 
 ---
 
@@ -112,4 +156,4 @@ Keep using SQLite for `pnpm dev` and `pnpm test` unless `DATABASE_URL` / `TEST_D
 - One financial command = one database transaction (`src/db/tx.ts` + `persistBatch`)
 - Obligation materialization uses `INSERT ... ON CONFLICT DO NOTHING` against the partial unique index `(workspace_id, template_id, due_on) WHERE template_id IS NOT NULL`
 
-Render, backups, custom domain, and live Neon data entry belong to Stage 15B.
+Render deployment, host `DATABASE_URL` on Render, backups, custom domain, and live authenticated smoke tests belong to Stage 15C. Do not enter real financial data in this checkpoint.

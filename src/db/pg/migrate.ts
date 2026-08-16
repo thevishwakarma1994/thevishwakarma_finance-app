@@ -146,5 +146,11 @@ const DATA_TABLES = [
 
 /** Test helper: empty financial/auth tables while keeping schema_migrations. */
 export async function truncatePostgresData(handles: PostgresHandles): Promise<void> {
-  await handles.pool.query(`TRUNCATE TABLE ${DATA_TABLES.join(", ")} CASCADE`);
+  const client = await handles.pool.connect();
+  try {
+    await client.query("SET lock_timeout = '20s'");
+    await client.query(`TRUNCATE TABLE ${DATA_TABLES.join(", ")} CASCADE`);
+  } finally {
+    client.release();
+  }
 }
