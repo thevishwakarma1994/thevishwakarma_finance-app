@@ -1,19 +1,19 @@
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
 import { defineConfig } from "vite";
+import { webAppManifest } from "./src/pwa/webManifest.js";
 
 export default defineConfig({
   plugins: [
     react(),
     VitePWA({
       registerType: "autoUpdate",
-      manifest: {
-        name: "Finance",
-        short_name: "Finance",
-        display: "standalone",
-        start_url: "/",
-        background_color: "#f6f4f0",
-        theme_color: "#1c1917",
+      includeAssets: ["icons/*.png"],
+      manifest: webAppManifest,
+      workbox: {
+        navigateFallback: "index.html",
+        navigateFallbackDenylist: [/^\/api(?:\/|$)/, /^\/health$/],
+        globPatterns: ["**/*.{js,css,html,svg,png,ico,webmanifest}"],
       },
     }),
   ],

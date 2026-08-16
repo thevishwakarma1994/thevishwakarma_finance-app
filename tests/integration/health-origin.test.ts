@@ -23,7 +23,7 @@ describe("production HTTP bind and SPA fallback", () => {
     expect(serverBindHostname({ NODE_ENV: "development" })).toBe("127.0.0.1");
   });
 
-  it("does not serve SPA HTML for API or health", () => {
+  it("does not serve SPA HTML for API, health, or PWA static assets", () => {
     expect(isSpaFallbackPath("/")).toBe(true);
     expect(isSpaFallbackPath("/activity")).toBe(true);
     expect(isSpaFallbackPath("/people")).toBe(true);
@@ -31,6 +31,11 @@ describe("production HTTP bind and SPA fallback", () => {
     expect(isSpaFallbackPath("/coming-up")).toBe(true);
     expect(isSpaFallbackPath("/health")).toBe(false);
     expect(isSpaFallbackPath("/api/me")).toBe(false);
+    expect(isSpaFallbackPath("/manifest.webmanifest")).toBe(false);
+    expect(isSpaFallbackPath("/sw.js")).toBe(false);
+    expect(isSpaFallbackPath("/registerSW.js")).toBe(false);
+    expect(isSpaFallbackPath("/icons/icon-192.png")).toBe(false);
+    expect(isSpaFallbackPath("/icons/icon-512.png")).toBe(false);
   });
 });
 

@@ -8,5 +8,19 @@ export function serverBindHostname(env: NodeJS.ProcessEnv = process.env): string
 }
 
 export function isSpaFallbackPath(pathname: string): boolean {
-  return pathname !== "/health" && !pathname.startsWith("/api");
+  if (pathname === "/health" || pathname.startsWith("/api")) {
+    return false;
+  }
+  if (
+    pathname === "/sw.js" ||
+    pathname === "/registerSW.js" ||
+    pathname === "/manifest.webmanifest" ||
+    pathname.startsWith("/workbox-")
+  ) {
+    return false;
+  }
+  if (/\.(?:webmanifest|js|css|png|svg|ico|map|txt|woff2?)$/i.test(pathname)) {
+    return false;
+  }
+  return true;
 }
