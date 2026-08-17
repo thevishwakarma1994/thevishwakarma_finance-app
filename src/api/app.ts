@@ -9,6 +9,7 @@ import { commandRoutes } from "./routes/commands.js";
 import { readRoutes } from "./routes/reads.js";
 import {
   createPerfMarks,
+  getPerfMarks,
   logPerf,
   perfEnabledFromEnv,
   perfEnabledFromHeader,
@@ -24,6 +25,29 @@ export type AppEnv = {
     verifyIdToken: VerifyIdToken;
   };
 };
+
+async function probeDbSelect1(handles: DbHandles): Promise<void> {
+  const marks = getPerfMarks();
+  if (!marks) return;
+  if (handles.dialect === "postgres") {
+    const acquireStarted = performance.now();
+    const client = await handles.pool.connect();
+    marks.dbAcquireMs += performance.now() - acquireStarted;
+    try {
+      const queryStarted = performance.now();
+      await client.query("SELECT 1 AS ok");
+      marks.dbSelect1Ms += performance.now() - queryStarted;
+      marks.dbQueryCount += 1;
+    } finally {
+      client.release();
+    }
+    return;
+  }
+  const queryStarted = performance.now();
+  handles.sqlite.prepare("SELECT 1 AS ok").get();
+  marks.dbSelect1Ms += performance.now() - queryStarted;
+  marks.dbQueryCount += 1;
+}
 
 export function createApp(
   handles: DbHandles,
@@ -48,6 +72,13 @@ export function createApp(
     const marks = createPerfMarks(c.req.path);
     const started = performance.now();
     await runWithPerf(marks, async () => {
+      if (c.req.path === "/health") {
+        try {
+          await probeDbSelect1(handles);
+        } catch {
+          // Timing only; health still reports ok.
+        }
+      }
       await next();
     });
     marks.totalMs = performance.now() - started;
@@ -62,6 +93,8 @@ export function createApp(
         `snap=${Math.round(marks.snapshotMs)}`,
         `calls=${marks.snapshotCalls}`,
         `q=${marks.dbQueryCount}`,
+        `dbacq=${Math.round(marks.dbAcquireMs)}`,
+        `dbsel=${Math.round(marks.dbSelect1Ms)}`,
         `eng=${Math.round(marks.engineMs)}`,
         `total=${Math.round(marks.totalMs)}`,
       ].join(";"),

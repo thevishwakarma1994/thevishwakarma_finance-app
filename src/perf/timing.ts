@@ -15,6 +15,8 @@ export type PerfMarks = {
   snapshotMs: number;
   snapshotCalls: number;
   dbQueryCount: number;
+  dbAcquireMs: number;
+  dbSelect1Ms: number;
   engineMs: number;
   readMs: number;
   totalMs: number;
@@ -40,6 +42,8 @@ export function createPerfMarks(route: string): PerfMarks {
     snapshotMs: 0,
     snapshotCalls: 0,
     dbQueryCount: 0,
+    dbAcquireMs: 0,
+    dbSelect1Ms: 0,
     engineMs: 0,
     readMs: 0,
     totalMs: 0,
@@ -98,6 +102,8 @@ export function serverTimingValue(marks: PerfMarks): string {
     `prov;dur=${marks.provisionMs.toFixed(1)}`,
     `obl;dur=${marks.obligationsMs.toFixed(1)}`,
     `snap;dur=${marks.snapshotMs.toFixed(1)}`,
+    `dbacq;dur=${marks.dbAcquireMs.toFixed(1)}`,
+    `dbsel;dur=${marks.dbSelect1Ms.toFixed(1)}`,
     `eng;dur=${marks.engineMs.toFixed(1)}`,
     `read;dur=${marks.readMs.toFixed(1)}`,
     `total;dur=${marks.totalMs.toFixed(1)}`,
@@ -117,6 +123,8 @@ export function logPerf(marks: PerfMarks): void {
       snapshotMs: Math.round(marks.snapshotMs),
       snapshotCalls: marks.snapshotCalls,
       dbQueryCount: marks.dbQueryCount,
+      dbAcquireMs: Math.round(marks.dbAcquireMs),
+      dbSelect1Ms: Math.round(marks.dbSelect1Ms),
       engineMs: Math.round(marks.engineMs),
       readMs: Math.round(marks.readMs),
       totalMs: Math.round(marks.totalMs),
