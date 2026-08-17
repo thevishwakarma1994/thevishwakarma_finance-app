@@ -21,6 +21,7 @@ import { loadCardRule } from "./config.js";
 import type { DbHandles } from "./handles.js";
 import { anyDb, queryAll, queryGet, tables } from "./exec.js"; 
 import { fromStoredPaise } from "./storedPaise.js"; 
+import { addDbQueries, timedPerf, timedPerfSync } from "../perf/timing.js";
 
 export async function listAccounts(handles: DbHandles, workspaceId: string) {
   const snapshot = await loadSnapshot(handles, workspaceId);
@@ -791,39 +792,42 @@ export async function listPendingSurplus(handles: DbHandles, workspaceId: string
 }
 
 export async function home(handles: DbHandles, workspaceId: string, asOf = todayKolkata()) {
-  const snapshot = await loadSnapshot(handles, workspaceId, asOf);
-  const sts = evaluateSafeToSpend(snapshot, asOf);
-  const month = await currentMonthSpend(handles, workspaceId, asOf);
-  const previous = await currentMonthSpend(handles, workspaceId, kolkataAddMonths(asOf, -1));
-  const people = (await listPeople(handles, workspaceId))
-    .filter((person) => person.netPaise !== 0)
-    .sort((left, right) => Math.abs(right.netPaise) - Math.abs(left.netPaise))
-    .slice(0, 2);
-  const coming = await comingUpPreview(handles, workspaceId, asOf);
-  const next = sts.fundingCycles.find((cycle) => cycle.id === sts.nextFundingCycleId);
-  const active = sts.fundingCycles.find((cycle) => cycle.id === sts.activeFundingCycleId);
-  return {
-    asOf,
-    currentCycleSafeToSpend: sts.currentCycleSafeToSpend,
-    liquidTotal: sts.liquidTotal,
-    reservedTotal: sts.reservedTotal,
-    availableLiquid: sts.availableLiquid,
-    includedObligationsTotal: sts.includedObligationsTotal,
-    salaryStatus: next?.status ?? active?.status ?? null,
-    salaryWindowStart: sts.nextExpectedIncomeWindow.start,
-    salaryWindowEnd: sts.nextExpectedIncomeWindow.end,
-    expectedSalaryPaise: sts.nextExpectedIncomeWindow.expectedAmount,
-    delayed: sts.delayedFundingCycleIds.length > 0,
-    incomePolicyConfigured: sts.incomePolicyConfigured,
-    riskFlags: sts.riskFlags,
-    explanationItems: sts.explanationItems,
-    includedObligations: sts.includedObligations,
-    excludedFutureObligations: sts.excludedFutureObligations,
-    coming,
-    monthSpentPaise: month.spentPaise,
-    previousMonthSpentPaise: previous.spentPaise,
-    people,
-    accounts: sts.accounts,
-    fundingCycles: sts.fundingCycles,
-  };
+  return timedPerf("readMs", async () => {
+    const snapshot = await loadSnapshot(handles, workspaceId, asOf);
+    const sts = timedPerfSync("engineMs", () => evaluateSafeToSpend(snapshot, asOf));
+    addDbQueries(2);
+    const month = await currentMonthSpend(handles, workspaceId, asOf);
+    const previous = await currentMonthSpend(handles, workspaceId, kolkataAddMonths(asOf, -1));
+    const people = (await listPeople(handles, workspaceId))
+      .filter((person) => person.netPaise !== 0)
+      .sort((left, right) => Math.abs(right.netPaise) - Math.abs(left.netPaise))
+      .slice(0, 2);
+    const coming = await comingUpPreview(handles, workspaceId, asOf);
+    const next = sts.fundingCycles.find((cycle) => cycle.id === sts.nextFundingCycleId);
+    const active = sts.fundingCycles.find((cycle) => cycle.id === sts.activeFundingCycleId);
+    return {
+      asOf,
+      currentCycleSafeToSpend: sts.currentCycleSafeToSpend,
+      liquidTotal: sts.liquidTotal,
+      reservedTotal: sts.reservedTotal,
+      availableLiquid: sts.availableLiquid,
+      includedObligationsTotal: sts.includedObligationsTotal,
+      salaryStatus: next?.status ?? active?.status ?? null,
+      salaryWindowStart: sts.nextExpectedIncomeWindow.start,
+      salaryWindowEnd: sts.nextExpectedIncomeWindow.end,
+      expectedSalaryPaise: sts.nextExpectedIncomeWindow.expectedAmount,
+      delayed: sts.delayedFundingCycleIds.length > 0,
+      incomePolicyConfigured: sts.incomePolicyConfigured,
+      riskFlags: sts.riskFlags,
+      explanationItems: sts.explanationItems,
+      includedObligations: sts.includedObligations,
+      excludedFutureObligations: sts.excludedFutureObligations,
+      coming,
+      monthSpentPaise: month.spentPaise,
+      previousMonthSpentPaise: previous.spentPaise,
+      people,
+      accounts: sts.accounts,
+      fundingCycles: sts.fundingCycles,
+    };
+  });
 }

@@ -30,33 +30,107 @@ import { anyDb, queryAll, tables } from "./exec.js";
 import { loadCardRule } from "./config.js";
 import { parseDueRule } from "../domain/obligations/generate.js";
 import { fromStoredPaise, fromStoredPaiseOrNull } from "./storedPaise.js";
+import { recordSnapshotCall, timedPerf } from "../perf/timing.js";
 
 export async function loadSnapshot(
   handles: DbHandles,
   workspaceId: string,
   asOf = todayKolkata(),
 ): Promise<LedgerSnapshot> {
-  const t = tables(handles);
-  const accountRows = await queryAll(handles, anyDb(handles).select().from(t.accounts).where(eq(t.accounts.workspaceId, workspaceId)));
-  const cardRows = await queryAll(handles, anyDb(handles).select().from(t.creditCards).where(eq(t.creditCards.workspaceId, workspaceId)));
-  const cycleRows = await queryAll(handles, anyDb(handles).select().from(t.billingCycles).where(eq(t.billingCycles.workspaceId, workspaceId)));
-  const categoryRows = await queryAll(handles, anyDb(handles).select().from(t.categories).where(eq(t.categories.workspaceId, workspaceId)));
-  const eventRows = await queryAll(handles, anyDb(handles).select().from(t.financialEvents).where(eq(t.financialEvents.workspaceId, workspaceId)));
-  const postingRows = await queryAll(handles, anyDb(handles).select().from(t.postings).where(eq(t.postings.workspaceId, workspaceId)));
-  const openingRows = await queryAll(handles, anyDb(handles).select().from(t.openingPositions).where(eq(t.openingPositions.workspaceId, workspaceId)));
-  const peopleRows = await queryAll(handles, anyDb(handles).select().from(t.people).where(eq(t.people.workspaceId, workspaceId)));
-  const claimRows = await queryAll(handles, anyDb(handles).select().from(t.claims).where(eq(t.claims.workspaceId, workspaceId)));
-  const shareRows = await queryAll(handles, anyDb(handles).select().from(t.eventShares).where(eq(t.eventShares.workspaceId, workspaceId)));
-  const allocationRows = await queryAll(handles, anyDb(handles).select().from(t.settlementAllocations).where(eq(t.settlementAllocations.workspaceId, workspaceId)));
-  const reservationRows = await queryAll(handles, anyDb(handles).select().from(t.reservations).where(eq(t.reservations.workspaceId, workspaceId)));
-  const reservationLedgerRows = await queryAll(handles, anyDb(handles).select().from(t.reservationLedger).where(eq(t.reservationLedger.workspaceId, workspaceId)));
-  const surplusRows = await queryAll(handles, anyDb(handles).select().from(t.surplusCases).where(eq(t.surplusCases.workspaceId, workspaceId)));
-  const policyRows = await queryAll(handles, anyDb(handles).select().from(t.incomePolicies).where(eq(t.incomePolicies.workspaceId, workspaceId)));
-  const fundingRows = await queryAll(handles, anyDb(handles).select().from(t.fundingCycles).where(eq(t.fundingCycles.workspaceId, workspaceId)));
-  const templateRows = await queryAll(handles, anyDb(handles).select().from(t.obligationTemplates).where(eq(t.obligationTemplates.workspaceId, workspaceId)));
-  const instanceRows = await queryAll(handles, anyDb(handles).select().from(t.obligationInstances).where(eq(t.obligationInstances.workspaceId, workspaceId)));
+  return timedPerf("snapshotMs", async () => {
+    let queryCount = 0;
+    const count = <T>(promise: Promise<T>): Promise<T> => {
+      queryCount += 1;
+      return promise;
+    };
 
-  const openings: OpeningPosition[] = openingRows.map((row) => {
+    const t = tables(handles);
+    const accountRows = await count(
+      queryAll(handles, anyDb(handles).select().from(t.accounts).where(eq(t.accounts.workspaceId, workspaceId))),
+    );
+    const cardRows = await count(
+      queryAll(handles, anyDb(handles).select().from(t.creditCards).where(eq(t.creditCards.workspaceId, workspaceId))),
+    );
+    const cycleRows = await count(
+      queryAll(handles, anyDb(handles).select().from(t.billingCycles).where(eq(t.billingCycles.workspaceId, workspaceId))),
+    );
+    const categoryRows = await count(
+      queryAll(handles, anyDb(handles).select().from(t.categories).where(eq(t.categories.workspaceId, workspaceId))),
+    );
+    const eventRows = await count(
+      queryAll(
+        handles,
+        anyDb(handles).select().from(t.financialEvents).where(eq(t.financialEvents.workspaceId, workspaceId)),
+      ),
+    );
+    const postingRows = await count(
+      queryAll(handles, anyDb(handles).select().from(t.postings).where(eq(t.postings.workspaceId, workspaceId))),
+    );
+    const openingRows = await count(
+      queryAll(
+        handles,
+        anyDb(handles).select().from(t.openingPositions).where(eq(t.openingPositions.workspaceId, workspaceId)),
+      ),
+    );
+    const peopleRows = await count(
+      queryAll(handles, anyDb(handles).select().from(t.people).where(eq(t.people.workspaceId, workspaceId))),
+    );
+    const claimRows = await count(
+      queryAll(handles, anyDb(handles).select().from(t.claims).where(eq(t.claims.workspaceId, workspaceId))),
+    );
+    const shareRows = await count(
+      queryAll(handles, anyDb(handles).select().from(t.eventShares).where(eq(t.eventShares.workspaceId, workspaceId))),
+    );
+    const allocationRows = await count(
+      queryAll(
+        handles,
+        anyDb(handles)
+          .select()
+          .from(t.settlementAllocations)
+          .where(eq(t.settlementAllocations.workspaceId, workspaceId)),
+      ),
+    );
+    const reservationRows = await count(
+      queryAll(handles, anyDb(handles).select().from(t.reservations).where(eq(t.reservations.workspaceId, workspaceId))),
+    );
+    const reservationLedgerRows = await count(
+      queryAll(
+        handles,
+        anyDb(handles).select().from(t.reservationLedger).where(eq(t.reservationLedger.workspaceId, workspaceId)),
+      ),
+    );
+    const surplusRows = await count(
+      queryAll(handles, anyDb(handles).select().from(t.surplusCases).where(eq(t.surplusCases.workspaceId, workspaceId))),
+    );
+    const policyRows = await count(
+      queryAll(
+        handles,
+        anyDb(handles).select().from(t.incomePolicies).where(eq(t.incomePolicies.workspaceId, workspaceId)),
+      ),
+    );
+    const fundingRows = await count(
+      queryAll(
+        handles,
+        anyDb(handles).select().from(t.fundingCycles).where(eq(t.fundingCycles.workspaceId, workspaceId)),
+      ),
+    );
+    const templateRows = await count(
+      queryAll(
+        handles,
+        anyDb(handles).select().from(t.obligationTemplates).where(eq(t.obligationTemplates.workspaceId, workspaceId)),
+      ),
+    );
+    const instanceRows = await count(
+      queryAll(
+        handles,
+        anyDb(handles)
+          .select()
+          .from(t.obligationInstances)
+          .where(eq(t.obligationInstances.workspaceId, workspaceId)),
+      ),
+    );
+
+    const openings: OpeningPosition[] = openingRows.map((row) => {
     const payload = JSON.parse(row.payload) as Record<string, unknown>;
     if (row.kind === "person") {
       return {
@@ -212,11 +286,14 @@ export async function loadSnapshot(
         creditCardId: row.id,
         rule: await loadCardRule(handles, workspaceId, row.id, asOf),
       });
+      // loadCardRule issues two config lookups per card.
+      queryCount += 2;
     } catch {
       // Cards without a rule are omitted from the snapshot, matching SQLite behavior.
     }
   }
 
+  recordSnapshotCall(queryCount);
   return {
     accounts: ledgerAccounts,
     categories: categoryRows.map((row) => ({
@@ -315,6 +392,7 @@ export async function loadSnapshot(
     })),
     budgets: [],
   };
+  });
 }
 
 export async function getAccountBalance(

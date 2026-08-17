@@ -2,6 +2,7 @@ import { todayKolkata } from "../domain/calendar/kolkata.js";
 import type { IsoDate } from "../domain/calendar/isoDate.js";
 import { persistGeneratedInstances } from "../db/generateObligations.js";
 import type { DbHandles } from "../db/client.js";
+import { addDbQueries, timedPerf } from "../perf/timing.js";
 
 /**
  * Explicit write: generate missing bounded obligation instances and persist them.
@@ -13,7 +14,11 @@ export async function materializeObligationInstances(
   workspaceId: string,
   asOf: IsoDate = todayKolkata(),
 ): Promise<number> {
-  return persistGeneratedInstances(handles, workspaceId, asOf);
+  return timedPerf("obligationsMs", async () => {
+    // templates + instances + config_versions reads inside persistGeneratedInstances
+    addDbQueries(3);
+    return persistGeneratedInstances(handles, workspaceId, asOf);
+  });
 }
 
 /** Request-orchestration alias: prepare generated instances for a working as-of. */

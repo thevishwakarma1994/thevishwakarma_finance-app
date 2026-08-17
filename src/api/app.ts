@@ -7,6 +7,14 @@ import { requireFirebaseAuth, requireOrigin, type VerifyIdToken } from "./auth/g
 import { verifyFirebaseIdToken } from "./auth/firebaseAdmin.js";
 import { commandRoutes } from "./routes/commands.js";
 import { readRoutes } from "./routes/reads.js";
+import {
+  createPerfMarks,
+  logPerf,
+  perfEnabledFromEnv,
+  perfEnabledFromHeader,
+  runWithPerf,
+  serverTimingValue,
+} from "../perf/timing.js";
 
 export type AppEnv = {
   Variables: {
@@ -29,6 +37,36 @@ export function createApp(
     c.set("handles", handles);
     c.set("verifyIdToken", verifyIdToken);
     await next();
+  });
+  app.use("*", async (c, next) => {
+    const enabled =
+      perfEnabledFromEnv() || perfEnabledFromHeader(c.req.header("x-perf-timing") ?? undefined);
+    if (!enabled) {
+      await next();
+      return;
+    }
+    const marks = createPerfMarks(c.req.path);
+    const started = performance.now();
+    await runWithPerf(marks, async () => {
+      await next();
+    });
+    marks.totalMs = performance.now() - started;
+    c.header("Server-Timing", serverTimingValue(marks));
+    c.header("X-Request-Id", marks.requestId);
+    c.header(
+      "X-Perf-Summary",
+      [
+        `auth=${Math.round(marks.authMs)}`,
+        `prov=${Math.round(marks.provisionMs)}`,
+        `obl=${Math.round(marks.obligationsMs)}`,
+        `snap=${Math.round(marks.snapshotMs)}`,
+        `calls=${marks.snapshotCalls}`,
+        `q=${marks.dbQueryCount}`,
+        `eng=${Math.round(marks.engineMs)}`,
+        `total=${Math.round(marks.totalMs)}`,
+      ].join(";"),
+    );
+    logPerf(marks);
   });
   app.get("/health", (c) => c.json({ ok: true }));
   app.use(

@@ -3,6 +3,7 @@ import { ZodError } from "zod";
 import { DomainError } from "../../domain/ledger/types.js";
 import type { DbHandles } from "../../db/client.js";
 import { provisionUserWorkspace, type VerifiedIdentity } from "../../app/provisionUser.js";
+import { timedPerf } from "../../perf/timing.js";
 
 export type VerifyIdToken = (token: string) => Promise<VerifiedIdentity>;
 
@@ -31,7 +32,7 @@ export async function requireFirebaseAuth(c: Context<Env>, next: Next) {
 
   let identity: VerifiedIdentity;
   try {
-    identity = await c.get("verifyIdToken")(token);
+    identity = await timedPerf("authMs", () => c.get("verifyIdToken")(token));
   } catch {
     return c.json({ error: "unauthenticated", message: "Invalid Firebase token" }, 401);
   }
@@ -40,7 +41,9 @@ export async function requireFirebaseAuth(c: Context<Env>, next: Next) {
   }
 
   try {
-    const access = await provisionUserWorkspace(c.get("handles"), identity);
+    const access = await timedPerf("provisionMs", () =>
+      provisionUserWorkspace(c.get("handles"), identity),
+    );
     c.set("workspaceId", access.workspaceId);
     c.set("userId", access.userId);
   } catch (error) {

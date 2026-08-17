@@ -222,6 +222,7 @@ async function authorizedFetch(path: string, init: RequestInit, forceRefresh: bo
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const started = typeof performance !== "undefined" ? performance.now() : Date.now();
   let response = await authorizedFetch(path, init, false);
   if (response.status === 401) {
     response = await authorizedFetch(path, init, true);
@@ -230,6 +231,31 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     error?: string;
     message?: string;
   } & T;
+  const elapsed =
+    (typeof performance !== "undefined" ? performance.now() : Date.now()) - started;
+  if (typeof window !== "undefined") {
+    const params = new URLSearchParams(window.location.search);
+    const enabled =
+      params.has("perf") ||
+      window.localStorage.getItem("PERF_TIMING") === "1";
+    if (enabled) {
+      const serverTiming = response.headers.get("server-timing");
+      const summary = response.headers.get("x-perf-summary");
+      const requestId = response.headers.get("x-request-id");
+      const entry = {
+        path,
+        clientMs: Math.round(elapsed),
+        status: response.status,
+        requestId,
+        serverTiming,
+        summary,
+        at: new Date().toISOString(),
+      };
+      const bucket = ((window as unknown as { __PERF_LOG__?: unknown[] }).__PERF_LOG__ ??= []);
+      bucket.push(entry);
+      console.info("[perf]", entry);
+    }
+  }
   if (response.status === 401) {
     if (path !== "/api/me") {
       unauthorizedHandler?.();
