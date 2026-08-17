@@ -180,15 +180,21 @@ export async function persistGeneratedInstances(
     });
   }
 
+  // Warm path: parallel reads outside a transaction. If nothing is missing, skip the tx entirely.
+  const [templates, existingBefore, configs] = await Promise.all([
+    loadTemplates(handles, workspaceId),
+    loadExisting(handles, workspaceId),
+    loadConfigs(handles, workspaceId),
+  ]);
+  const created = generateObligationInstances({
+    templates,
+    existing: existingBefore,
+    configs,
+    asOf,
+  });
+  if (created.length === 0) return 0;
+
   return withPostgresTransaction(handles, async (tx) => {
-    const existingBefore = await loadExisting(tx, workspaceId);
-    const created = generateObligationInstances({
-      templates: await loadTemplates(tx, workspaceId),
-      existing: existingBefore,
-      configs: await loadConfigs(tx, workspaceId),
-      asOf,
-    });
-    if (created.length === 0) return 0;
     const t = tables(tx);
     await anyDb(tx)
       .insert(t.obligationInstances)

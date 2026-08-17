@@ -403,7 +403,9 @@ export async function listCards(handles: DbHandles, workspaceId: string, asOf = 
       .filter((cycle) => cycle.ledgerRemainingPaise > 0 || cycle.statementRemainingPaise > 0)
       .map((cycle) => cycle.actualDueOn ?? cycle.expectedDueOn)
       .sort()[0];
-    const rule = await loadCardRule(handles, workspaceId, card.id, asOf);
+    const rule =
+      snapshot.cardRules.find((item) => item.creditCardId === card.id)?.rule ??
+      (await loadCardRule(handles, workspaceId, card.id, asOf));
     cards.push({
       id: card.id,
       displayName: card.displayName,
@@ -442,7 +444,9 @@ export async function cardDetail(
     .filter((cycle) => cycle.creditCardId === card.id)
     .sort((left, right) => right.expectedStatementOn.localeCompare(left.expectedStatementOn));
   const outstandingPaise = sumPaise(cycles.map((cycle) => cycle.ledgerRemainingPaise));
-  const rule = await loadCardRule(handles, workspaceId, card.id, asOf);
+  const rule =
+    snapshot.cardRules.find((item) => item.creditCardId === card.id)?.rule ??
+    (await loadCardRule(handles, workspaceId, card.id, asOf));
   const activity = (await listActivity(handles, workspaceId)).filter((event) =>
     snapshot.events.some(
       (item) => item.id === event.id && item.creditCardId === card.id,
@@ -531,6 +535,16 @@ export async function cycleDetail(
   };
 }
 
+/** Coming Up from an already-loaded snapshot — no DB access. */
+export function comingUpFromSnapshot(
+  snapshot: LedgerSnapshot,
+  asOf = todayKolkata(),
+  filter: ComingUpFilter = "all_open",
+) {
+  const items = comingUpItems(snapshot, asOf);
+  return filterComingUp(items, snapshot, asOf, filter);
+}
+
 export async function comingUp(
   handles: DbHandles,
   workspaceId: string,
@@ -538,12 +552,16 @@ export async function comingUp(
   filter: ComingUpFilter = "all_open",
 ) {
   const snapshot = await loadSnapshot(handles, workspaceId, asOf);
-  const items = comingUpItems(snapshot, asOf);
-  return filterComingUp(items, snapshot, asOf, filter);
+  return comingUpFromSnapshot(snapshot, asOf, filter);
+}
+
+/** Home Coming Up preview from an already-loaded snapshot — no DB access. */
+export function comingUpPreviewFromSnapshot(snapshot: LedgerSnapshot, asOf = todayKolkata()) {
+  return comingUpFromSnapshot(snapshot, asOf, "all_open").items.slice(0, 5);
 }
 
 export async function comingUpPreview(handles: DbHandles, workspaceId: string, asOf = todayKolkata()) {
-  return (await comingUp(handles, workspaceId, asOf, "all_open")).items.slice(0, 5);
+  return comingUpPreviewFromSnapshot(await loadSnapshot(handles, workspaceId, asOf), asOf);
 }
 
 export async function obligationDetail(handles: DbHandles, workspaceId: string, instanceId: string) {
@@ -595,8 +613,8 @@ export async function comingCardPayments(
     .sort((left, right) => left.dueOn.localeCompare(right.dueOn));
 }
 
-export async function listPeople(handles: DbHandles, workspaceId: string) {
-  const snapshot = await loadSnapshot(handles, workspaceId);
+/** People list from an already-loaded snapshot — no DB access. */
+export function listPeopleFromSnapshot(snapshot: LedgerSnapshot) {
   return snapshot.people
     .map((person) => {
       const position = personPosition(snapshot.claims, person.id);
@@ -615,6 +633,18 @@ export async function listPeople(handles: DbHandles, workspaceId: string) {
       };
     })
     .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+/** Home people preview from an already-loaded snapshot — no DB access. */
+export function peoplePreviewFromSnapshot(snapshot: LedgerSnapshot) {
+  return listPeopleFromSnapshot(snapshot)
+    .filter((person) => person.netPaise !== 0)
+    .sort((left, right) => Math.abs(right.netPaise) - Math.abs(left.netPaise))
+    .slice(0, 2);
+}
+
+export async function listPeople(handles: DbHandles, workspaceId: string) {
+  return listPeopleFromSnapshot(await loadSnapshot(handles, workspaceId));
 }
 
 export async function personDetail(handles: DbHandles, workspaceId: string, personId: string) {
@@ -793,16 +823,16 @@ export async function listPendingSurplus(handles: DbHandles, workspaceId: string
 
 export async function home(handles: DbHandles, workspaceId: string, asOf = todayKolkata()) {
   return timedPerf("readMs", async () => {
+    // One snapshot for STS, Coming Up preview, and People preview.
     const snapshot = await loadSnapshot(handles, workspaceId, asOf);
     const sts = timedPerfSync("engineMs", () => evaluateSafeToSpend(snapshot, asOf));
+    const coming = comingUpPreviewFromSnapshot(snapshot, asOf);
+    const people = peoplePreviewFromSnapshot(snapshot);
     addDbQueries(2);
-    const month = await currentMonthSpend(handles, workspaceId, asOf);
-    const previous = await currentMonthSpend(handles, workspaceId, kolkataAddMonths(asOf, -1));
-    const people = (await listPeople(handles, workspaceId))
-      .filter((person) => person.netPaise !== 0)
-      .sort((left, right) => Math.abs(right.netPaise) - Math.abs(left.netPaise))
-      .slice(0, 2);
-    const coming = await comingUpPreview(handles, workspaceId, asOf);
+    const [month, previous] = await Promise.all([
+      currentMonthSpend(handles, workspaceId, asOf),
+      currentMonthSpend(handles, workspaceId, kolkataAddMonths(asOf, -1)),
+    ]);
     const next = sts.fundingCycles.find((cycle) => cycle.id === sts.nextFundingCycleId);
     const active = sts.fundingCycles.find((cycle) => cycle.id === sts.activeFundingCycleId);
     return {

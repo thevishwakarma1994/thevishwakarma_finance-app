@@ -12,13 +12,14 @@ import {
   type CardListItem,
   type HomeView,
 } from "../apiClient.js";
+import { cacheHomeView, getCachedHomeView } from "../homeCache.js";
 
 type Props = {
   onBack: () => void;
 };
 
 export function CanISpend({ onBack }: Props) {
-  const [home, setHome] = useState<HomeView | null>(null);
+  const [home, setHome] = useState<HomeView | null>(() => getCachedHomeView());
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [cards, setCards] = useState<CardListItem[]>([]);
   const [amount, setAmount] = useState("");
@@ -29,7 +30,14 @@ export function CanISpend({ onBack }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    Promise.all([fetchHome(), fetchAccounts(), fetchCards()])
+    const cached = getCachedHomeView();
+    const homePromise = cached
+      ? Promise.resolve(cached)
+      : fetchHome().then((view) => {
+          cacheHomeView(view);
+          return view;
+        });
+    Promise.all([homePromise, fetchAccounts(), fetchCards()])
       .then(([homeData, accountData, cardData]) => {
         setHome(homeData);
         setAccounts(accountData.accounts);

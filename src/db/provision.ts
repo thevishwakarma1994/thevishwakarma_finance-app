@@ -3,7 +3,7 @@ import { newId } from "../domain/ids.js";
 import { utcNowIso } from "../domain/calendar/kolkata.js";
 import { DomainError } from "../domain/ledger/types.js";
 import type { DbHandles, SqliteHandles } from "./handles.js";
-import { anyDb, queryAll, queryGet, queryRun, tables } from "./exec.js"; 
+import { anyDb, queryAll, queryGet, queryRun, tables } from "./exec.js";
 import { withPostgresTransaction, withSqliteTransaction } from "./tx.js";
 
 export type MembershipRole = "owner";
@@ -34,6 +34,78 @@ type MembershipRow = {
   role: string;
   createdAt: string;
 };
+
+type ExistingAccessRow = {
+  userId: string;
+  status: string;
+  displayName: string | null;
+  primaryEmail: string | null;
+  workspaceId: string | null;
+  role: string | null;
+  membershipCreatedAt: string | null;
+};
+
+/**
+ * Hot path for returning users: one joined lookup
+ * firebase_uid → user + earliest personal membership.
+ */
+async function lookupExistingAccess(
+  handles: DbHandles,
+  firebaseUid: string,
+): Promise<ExistingAccessRow | null> {
+  const t = tables(handles);
+  const rows = await queryAll<ExistingAccessRow>(
+    handles,
+    anyDb(handles)
+      .select({
+        userId: t.users.id,
+        status: t.users.status,
+        displayName: t.users.displayName,
+        primaryEmail: t.users.primaryEmail,
+        workspaceId: t.workspaceMemberships.workspaceId,
+        role: t.workspaceMemberships.role,
+        membershipCreatedAt: t.workspaceMemberships.createdAt,
+      })
+      .from(t.users)
+      .leftJoin(t.workspaceMemberships, eq(t.workspaceMemberships.userId, t.users.id))
+      .where(eq(t.users.firebaseUid, firebaseUid)),
+  );
+  if (rows.length === 0) return null;
+  const withMembership = rows
+    .filter((row) => row.workspaceId)
+    .sort((left, right) =>
+      (left.membershipCreatedAt ?? "").localeCompare(right.membershipCreatedAt ?? ""),
+    );
+  return withMembership[0] ?? rows[0] ?? null;
+}
+
+function lookupExistingAccessSqlite(
+  handles: SqliteHandles,
+  firebaseUid: string,
+): ExistingAccessRow | null {
+  const t = tables(handles);
+  const rows = anyDb(handles)
+    .select({
+      userId: t.users.id,
+      status: t.users.status,
+      displayName: t.users.displayName,
+      primaryEmail: t.users.primaryEmail,
+      workspaceId: t.workspaceMemberships.workspaceId,
+      role: t.workspaceMemberships.role,
+      membershipCreatedAt: t.workspaceMemberships.createdAt,
+    })
+    .from(t.users)
+    .leftJoin(t.workspaceMemberships, eq(t.workspaceMemberships.userId, t.users.id))
+    .where(eq(t.users.firebaseUid, firebaseUid))
+    .all() as ExistingAccessRow[];
+  if (rows.length === 0) return null;
+  const withMembership = rows
+    .filter((row) => row.workspaceId)
+    .sort((left, right) =>
+      (left.membershipCreatedAt ?? "").localeCompare(right.membershipCreatedAt ?? ""),
+    );
+  return withMembership[0] ?? rows[0] ?? null;
+}
 
 async function personalWorkspaceForUser(
   handles: DbHandles,
@@ -123,41 +195,61 @@ async function createPersonalWorkspace(handles: DbHandles, userId: string): Prom
   return { userId, workspaceId, role: "owner" };
 }
 
+function metadataChanged(
+  existing: { displayName: string | null; primaryEmail: string | null },
+  identity: VerifiedIdentity,
+): boolean {
+  const nextName = identity.displayName ?? existing.displayName;
+  const nextEmail = identity.email ?? existing.primaryEmail;
+  return nextName !== existing.displayName || nextEmail !== existing.primaryEmail;
+}
+
 /**
  * Firebase uid → internal user → membership → workspace.
  * Email is metadata only and never used for authorization.
+ * Existing users with a membership use one joined lookup (no write on the hot path
+ * when display metadata is unchanged).
  */
 export async function provisionUserWorkspace(
   handles: DbHandles,
   identity: VerifiedIdentity,
 ): Promise<ProvisionedAccess> {
   const t = tables(handles);
-  const existing = await queryGet<UserRow>(
-    handles,
-    anyDb(handles).select().from(t.users).where(eq(t.users.firebaseUid, identity.uid)),
-  );
+
+  const existing =
+    handles.dialect === "sqlite"
+      ? lookupExistingAccessSqlite(handles, identity.uid)
+      : await lookupExistingAccess(handles, identity.uid);
+
   if (existing) {
     if (existing.status !== "active") {
       throw new DomainError("user_disabled", "This account is disabled");
     }
-    const now = utcNowIso();
-    await queryRun(
-      handles,
-      anyDb(handles)
-        .update(t.users)
-        .set({
-          displayName: identity.displayName ?? existing.displayName,
-          primaryEmail: identity.email ?? existing.primaryEmail,
-          updatedAt: now,
-        })
-        .where(eq(t.users.id, existing.id)),
-    );
-    const access = await personalWorkspaceForUser(handles, existing.id);
-    if (access) return access;
-    if (handles.dialect === "sqlite") {
-      return createPersonalWorkspaceSqlite(handles, existing.id);
+    if (metadataChanged(existing, identity)) {
+      const now = utcNowIso();
+      await queryRun(
+        handles,
+        anyDb(handles)
+          .update(t.users)
+          .set({
+            displayName: identity.displayName ?? existing.displayName,
+            primaryEmail: identity.email ?? existing.primaryEmail,
+            updatedAt: now,
+          })
+          .where(eq(t.users.id, existing.userId)),
+      );
     }
-    return createPersonalWorkspace(handles, existing.id);
+    if (existing.workspaceId && existing.role) {
+      return {
+        userId: existing.userId,
+        workspaceId: existing.workspaceId,
+        role: existing.role as MembershipRole,
+      };
+    }
+    if (handles.dialect === "sqlite") {
+      return createPersonalWorkspaceSqlite(handles, existing.userId);
+    }
+    return createPersonalWorkspace(handles, existing.userId);
   }
 
   if (handles.dialect === "sqlite") {

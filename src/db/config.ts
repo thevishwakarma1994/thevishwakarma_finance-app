@@ -229,6 +229,83 @@ export async function loadCardRule(
   });
 }
 
+type CardConfigRow = {
+  key: string;
+  subjectId: string;
+  effectiveFrom: string;
+  value: string;
+};
+
+/**
+ * Batch-load effective card cycle rules for a workspace as-of.
+ * One SQL round-trip instead of 2×N loadConfigValue calls.
+ * Effective-dating matches loadConfigValue (latest effectiveFrom ≤ asOf still open).
+ */
+export async function loadCardRulesForWorkspace(
+  handles: DbHandles,
+  workspaceId: string,
+  asOf: IsoDate,
+): Promise<Map<string, CardCycleRule>> {
+  const t = tables(handles);
+  const rows = await queryAll<CardConfigRow>(
+    handles,
+    anyDb(handles)
+      .select({
+        key: t.configVersions.key,
+        subjectId: t.configVersions.subjectId,
+        effectiveFrom: t.configVersions.effectiveFrom,
+        value: t.configVersions.value,
+      })
+      .from(t.configVersions)
+      .where(
+        and(
+          eq(t.configVersions.workspaceId, workspaceId),
+          or(
+            eq(t.configVersions.key, CONFIG_CARD_STATEMENT_DAY),
+            eq(t.configVersions.key, CONFIG_CARD_DUE_RULE),
+          ),
+          lte(t.configVersions.effectiveFrom, asOf),
+          or(isNull(t.configVersions.effectiveTo), gt(t.configVersions.effectiveTo, asOf)),
+        ),
+      ),
+  );
+
+  const latest = new Map<string, CardConfigRow>();
+  for (const row of rows) {
+    const mapKey = `${row.key}\0${row.subjectId}`;
+    const previous = latest.get(mapKey);
+    if (!previous || row.effectiveFrom > previous.effectiveFrom) {
+      latest.set(mapKey, row);
+    }
+  }
+
+  const cardIds = new Set<string>();
+  for (const row of latest.values()) {
+    cardIds.add(row.subjectId);
+  }
+
+  const result = new Map<string, CardCycleRule>();
+  for (const cardId of cardIds) {
+    const statementRow = latest.get(`${CONFIG_CARD_STATEMENT_DAY}\0${cardId}`);
+    const dueRow = latest.get(`${CONFIG_CARD_DUE_RULE}\0${cardId}`);
+    if (!statementRow || !dueRow) continue;
+    try {
+      const statementRecord = JSON.parse(statementRow.value) as { statementDay?: unknown };
+      const dueRecord = JSON.parse(dueRow.value) as { dueDaysAfterStatement?: unknown };
+      result.set(
+        cardId,
+        parseCardCycleRule({
+          statementDay: statementRecord.statementDay,
+          dueDaysAfterStatement: dueRecord.dueDaysAfterStatement,
+        }),
+      );
+    } catch {
+      // Cards without a parseable rule are omitted, matching loadCardRule failure behavior.
+    }
+  }
+  return result;
+}
+
 export async function writeCardRule(
   handles: DbHandles,
   workspaceId: string,

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { formatInr } from "../../domain/money/inr.js";
 import { paise } from "../../domain/money/paise.js";
 import { ApiError, fetchHome, type HomeView } from "../apiClient.js";
+import { cacheHomeView, getCachedHomeView } from "../homeCache.js";
 
 type Props = {
   onBack: () => void;
@@ -16,16 +17,27 @@ const GROUPS: { id: string; title: string }[] = [
 ];
 
 export function StsExplain({ onBack }: Props) {
-  const [home, setHome] = useState<HomeView | null>(null);
+  const cached = getCachedHomeView();
+  const [home, setHome] = useState<HomeView | null>(cached);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (cached) return;
+    let cancelled = false;
     fetchHome()
-      .then(setHome)
+      .then((view) => {
+        cacheHomeView(view);
+        if (!cancelled) setHome(view);
+      })
       .catch((caught: unknown) => {
-        setError(caught instanceof ApiError ? caught.message : "Could not load explanation");
+        if (!cancelled) {
+          setError(caught instanceof ApiError ? caught.message : "Could not load explanation");
+        }
       });
-  }, []);
+    return () => {
+      cancelled = true;
+    };
+  }, [cached]);
 
   const inThis = home?.explanationItems.filter((item) => item.group === "in_this_number") ?? [];
   const inThisSum = inThis.reduce((sum, item) => sum + item.amountPaise, 0);

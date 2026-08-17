@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { formatInr } from "../../domain/money/inr.js";
 import { paise } from "../../domain/money/paise.js";
 import { ApiError, fetchHome, signOut, type HomeView } from "../apiClient.js";
+import { cacheHomeView, clearCachedHomeView } from "../homeCache.js";
 
 type Props = {
   onOpenExplanation: () => void;
@@ -47,7 +48,10 @@ export function Home({
 
   useEffect(() => {
     fetchHome()
-      .then(setHome)
+      .then((view) => {
+        cacheHomeView(view);
+        setHome(view);
+      })
       .catch((caught: unknown) => {
         setError(caught instanceof ApiError ? caught.message : "Could not load Home");
       });
@@ -61,6 +65,7 @@ export function Home({
           className="linkish"
           type="button"
           onClick={() => {
+            clearCachedHomeView();
             void signOut().then(onSignedOut);
           }}
         >
