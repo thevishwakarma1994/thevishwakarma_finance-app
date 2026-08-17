@@ -267,14 +267,19 @@ describe("authenticated app access", () => {
       if (url.includes("/api/me")) {
         return jsonResponse(200, { authenticated: true, userId: "user-1", workspaceId: "ws-1" });
       }
-      if (url.includes("/api/accounts")) return jsonResponse(200, { accounts: [] });
-      if (url.includes("/api/month")) return jsonResponse(200, { asOf: "2026-08-16", month: "2026-08", spentPaise: 0 });
-      if (url.includes("/api/categories")) return jsonResponse(200, { categories: [] });
-      if (url.includes("/api/cards")) return jsonResponse(200, { cards: [] });
-      if (url.includes("/api/coming-card-payments")) return jsonResponse(200, { items: [] });
-      if (url.includes("/api/people")) return jsonResponse(200, { people: [] });
-      if (url.includes("/api/surplus")) return jsonResponse(200, { items: [] });
-      if (url.includes("/api/obligation-templates")) return jsonResponse(200, { templates: [] });
+      if (url.includes("/api/money")) {
+        return jsonResponse(200, {
+          asOf: "2026-08-16",
+          accounts: [],
+          categories: [],
+          cards: [],
+          comingCardPayments: [],
+          people: [],
+          surplus: [],
+          templates: [],
+          month: { asOf: "2026-08-16", month: "2026-08", spentPaise: 0 },
+        });
+      }
       return jsonResponse(200, {});
     });
     render(<App />);

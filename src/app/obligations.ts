@@ -4,6 +4,7 @@ import { newId } from "../domain/ids.js";
 import { DomainError, type ObligationPriority } from "../domain/ledger/types.js";
 import { parseDueRule } from "../domain/obligations/generate.js";
 import { loadSnapshot } from "../db/loadSnapshot.js";
+import { listObligationTemplatesFromSnapshot } from "../db/reads.js";
 import { ensureObligationInstances } from "./ensureObligationInstances.js";
 import type { DbHandles } from "../db/client.js";
 import type { WorkspaceContext } from "./context.js";
@@ -138,13 +139,7 @@ export async function createOneOffObligation(
 }
 
 export async function listObligationTemplates(handles: DbHandles, workspaceId: string) {
-  const snapshot = await loadSnapshot(handles, workspaceId);
-  return snapshot.obligationTemplates.map((template) => ({
-    ...template,
-    amountPaise: snapshot.obligationInstances
-      .filter((instance) => instance.templateId === template.id && instance.status === "open")
-      .sort((left, right) => left.dueOn.localeCompare(right.dueOn))[0]?.amountPaise ?? null,
-  }));
+  return listObligationTemplatesFromSnapshot(await loadSnapshot(handles, workspaceId));
 }
 
 export type { ObligationPriority };

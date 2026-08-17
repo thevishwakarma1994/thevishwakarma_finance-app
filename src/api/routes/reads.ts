@@ -11,6 +11,7 @@ import {
   listCards,
   listCategories,
   listPeople,
+  money,
   monthReview,
   obligationDetail,
   personDetail,
@@ -226,6 +227,17 @@ readRoutes.get("/home", async (c) => {
     const asOf = requestAsOf(c);
     await prepareObligationReads(c, asOf);
     return c.json(await home(c.get("handles"), c.get("workspaceId"), asOf));
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+readRoutes.get("/money", async (c) => {
+  try {
+    const asOf = requestAsOf(c);
+    await prepareObligationReads(c, asOf);
+    return c.json(await money(c.get("handles"), c.get("workspaceId"), asOf));
   } catch (error) {
     const mapped = mapError(error);
     return c.json(mapped.body, mapped.status);

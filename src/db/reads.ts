@@ -24,7 +24,11 @@ import { fromStoredPaise } from "./storedPaise.js";
 import { addDbQueries, timedPerf, timedPerfSync } from "../perf/timing.js";
 
 export async function listAccounts(handles: DbHandles, workspaceId: string) {
-  const snapshot = await loadSnapshot(handles, workspaceId);
+  return listAccountsFromSnapshot(await loadSnapshot(handles, workspaceId));
+}
+
+/** Accounts list from an already-loaded snapshot — no DB access. */
+export function listAccountsFromSnapshot(snapshot: LedgerSnapshot) {
   return snapshot.accounts
     .filter((account) => account.status === "active")
     .map((account) => {
@@ -81,6 +85,18 @@ export async function listCategories(handles: DbHandles, workspaceId: string, in
     archivedAt: string | null;
   }>(handles, anyDb(handles).select().from(t.categories).where(eq(t.categories.workspaceId, workspaceId)));
   return all
+    .filter((row) => includeArchived || !row.archivedAt)
+    .map((row) => ({
+      id: row.id,
+      name: row.name,
+      parentId: row.parentId,
+      archivedAt: row.archivedAt,
+    }));
+}
+
+/** Categories from an already-loaded snapshot — no DB access. */
+export function listCategoriesFromSnapshot(snapshot: LedgerSnapshot, includeArchived = false) {
+  return snapshot.categories
     .filter((row) => includeArchived || !row.archivedAt)
     .map((row) => ({
       id: row.id,
@@ -318,6 +334,25 @@ export async function currentMonthSpend(handles: DbHandles, workspaceId: string,
   };
 }
 
+/** Month spend from an already-loaded snapshot — no DB access. */
+export function currentMonthSpendFromSnapshot(snapshot: LedgerSnapshot, asOf = todayKolkata()) {
+  const start = kolkataMonthStart(asOf);
+  const end = kolkataMonthEnd(asOf);
+  let spent = 0;
+  for (const posting of snapshot.postings) {
+    if (posting.pnl !== "expense") continue;
+    const event = snapshot.events.find((item) => item.id === posting.eventId);
+    if (!event) continue;
+    if (event.occurredOn < start || event.occurredOn > end) continue;
+    spent += posting.amountPaise;
+  }
+  return {
+    asOf,
+    month: asOf.slice(0, 7),
+    spentPaise: paise(spent),
+  };
+}
+
 export async function monthReview(handles: DbHandles, workspaceId: string, asOf = todayKolkata()) {
   const start = kolkataMonthStart(asOf);
   const end = kolkataMonthEnd(asOf);
@@ -390,7 +425,11 @@ function cycleView(cycle: LedgerBillingCycle, snapshot?: LedgerSnapshot) {
 }
 
 export async function listCards(handles: DbHandles, workspaceId: string, asOf = todayKolkata()) {
-  const snapshot = await loadSnapshot(handles, workspaceId, asOf);
+  return listCardsFromSnapshot(await loadSnapshot(handles, workspaceId, asOf), asOf);
+}
+
+/** Active cards from an already-loaded snapshot — no DB access. */
+export function listCardsFromSnapshot(snapshot: LedgerSnapshot, asOf = todayKolkata()) {
   const cards = [];
   for (const card of snapshot.creditCards.filter((item) => item.status === "active")) {
     const cycles = snapshot.billingCycles.filter((cycle) => cycle.creditCardId === card.id);
@@ -403,9 +442,10 @@ export async function listCards(handles: DbHandles, workspaceId: string, asOf = 
       .filter((cycle) => cycle.ledgerRemainingPaise > 0 || cycle.statementRemainingPaise > 0)
       .map((cycle) => cycle.actualDueOn ?? cycle.expectedDueOn)
       .sort()[0];
-    const rule =
-      snapshot.cardRules.find((item) => item.creditCardId === card.id)?.rule ??
-      (await loadCardRule(handles, workspaceId, card.id, asOf));
+    const rule = snapshot.cardRules.find((item) => item.creditCardId === card.id)?.rule;
+    if (!rule) {
+      throw new DomainError("card_rule_missing", "This card has no statement or due rule for that date");
+    }
     cards.push({
       id: card.id,
       displayName: card.displayName,
@@ -589,7 +629,11 @@ export async function comingCardPayments(
   workspaceId: string,
   asOf = todayKolkata(),
 ) {
-  const snapshot = await loadSnapshot(handles, workspaceId, asOf);
+  return comingCardPaymentsFromSnapshot(await loadSnapshot(handles, workspaceId, asOf));
+}
+
+/** Coming card payments from an already-loaded snapshot — no DB access. */
+export function comingCardPaymentsFromSnapshot(snapshot: LedgerSnapshot) {
   return snapshot.billingCycles
     .filter(
       (cycle) => cycle.ledgerRemainingPaise > 0 || cycle.statementRemainingPaise > 0 || cycle.mismatch,
@@ -760,7 +804,11 @@ export async function suggestPersonAllocations(
 }
 
 export async function listPendingSurplus(handles: DbHandles, workspaceId: string) {
-  const snapshot = await loadSnapshot(handles, workspaceId);
+  return listPendingSurplusFromSnapshot(await loadSnapshot(handles, workspaceId));
+}
+
+/** Pending surplus / Needs review from an already-loaded snapshot — no DB access. */
+export function listPendingSurplusFromSnapshot(snapshot: LedgerSnapshot) {
   return snapshot.surplusCases
     .filter((item) => item.status === "pending")
     .map((item) => {
@@ -860,4 +908,35 @@ export async function home(handles: DbHandles, workspaceId: string, asOf = today
       fundingCycles: sts.fundingCycles,
     };
   });
+}
+
+/**
+ * Money screen read model: one loadSnapshot, then derive all sections in memory.
+ * Month spend is computed from the same snapshot (no second DB round-trip).
+ */
+export async function money(handles: DbHandles, workspaceId: string, asOf = todayKolkata()) {
+  return timedPerf("readMs", async () => {
+    const snapshot = await loadSnapshot(handles, workspaceId, asOf);
+    return {
+      asOf,
+      accounts: listAccountsFromSnapshot(snapshot),
+      categories: listCategoriesFromSnapshot(snapshot),
+      cards: listCardsFromSnapshot(snapshot, asOf),
+      comingCardPayments: comingCardPaymentsFromSnapshot(snapshot),
+      people: listPeopleFromSnapshot(snapshot),
+      surplus: listPendingSurplusFromSnapshot(snapshot),
+      templates: listObligationTemplatesFromSnapshot(snapshot),
+      month: currentMonthSpendFromSnapshot(snapshot, asOf),
+    };
+  });
+}
+
+/** Obligation templates from an already-loaded snapshot — no DB access. */
+export function listObligationTemplatesFromSnapshot(snapshot: LedgerSnapshot) {
+  return snapshot.obligationTemplates.map((template) => ({
+    ...template,
+    amountPaise: snapshot.obligationInstances
+      .filter((instance) => instance.templateId === template.id && instance.status === "open")
+      .sort((left, right) => left.dueOn.localeCompare(right.dueOn))[0]?.amountPaise ?? null,
+  }));
 }

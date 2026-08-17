@@ -11,14 +11,7 @@ import {
   changeObligationFrom,
   createObligationTemplate,
   createOneOffObligation,
-  fetchAccounts,
-  fetchCards,
-  fetchCategories,
-  fetchComingCardPayments,
-  fetchMonth,
-  fetchObligationTemplates,
-  fetchPendingSurplus,
-  fetchPeople,
+  fetchMoney,
   previewOrCommitOpening,
   previewOrCommitResolveSurplus,
   signOut,
@@ -85,44 +78,61 @@ export function Money({ onSignedOut, onOpenMonth, onOpenCard, onOpenCycle }: Pro
   const [editFrom, setEditFrom] = useState<string>(todayKolkata());
   const [editAmount, setEditAmount] = useState("");
   const [archiveTo, setArchiveTo] = useState<string>(todayKolkata());
+  const [loading, setLoading] = useState(true);
+
+  function applyMoney(data: Awaited<ReturnType<typeof fetchMoney>>) {
+    setAccounts(data.accounts ?? []);
+    setMonth(data.month);
+    setCategories(data.categories ?? []);
+    setCards(data.cards ?? []);
+    setComing(data.comingCardPayments ?? []);
+    setPeople(data.people ?? []);
+    setSurplus(data.surplus ?? []);
+    setTemplates(data.templates ?? []);
+    if (data.accounts?.[0]) {
+      setNewCardPaymentAccountId(data.accounts[0].id);
+    }
+    if (data.templates?.[0]) {
+      setEditTemplateId((current) => current || data.templates[0]?.id || "");
+    }
+  }
 
   function load() {
-    return Promise.all([
-      fetchAccounts(),
-      fetchMonth(),
-      fetchCategories(),
-      fetchCards(),
-      fetchComingCardPayments(),
-      fetchPeople(),
-      fetchPendingSurplus(),
-      fetchObligationTemplates(),
-    ]).then(([accountData, monthData, categoryData, cardData, comingData, peopleData, surplusData, templateData]) => {
-      setAccounts(accountData.accounts);
-      setMonth(monthData);
-      setCategories(categoryData.categories);
-      setCards(cardData.cards);
-      setComing(comingData.items);
-      setPeople(peopleData.people);
-      setSurplus(surplusData.items);
-      setTemplates(templateData.templates);
-      if (accountData.accounts[0]) {
-        setNewCardPaymentAccountId(accountData.accounts[0].id);
-      }
-      if (templateData.templates[0]) {
-        setEditTemplateId((current) => current || templateData.templates[0]?.id || "");
-      }
-    });
+    return fetchMoney()
+      .then(applyMoney)
+      .finally(() => {
+        setLoading(false);
+      });
   }
 
   useEffect(() => {
-    load()
-      .then(() => {
-        /* loaded */
+    let cancelled = false;
+    void fetchMoney()
+      .then((data) => {
+        if (cancelled) return;
+        applyMoney(data);
       })
       .catch((caught: unknown) => {
-        setError(caught instanceof ApiError ? caught.message : "Could not load accounts");
+        if (cancelled) return;
+        setError(caught instanceof ApiError ? caught.message : "Could not load Money");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
       });
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  async function retry() {
+    setError(null);
+    setLoading(true);
+    try {
+      await load();
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : "Could not load Money");
+    }
+  }
 
   async function onSignOut() {
     try {
@@ -213,6 +223,15 @@ export function Money({ onSignedOut, onOpenMonth, onOpenCard, onOpenCycle }: Pro
         </button>
       </header>
       <main className="page">
+        {loading ? <p className="muted">Loading…</p> : null}
+        {error ? (
+          <div className="stack">
+            <p className="danger">{error}</p>
+            <button className="secondary" type="button" onClick={() => void retry()}>
+              Retry
+            </button>
+          </div>
+        ) : null}
         {month ? (
           <button className="card link-card" type="button" onClick={onOpenMonth}>
             <p className="muted">Personal spending · {month.month}</p>
@@ -814,7 +833,6 @@ export function Money({ onSignedOut, onOpenMonth, onOpenCard, onOpenCycle }: Pro
             </button>
           </form>
         </section>
-        {error ? <p className="danger">{error}</p> : null}
       </main>
     </>
   );

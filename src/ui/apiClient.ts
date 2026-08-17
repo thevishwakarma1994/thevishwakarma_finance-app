@@ -650,6 +650,31 @@ export function fetchPendingSurplus() {
   return request<{ items: PendingSurplus[] }>("/api/surplus");
 }
 
+export type MoneyView = {
+  asOf: string;
+  accounts: Account[];
+  categories: Category[];
+  cards: CardListItem[];
+  comingCardPayments: ComingCardPayment[];
+  people: PersonListItem[];
+  surplus: PendingSurplus[];
+  templates: {
+    id: string;
+    name: string;
+    priority: string;
+    dueRule: { dayOfMonth: number };
+    effectiveFrom: string;
+    effectiveTo: string | null;
+    amountPaise: number | null;
+  }[];
+  month: MonthSpend;
+};
+
+export function fetchMoney(asOf?: string) {
+  const query = asOf ? `?asOf=${encodeURIComponent(asOf)}` : "";
+  return request<MoneyView>(`/api/money${query}`);
+}
+
 export function previewOrCommitResolveSurplus(body: {
   surplusCaseId: string;
   resolution:
