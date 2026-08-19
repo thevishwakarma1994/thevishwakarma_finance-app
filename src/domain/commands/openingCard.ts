@@ -8,7 +8,7 @@ export function applyCardOpening(
   input: {
     commandId: string;
     creditCardId: string;
-    billingCycleId: string;
+    billingCycleId?: string;
     amountPaise: Paise;
     occurredOn: string;
     capturedAt: string;
@@ -23,7 +23,9 @@ export function applyCardOpening(
   const card = snapshot.creditCards.find((c) => c.id === input.creditCardId);
   if (!card) throw new DomainError("not_found", "Card not found");
 
-  let cycle: BillingCycleRecord | undefined = snapshot.billingCycles.find((c) => c.id === input.billingCycleId);
+  let cycle: BillingCycleRecord | undefined = input.billingCycleId 
+    ? snapshot.billingCycles.find((c) => c.id === input.billingCycleId)
+    : undefined;
   let newCycles: BillingCycleRecord[] | undefined = undefined;
   
   if (!cycle) {
@@ -32,15 +34,18 @@ export function applyCardOpening(
        throw new DomainError("not_found", "Card cycle rule not found, cannot materialize cycle");
     }
     const resolved = resolveBillingCycle(input.creditCardId, isoDate(input.occurredOn), cardRule.rule, snapshot.billingCycles);
-    // Actually, resolve returns a generated cycle. But we were asked to apply it to `input.billingCycleId`.
-    // Wait, if the UI passes an ID, the UI expects that ID to be used.
-    // If the UI generated a random ID, we should just use that generated ID for the newly materialized cycle.
-    cycle = {
-      ...resolved.cycle,
-      id: input.billingCycleId, // force the UI's ID to keep the payload consistent
-    };
-    newCycles = [cycle];
+    cycle = resolved.cycle;
+    
+    if (input.billingCycleId && resolved.isNew) {
+      cycle = { ...cycle, id: input.billingCycleId };
+    }
+    
+    if (resolved.isNew) {
+      newCycles = [cycle];
+    }
   }
+
+  const finalCycleId = cycle.id;
 
   if (cycle.creditCardId !== input.creditCardId) {
     throw new DomainError("invalid_opening", "Cycle does not belong to card");
@@ -48,7 +53,7 @@ export function applyCardOpening(
 
   // Validate uniqueness
   const hasBaseOpening = snapshot.events.some(
-    (e) => e.meaning === "apply_opening_card_position" && e.billingCycleId === input.billingCycleId
+    (e) => e.meaning === "apply_opening_card_position" && e.billingCycleId === finalCycleId
   );
   if (hasBaseOpening) {
     throw new DomainError("already_exists", "Opening position already exists for this cycle");
@@ -62,7 +67,7 @@ export function applyCardOpening(
     amountPaise: input.amountPaise,
     accountId: null,
     creditCardId: input.creditCardId,
-    billingCycleId: input.billingCycleId,
+    billingCycleId: finalCycleId,
     fundingCycleId: null,
     obligationInstanceId: null,
     categoryId: null,
@@ -79,7 +84,7 @@ export function applyCardOpening(
     amountPaise: input.amountPaise,
     accountId: null,
     creditCardId: input.creditCardId,
-    billingCycleId: input.billingCycleId,
+    billingCycleId: finalCycleId,
     pnl: null,
     categoryId: null,
     claimId: null,

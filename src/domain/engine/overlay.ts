@@ -44,13 +44,34 @@ export function applyBatchOverlay(
   if (batch.settlementAllocations) {
     next.settlementAllocations = [...next.settlementAllocations, ...batch.settlementAllocations];
   }
+  const eventMeanings = new Map<string, string>();
+  next.events.forEach((e) => eventMeanings.set(e.id, e.meaning));
+  
+  const correctionPostingsByClaim = new Map<string, number>();
+  next.postings.forEach((p) => {
+    if (p.claimId && eventMeanings.get(p.eventId) === "correct_opening_claim") {
+      // In an overlay scenario, all events in the batch are considered valid for the current asOf,
+      // and earlier events are already part of the snapshot (which is already asOf).
+      correctionPostingsByClaim.set(
+        p.claimId,
+        (correctionPostingsByClaim.get(p.claimId) || 0) + p.amountPaise,
+      );
+    }
+  });
+
+  const enrichWithCorrections = (claim: any) => {
+    const isOpening = eventMeanings.get(claim.originatingEventId ?? "") === "apply_opening_claim";
+    const correctionDeltas = isOpening ? (correctionPostingsByClaim.get(claim.id) || 0) : 0;
+    return enrichClaim(claim, next.settlementAllocations, correctionDeltas);
+  };
+
   if (batch.claims) {
     next.claims = [
-      ...next.claims,
-      ...batch.claims.map((claim) => enrichClaim(claim, next.settlementAllocations)),
+      ...next.claims.map(enrichWithCorrections),
+      ...batch.claims.map(enrichWithCorrections),
     ];
   } else {
-    next.claims = next.claims.map((claim) => enrichClaim(claim, next.settlementAllocations));
+    next.claims = next.claims.map(enrichWithCorrections);
   }
   if (batch.reservations) {
     next.reservations = [

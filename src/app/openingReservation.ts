@@ -36,7 +36,8 @@ export async function applyOpeningReservation(
   await assertWorkspaceOwned(handles, context.workspaceId, checks);
 
   const t = tables(handles);
-  const existingEvent = await anyDb(handles).select().from(t.financialEvents).where(eq(t.financialEvents.id, input.commandId)).limit(1);
+  const scopedCommandId = `${context.workspaceId}_${input.commandId}`;
+  const existingEvent = await anyDb(handles).select().from(t.financialEvents).where(eq(t.financialEvents.id, scopedCommandId)).limit(1);
   if (existingEvent.length > 0) {
     if (existingEvent[0].workspaceId !== context.workspaceId) {
       throw new DomainError("idempotency_conflict", "Command ID conflict");
@@ -44,9 +45,12 @@ export async function applyOpeningReservation(
     if (existingEvent[0].meaning !== "apply_opening_reservation") {
       throw new DomainError("idempotency_conflict", "commandId exists with different meaning");
     }
+    const existingRes = await anyDb(handles).select().from(t.reservations).where(eq(t.reservations.originatingEventId, input.commandId)).limit(1);
+    const existingCycleId = existingRes.length > 0 ? existingRes[0].obligationRefId : null;
     if (
       existingEvent[0].amountPaise !== input.amountPaise ||
-      existingEvent[0].accountId !== input.sourceAccountId
+      existingEvent[0].accountId !== input.sourceAccountId ||
+      existingCycleId !== input.billingCycleId
     ) {
       throw new DomainError("idempotency_conflict", "commandId exists with different payload");
     }
@@ -58,7 +62,7 @@ export async function applyOpeningReservation(
   
   const batch = applyReservationOpeningDomain(
     {
-      commandId: input.commandId,
+      commandId: scopedCommandId,
       sourceAccountId: input.sourceAccountId,
       cardId: input.cardId ?? "",
       billingCycleId: input.billingCycleId,
@@ -74,11 +78,14 @@ export async function applyOpeningReservation(
   } catch (caught) {
     const err = caught as { message?: string; code?: string };
     if (err.message?.includes("UNIQUE") || err.code === "23505") {
-      const check = await anyDb(handles).select().from(t.financialEvents).where(eq(t.financialEvents.id, input.commandId)).limit(1);
+      const check = await anyDb(handles).select().from(t.financialEvents).where(eq(t.financialEvents.id, scopedCommandId)).limit(1);
       if (check.length > 0 && check[0].workspaceId === context.workspaceId && check[0].meaning === "apply_opening_reservation") {
+        const checkRes = await anyDb(handles).select().from(t.reservations).where(eq(t.reservations.originatingEventId, input.commandId)).limit(1);
+        const checkCycleId = checkRes.length > 0 ? checkRes[0].obligationRefId : null;
         if (
           check[0].amountPaise === input.amountPaise &&
-          check[0].accountId === input.sourceAccountId
+          check[0].accountId === input.sourceAccountId &&
+          checkCycleId === input.billingCycleId
         ) {
           return { eventId: input.commandId };
         }
@@ -110,7 +117,8 @@ export async function correctOpeningReservation(
   ]);
   
   const t = tables(handles);
-  const existingEvent = await anyDb(handles).select().from(t.financialEvents).where(eq(t.financialEvents.id, input.commandId)).limit(1);
+  const scopedCommandId = `${context.workspaceId}_${input.commandId}`;
+  const existingEvent = await anyDb(handles).select().from(t.financialEvents).where(eq(t.financialEvents.id, scopedCommandId)).limit(1);
   if (existingEvent.length > 0) {
     if (existingEvent[0].workspaceId !== context.workspaceId) {
       throw new DomainError("idempotency_conflict", "Command ID conflict");
@@ -118,8 +126,11 @@ export async function correctOpeningReservation(
     if (existingEvent[0].meaning !== "correct_opening_reservation") {
       throw new DomainError("idempotency_conflict", "commandId exists with different meaning");
     }
+    const existingResLedger = await anyDb(handles).select().from(t.reservationLedger).where(eq(t.reservationLedger.eventId, scopedCommandId)).limit(1);
+    const existingReservationId = existingResLedger.length > 0 ? existingResLedger[0].reservationId : null;
     if (
-      existingEvent[0].amountPaise !== input.targetAmountPaise
+      existingEvent[0].amountPaise !== input.targetAmountPaise ||
+      existingReservationId !== input.reservationId
     ) {
       throw new DomainError("idempotency_conflict", "commandId exists with different payload");
     }
@@ -131,7 +142,7 @@ export async function correctOpeningReservation(
   
   const batch = correctReservationOpeningDomain(
     {
-      commandId: input.commandId,
+      commandId: scopedCommandId,
       reservationId: input.reservationId,
       targetAmountPaise: paise(input.targetAmountPaise),
       occurredOn,
@@ -149,10 +160,13 @@ export async function correctOpeningReservation(
   } catch (caught) {
     const err = caught as { message?: string; code?: string };
     if (err.message?.includes("UNIQUE") || err.code === "23505") {
-      const check = await anyDb(handles).select().from(t.financialEvents).where(eq(t.financialEvents.id, input.commandId)).limit(1);
+      const check = await anyDb(handles).select().from(t.financialEvents).where(eq(t.financialEvents.id, scopedCommandId)).limit(1);
       if (check.length > 0 && check[0].workspaceId === context.workspaceId && check[0].meaning === "correct_opening_reservation") {
+        const checkResLedger = await anyDb(handles).select().from(t.reservationLedger).where(eq(t.reservationLedger.eventId, scopedCommandId)).limit(1);
+        const checkReservationId = checkResLedger.length > 0 ? checkResLedger[0].reservationId : null;
         if (
-          check[0].amountPaise === input.targetAmountPaise
+          check[0].amountPaise === input.targetAmountPaise &&
+          checkReservationId === input.reservationId
         ) {
           return { eventId: input.commandId };
         }

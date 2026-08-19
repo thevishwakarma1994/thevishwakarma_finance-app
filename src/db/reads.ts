@@ -510,6 +510,11 @@ export async function cardDetail(
     dueDaysAfterStatement: rule.dueDaysAfterStatement,
     cycles: cycles.map((cycle) => cycleView(cycle, snapshot)),
     transactions: activity,
+    openingReservations: snapshot.reservations.filter((r) => 
+      r.obligationRef.type === "cycle" && 
+      cycles.some((c) => c.id === r.obligationRef.id) &&
+      snapshot.events.some((e) => e.id === r.originatingEventId && (e.meaning === "apply_opening_reservation" || e.meaning === "correct_opening_reservation"))
+    ),
   };
 }
 

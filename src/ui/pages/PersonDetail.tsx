@@ -81,8 +81,8 @@ export function PersonDetail({ personId, onBack, onCapture }: Props) {
               {formatInr(paise(Math.abs(data.netPaise)))}
             </p>
             <p className="section-label">Open</p>
-            {(data.claims ?? data.openClaims).length === 0 ? <p className="muted">Nothing open</p> : null}
-            {(data.claims ?? data.openClaims).map((claim) => (
+            {(data.claims ?? data.openClaims).filter(c => c.status === "open").length === 0 ? <p className="muted">Nothing open</p> : null}
+            {(data.claims ?? data.openClaims).filter(c => c.status === "open").map((claim) => (
               <article key={claim.id}>
                 <div className="row">
                   <strong>{claimKindLabel(claim.kind)}</strong>

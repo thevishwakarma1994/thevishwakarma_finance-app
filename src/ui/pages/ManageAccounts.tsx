@@ -1,8 +1,11 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { parseInr } from "../../domain/money/inr.js";
+import { todayKolkata } from "../../domain/calendar/kolkata.js";
 import {
   ApiError,
   createAccount,
   fetchAccounts,
+  previewOrCommitOpening,
   updateAccount,
   type Account,
 } from "../apiClient.js";
@@ -12,7 +15,7 @@ type Props = {
   onBack: () => void;
 };
 
-type RowAction = "menu" | "rename";
+type RowAction = "menu" | "rename" | "opening";
 
 export function ManageAccounts({ onBack }: Props) {
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -23,6 +26,7 @@ export function ManageAccounts({ onBack }: Props) {
   const [selected, setSelected] = useState<Account | null>(null);
   const [rowAction, setRowAction] = useState<RowAction | null>(null);
   const [renameName, setRenameName] = useState("");
+  const [openingAmount, setOpeningAmount] = useState("");
 
   function load() {
     return fetchAccounts().then((data) => setAccounts(data.accounts));
@@ -37,6 +41,7 @@ export function ManageAccounts({ onBack }: Props) {
   function closeRow() {
     setSelected(null);
     setRowAction(null);
+    setOpeningAmount("");
   }
 
   async function onCreate(event: FormEvent) {
@@ -124,7 +129,11 @@ export function ManageAccounts({ onBack }: Props) {
           <button className="list-row" type="button" onClick={() => setRowAction("rename")}>
             Rename
           </button>
-
+          {!selected.hasOpening ? (
+            <button className="list-row" type="button" onClick={() => setRowAction("opening")}>
+              Set opening
+            </button>
+          ) : null}
           {!selected.isPrimarySalary ? (
             <button
               className="list-row"
@@ -190,6 +199,50 @@ export function ManageAccounts({ onBack }: Props) {
             <label>
               Account name
               <input value={renameName} onChange={(event) => setRenameName(event.target.value)} />
+            </label>
+          </form>
+        </Sheet>
+      ) : null}
+      {selected && rowAction === "opening" ? (
+        <Sheet
+          title="Starting balance"
+          onClose={closeRow}
+          onBack={() => setRowAction("menu")}
+          footer={
+            <button className="primary" type="submit" form="opening-account-form">
+              Save opening
+            </button>
+          }
+        >
+          <form
+            id="opening-account-form"
+            className="sheet-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void previewOrCommitOpening({
+                accountId: selected.id,
+                effectiveOn: todayKolkata(),
+                balancePaise: parseInr(openingAmount),
+                commit: true,
+              })
+                .then(() => {
+                  closeRow();
+                  return load();
+                })
+                .catch((caught: unknown) => {
+                  setError(caught instanceof ApiError ? caught.message : "Could not set opening");
+                });
+            }}
+          >
+            <p className="muted">This is not income.</p>
+            <label>
+              Amount
+              <input
+                inputMode="decimal"
+                value={openingAmount}
+                onChange={(event) => setOpeningAmount(event.target.value)}
+                required
+              />
             </label>
           </form>
         </Sheet>

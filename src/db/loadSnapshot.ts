@@ -231,14 +231,21 @@ export async function loadSnapshot(
     }));
 
     const eventMeanings = new Map<string, string>();
-    events.forEach((e) => eventMeanings.set(e.id, e.meaning));
+    const eventDates = new Map<string, string>();
+    events.forEach((e) => {
+      eventMeanings.set(e.id, e.meaning);
+      eventDates.set(e.id, e.occurredOn);
+    });
     const correctionPostingsByClaim = new Map<string, number>();
     ledgerPostings.forEach((p) => {
       if (p.claimId && eventMeanings.get(p.eventId) === "correct_opening_claim") {
-        correctionPostingsByClaim.set(
-          p.claimId,
-          (correctionPostingsByClaim.get(p.claimId) || 0) + p.amountPaise,
-        );
+        const occurredOn = eventDates.get(p.eventId);
+        if (occurredOn && occurredOn <= asOf) {
+          correctionPostingsByClaim.set(
+            p.claimId,
+            (correctionPostingsByClaim.get(p.claimId) || 0) + p.amountPaise,
+          );
+        }
       }
     });
 

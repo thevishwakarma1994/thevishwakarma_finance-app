@@ -93,7 +93,7 @@ describe("phase 16a lifecycle", () => {
       direction: "they_owe_user",
       amountPaise: 5_000_00, // ₹5,000
     });
-    const claimReceivable = "cmd-open-rec_claim";
+    const claimReceivable = `${ctx.workspaceId}_cmd-open-rec_claim`;
 
     // 4. Set Opening Payable (I owe them)
     await applyOpeningClaim(ctx.handles, { workspaceId: ctx.workspaceId }, {
@@ -104,7 +104,7 @@ describe("phase 16a lifecycle", () => {
       direction: "user_owes_them",
       amountPaise: 2_000_00, // ₹2,000
     });
-    const claimPayable = "cmd-open-pay_claim";
+    const claimPayable = `${ctx.workspaceId}_cmd-open-pay_claim`;
 
     // 5. Correct the payable to ₹1,000
     await correctOpeningClaim(ctx.handles, { workspaceId: ctx.workspaceId }, {

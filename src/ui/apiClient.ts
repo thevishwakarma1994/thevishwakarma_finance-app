@@ -381,6 +381,23 @@ export function updatePerson(body: {
     body: JSON.stringify(body),
   });
 }
+
+export function previewOrCommitOpening(body: {
+  accountId?: string;
+  personId?: string;
+  effectiveOn: string;
+  balancePaise?: number;
+  direction?: "they_owe_user" | "user_owes_them";
+  amountPaise?: number;
+  note?: string | null;
+  commit: boolean;
+}) {
+  return request<CommandResult>("/api/commands/opening", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 export function previewOrCommitIncome(body: {
   occurredOn: string;
   amountPaise: number;
@@ -431,6 +448,18 @@ export function fetchCard(id: string) {
     CardListItem & {
       cycles: CardCycleView[];
       transactions: ActivityEvent[];
+      openingReservations: {
+        id: string;
+        sourceAccountId: string;
+        amountOriginalPaise: number;
+        amountConsumedPaise: number;
+        amountReleasedPaise: number;
+        amountReassignedPaise: number;
+        amountSurplusHeldPaise: number;
+        status: string;
+        obligationRef: { type: string; id: string };
+        originatingEventId: string | null;
+      }[];
     }
   >(`/api/cards/${id}`);
 }

@@ -16,7 +16,7 @@ const applyInputSchema = z.object({
   occurredOn: z.string(),
   capturedAt: z.string(),
   creditCardId: z.string().min(1),
-  billingCycleId: z.string().min(1),
+  billingCycleId: z.string().optional().or(z.literal("")),
   amountPaise: z.number().int().min(0),
 });
 
@@ -32,7 +32,8 @@ export async function applyOpeningCard(
 
   // Idempotency check: see if commandId already exists
   const t = tables(handles);
-  const existingEvent = await anyDb(handles).select().from(t.financialEvents).where(eq(t.financialEvents.id, input.commandId)).limit(1);
+  const scopedCommandId = `${context.workspaceId}_${input.commandId}`;
+  const existingEvent = await anyDb(handles).select().from(t.financialEvents).where(eq(t.financialEvents.id, scopedCommandId)).limit(1);
   if (existingEvent.length > 0) {
     if (existingEvent[0].workspaceId !== context.workspaceId) {
       throw new DomainError("idempotency_conflict", "Command ID conflict");
@@ -43,7 +44,7 @@ export async function applyOpeningCard(
     if (
       existingEvent[0].amountPaise !== input.amountPaise ||
       existingEvent[0].creditCardId !== input.creditCardId ||
-      existingEvent[0].billingCycleId !== input.billingCycleId
+      (input.billingCycleId && existingEvent[0].billingCycleId !== input.billingCycleId)
     ) {
       throw new DomainError("idempotency_conflict", "commandId exists with different payload");
     }
@@ -55,9 +56,9 @@ export async function applyOpeningCard(
   
   const batch = applyCardOpeningDomain(
     {
-      commandId: input.commandId,
+      commandId: scopedCommandId,
       creditCardId: input.creditCardId,
-      billingCycleId: input.billingCycleId,
+      billingCycleId: input.billingCycleId || undefined,
       amountPaise: paise(input.amountPaise),
       occurredOn,
       capturedAt: input.capturedAt,
@@ -70,12 +71,12 @@ export async function applyOpeningCard(
   } catch (caught) {
     const err = caught as { message?: string; code?: string };
     if (err.message?.includes("UNIQUE") || err.code === "23505") { // SQLite or Postgres unique violation
-      const check = await anyDb(handles).select().from(t.financialEvents).where(eq(t.financialEvents.id, input.commandId)).limit(1);
+      const check = await anyDb(handles).select().from(t.financialEvents).where(eq(t.financialEvents.id, scopedCommandId)).limit(1);
       if (check.length > 0 && check[0].workspaceId === context.workspaceId && check[0].meaning === "apply_opening_card_position") {
         if (
           check[0].amountPaise === input.amountPaise &&
           check[0].creditCardId === input.creditCardId &&
-          check[0].billingCycleId === input.billingCycleId
+          (!input.billingCycleId || check[0].billingCycleId === input.billingCycleId)
         ) {
           return { eventId: input.commandId };
         }
@@ -109,7 +110,8 @@ export async function correctOpeningCard(
   ]);
 
   const t = tables(handles);
-  const existingEvent = await anyDb(handles).select().from(t.financialEvents).where(eq(t.financialEvents.id, input.commandId)).limit(1);
+  const scopedCommandId = `${context.workspaceId}_${input.commandId}`;
+  const existingEvent = await anyDb(handles).select().from(t.financialEvents).where(eq(t.financialEvents.id, scopedCommandId)).limit(1);
   if (existingEvent.length > 0) {
     if (existingEvent[0].workspaceId !== context.workspaceId) {
       throw new DomainError("idempotency_conflict", "Command ID conflict");
@@ -132,7 +134,7 @@ export async function correctOpeningCard(
   
   const batch = correctCardOpeningDomain(
     {
-      commandId: input.commandId,
+      commandId: scopedCommandId,
       creditCardId: input.creditCardId,
       billingCycleId: input.billingCycleId,
       targetAmountPaise: paise(input.targetAmountPaise),
@@ -151,7 +153,7 @@ export async function correctOpeningCard(
   } catch (caught) {
     const err = caught as { message?: string; code?: string };
     if (err.message?.includes("UNIQUE") || err.code === "23505") {
-      const check = await anyDb(handles).select().from(t.financialEvents).where(eq(t.financialEvents.id, input.commandId)).limit(1);
+      const check = await anyDb(handles).select().from(t.financialEvents).where(eq(t.financialEvents.id, scopedCommandId)).limit(1);
       if (check.length > 0 && check[0].workspaceId === context.workspaceId && check[0].meaning === "correct_opening_card_position") {
         if (
           check[0].amountPaise === input.targetAmountPaise &&

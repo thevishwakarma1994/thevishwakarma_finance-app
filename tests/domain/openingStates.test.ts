@@ -98,7 +98,7 @@ describe("Phase 16A Final Scenario", () => {
     });
 
     const snapshotTemp = await loadSnapshot(handles, workspaceId);
-    const reservationId = snapshotTemp.reservations.find(r => r.originatingEventId === "c5")!.id;
+    const reservationId = snapshotTemp.reservations.find(r => r.originatingEventId === `${workspaceId}_c5`)!.id;
 
     await correctOpeningReservation(handles, context, {
       commandId: "c6", reservationId, targetAmountPaise: 500000,
@@ -151,7 +151,7 @@ describe("Phase 16A Final Scenario", () => {
     await expect(applyOpeningCard(handles, context, {
       commandId: "c1", creditCardId: cardId, billingCycleId: cycleId,
       amountPaise: 2600000, occurredOn: "2026-08-19", capturedAt: new Date().toISOString()
-    })).rejects.toThrow("idempotency_conflict");
+    })).rejects.toMatchObject({ code: "idempotency_conflict" });
   });
 
   it("rejects corrections when subsequent normal activity exists", async () => {
