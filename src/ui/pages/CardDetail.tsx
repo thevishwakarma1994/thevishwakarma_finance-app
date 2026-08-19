@@ -7,8 +7,6 @@ import {
   fetchPeople,
   fetchAccounts,
   updateCard,
-  type ActivityEvent,
-  type CardCycleView,
   type PersonListItem,
   type Account,
 } from "../apiClient.js";

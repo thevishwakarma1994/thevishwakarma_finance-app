@@ -49,7 +49,7 @@ export function applyReservationOpening(
   // Validate uniqueness
   const hasBaseOpening = snapshot.events.some(
     (e) => e.meaning === "apply_opening_reservation" &&
-      snapshot.reservations.some(r => r.originatingEventId === e.id && r.obligationRef.id === input.billingCycleId)
+      snapshot.reservations.some(r => r.originatingEventId === e.id && r.obligationRef.id === cycle.id)
   );
   if (hasBaseOpening) {
     throw new DomainError("already_exists", "Opening reservation already exists for this cycle");

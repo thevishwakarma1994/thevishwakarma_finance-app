@@ -9,6 +9,7 @@ import { loadSnapshot } from "../../src/db/loadSnapshot.js";
 import { listActivity, listPeople, monthReview, personDetail } from "../../src/db/reads.js";
 import { claims, eventShares, financialEvents, postings } from "../../src/db/schema.js";
 import { applyOpening } from "../../src/app/applyOpening.js";
+import { applyOpeningClaim } from "../../src/app/openingClaim.js";
 import { recordSplit } from "../../src/app/recordSplit.js";
 import { recordCardSpend } from "../../src/app/recordCardSpend.js";
 import { lendMoney } from "../../src/app/lendMoney.js";
@@ -291,27 +292,27 @@ describe("stage 9 people claims and shared ownership", () => {
     expect(listed?.netPaise).toBe(200_000);
   });
 
-//  it.skip("J — person opening creates a claim without fake expense or income", async () => {
-//    const ctx = await setup();
-//    contexts.push(ctx.handles);
-//    const before = tableCounts(ctx.handles, ctx.workspaceId);
-//    await applyOpening(ctx.handles, { workspaceId: ctx.workspaceId }, {
-//      personId: ctx.rahulId,
-//      effectiveOn: "2026-08-01",
-//      direction: "they_owe_user",
-//      amountPaise: 800_000,
-//      commit: true,
-//    });
-//    const snapshot = await loadSnapshot(ctx.handles, ctx.workspaceId);
-//    expect(snapshot.events).toHaveLength(before.events);
-//    expect(snapshot.claims[0]?.kind).toBe("direct_loan");
-//    expect(snapshot.claims[0]?.originalAmountPaise).toBe(800_000);
-//    expect(snapshot.openings.some((opening) => opening.kind === "person")).toBe(true);
-//    expect(snapshot.postings.some((posting) => posting.pnl)).toBe(false);
-//    const detail = await personDetail(ctx.handles, ctx.workspaceId, ctx.rahulId);
-//    expect(detail.hasOpening).toBe(true);
-//    expect(detail.netPaise).toBe(800_000);
-//  });
+  it("J — person opening creates a claim without fake expense or income", async () => {
+    const ctx = await setup();
+    contexts.push(ctx.handles);
+    const before = tableCounts(ctx.handles, ctx.workspaceId);
+    await applyOpeningClaim(ctx.handles, { workspaceId: ctx.workspaceId }, {
+      commandId: "cmd-open-j",
+      personId: ctx.rahulId,
+      occurredOn: "2026-08-01",
+      capturedAt: "2026-08-01T10:00:00.000Z",
+      direction: "they_owe_user",
+      amountPaise: 800_000,
+    });
+    const snapshot = await loadSnapshot(ctx.handles, ctx.workspaceId);
+    expect(snapshot.events).toHaveLength(before.events + 1);
+    expect(snapshot.claims[0]?.kind).toBe("direct_loan");
+    expect(snapshot.claims[0]?.originalAmountPaise).toBe(800_000);
+
+    expect(snapshot.postings.some((posting) => posting.pnl)).toBe(false);
+    const detail = await personDetail(ctx.handles, ctx.workspaceId, ctx.rahulId);
+    expect(detail.netPaise === 800_000).toBe(true);
+  });
 
   it("K — changing card default owner does not rewrite earlier shares or claims", async () => {
     const ctx = await setup();

@@ -383,13 +383,9 @@ export function updatePerson(body: {
 }
 
 export function previewOrCommitOpening(body: {
-  accountId?: string;
-  personId?: string;
+  accountId: string;
   effectiveOn: string;
-  balancePaise?: number;
-  direction?: "they_owe_user" | "user_owes_them";
-  amountPaise?: number;
-  note?: string | null;
+  balancePaise: number;
   commit: boolean;
 }) {
   return request<CommandResult>("/api/commands/opening", {

@@ -1,3 +1,4 @@
+import { type IsoDate } from "../../src/domain/calendar/isoDate.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { openMemoryDatabase, type SqliteHandles } from "../../src/db/client.js";
 import { applyMigrations, getSoleWorkspaceId } from "../../src/db/migrate.js";
@@ -35,7 +36,7 @@ describe("phase 16a lifecycle", () => {
     // 1. ACCOUNT
     await applyOpening(handles, { workspaceId }, {
       accountId: hdfcId,
-      effectiveOn: "2026-08-01",
+      effectiveOn: "2026-08-01" as IsoDate,
       balancePaise: 50_000_00, // ₹50,000
       commit: true,
     });
@@ -61,7 +62,7 @@ describe("phase 16a lifecycle", () => {
     
     // Need a cycle ID for subsequent tests. We can fetch the auto-resolved cycle ID.
     const snapCard = await loadSnapshot(handles, workspaceId);
-    const cycleId = snapCard.billingCycles[0].id;
+    const cycleId = snapCard.billingCycles[0]!.id;
     
 
 
@@ -107,15 +108,15 @@ describe("phase 16a lifecycle", () => {
     expect(income).toBe(0);
     expect(snap1.settlementAllocations.length).toBe(0);
 
-    console.log(Object.keys(snap1)); const sts = evaluateSafeToSpend(snap1, "2026-08-11");
+    const sts = evaluateSafeToSpend(snap1, "2026-08-11" as IsoDate);
     const bank = snap1.accounts.find(a => a.id === hdfcId);
     expect(bank?.balancePaise).toBe(50_000_00);
     expect(sts.reservedTotal).toBe(5_000_00);
     expect(sts.availableLiquid).toBe(45_000_00);
 
-    const cDetail = await cardDetail(handles, workspaceId, card.id, "2026-08-11");
+    const cDetail = await cardDetail(handles, workspaceId, card.id, "2026-08-11" as IsoDate);
     expect(cDetail.outstandingPaise).toBe(20_000_00);
-    expect(cDetail.cycles[0].statementRemainingPaise).toBe(20_000_00);
+    expect(cDetail.cycles[0]!.statementRemainingPaise).toBe(20_000_00);
 
     const rDetail = await personDetail(handles, workspaceId, rahul.id);
     expect(rDetail.theyOwePaise).toBe(10_000_00);
@@ -136,14 +137,14 @@ describe("phase 16a lifecycle", () => {
       commit: true,
     });
     const snap2 = await loadSnapshot(handles, workspaceId);
-    const sts2 = evaluateSafeToSpend(snap2, "2026-08-23");
+    const sts2 = evaluateSafeToSpend(snap2, "2026-08-23" as IsoDate);
     const bank2 = snap2.accounts.find(a => a.id === hdfcId);
     expect(bank2?.balancePaise).toBe(30_000_00);
     expect(sts2.reservedTotal).toBe(0);
 
-    const cDetail2 = await cardDetail(handles, workspaceId, card.id, "2026-08-23");
+    const cDetail2 = await cardDetail(handles, workspaceId, card.id, "2026-08-23" as IsoDate);
     expect(cDetail2.outstandingPaise).toBe(0);
-    expect(cDetail2.cycles[0].statementRemainingPaise).toBe(0);
+    expect(cDetail2.cycles[0]!.statementRemainingPaise).toBe(0);
 
     // 7. RECEIVE CLAIM
     await receiveSettlement(handles, { workspaceId }, {

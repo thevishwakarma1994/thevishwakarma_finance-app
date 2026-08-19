@@ -29,7 +29,14 @@ export function enrichClaim(
   const effectivePrincipal = paise(claim.originalAmountPaise + correctionDeltasPaise);
   const openAmountPaise = deriveOpenAmount(effectivePrincipal, allocatedPaise);
   
-  const status = deriveClaimStatus(claim.status, openAmountPaise);
+  let reconstructedStatus = claim.status;
+  if (effectivePrincipal > 0 && claim.status === "void") {
+    reconstructedStatus = "open";
+  } else if (effectivePrincipal === 0) {
+    reconstructedStatus = "void";
+  }
+
+  const status = deriveClaimStatus(reconstructedStatus, openAmountPaise);
 
   return {
     ...claim,
