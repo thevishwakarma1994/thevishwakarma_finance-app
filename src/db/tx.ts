@@ -32,7 +32,100 @@ export async function withTransaction<T>(
 }
 
 export function withSqliteTransaction<T>(handles: SqliteHandles, fn: () => T): T {
-  return handles.sqlite.transaction(fn)();
+  if (handles.inTransaction) {
+    return fn();
+  }
+  return handles.sqlite.transaction(() => {
+    const previous = handles.inTransaction;
+    handles.inTransaction = true;
+    try {
+      return fn();
+    } finally {
+      handles.inTransaction = previous;
+    }
+  })();
+}
+
+/**
+ * Serialize async SQLite read→validate→write on one connection, and take a
+ * database write lock (`BEGIN IMMEDIATE`) so a second connection cannot commit
+ * card lifecycle between our snapshot and persist.
+ *
+ * better-sqlite3 forbids awaiting inside `Database#transaction()`. This wrapper
+ * is the async equivalent: a per-connection JS gate plus IMMEDIATE, so other
+ * code cannot use the same connection between BEGIN and COMMIT.
+ */
+const sqliteWriteGates = new WeakMap<object, Promise<void>>();
+
+function runSqliteExclusive<T>(connection: object, fn: () => Promise<T>): Promise<T> {
+  const previous = sqliteWriteGates.get(connection) ?? Promise.resolve();
+  let release: () => void = () => {};
+  const done = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  sqliteWriteGates.set(
+    connection,
+    previous.then(() => done).catch(() => done),
+  );
+  return previous.then(fn).finally(release);
+}
+
+export async function withSqliteImmediateTransaction<T>(
+  handles: SqliteHandles,
+  fn: (handles: SqliteHandles) => T | Promise<T>,
+): Promise<T> {
+  if (handles.inTransaction) {
+    return fn(handles);
+  }
+  return runSqliteExclusive(handles.sqlite, async () => {
+    await beginImmediateAsync(handles.sqlite);
+    const txHandles: SqliteHandles = { ...handles, inTransaction: true };
+    try {
+      const result = await fn(txHandles);
+      handles.sqlite.exec("COMMIT");
+      return result;
+    } catch (error) {
+      try {
+        handles.sqlite.exec("ROLLBACK");
+      } catch {
+        // Connection already rolled back or closed.
+      }
+      throw error;
+    }
+  });
+}
+
+function isSqliteBusy(error: unknown): boolean {
+  return Boolean(
+    error &&
+      typeof error === "object" &&
+      "code" in error &&
+      (error as { code: string }).code === "SQLITE_BUSY",
+  );
+}
+
+/**
+ * `BEGIN IMMEDIATE` is synchronous in better-sqlite3. A second connection that
+ * busy-waits would freeze the event loop and prevent the lock holder from
+ * committing. Fail immediately and retry after a tick instead.
+ */
+async function beginImmediateAsync(sqlite: SqliteHandles["sqlite"]): Promise<void> {
+  sqlite.pragma("busy_timeout = 0");
+  const deadline = Date.now() + 10_000;
+  try {
+    for (;;) {
+      try {
+        sqlite.exec("BEGIN IMMEDIATE");
+        return;
+      } catch (error) {
+        if (!isSqliteBusy(error)) throw error;
+        if (Date.now() > deadline) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+    }
+  } finally {
+    sqlite.pragma("busy_timeout = 5000");
+  }
 }
 
 export async function withPostgresTransaction<T>(

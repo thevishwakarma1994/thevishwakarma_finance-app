@@ -32,6 +32,21 @@ import { parseDueRule } from "../domain/obligations/generate.js";
 import { fromStoredPaise, fromStoredPaiseOrNull } from "./storedPaise.js";
 import { recordSnapshotCall, timedPerf } from "../perf/timing.js";
 
+async function loadSnapshotQueries<T extends unknown[]>(
+  handles: DbHandles,
+  loaders: { [K in keyof T]: () => Promise<T[K]> },
+): Promise<T> {
+  // node-postgres forbids concurrent queries on one transaction client.
+  if (handles.dialect === "postgres" && handles.inTransaction) {
+    const rows: unknown[] = [];
+    for (const load of loaders) {
+      rows.push(await load());
+    }
+    return rows as T;
+  }
+  return Promise.all(loaders.map((load) => load())) as Promise<T>;
+}
+
 export async function loadSnapshot(
   handles: DbHandles,
   workspaceId: string,
@@ -69,54 +84,56 @@ export async function loadSnapshot(
       templateRows,
       instanceRows,
       cardRuleById,
-    ] = await Promise.all([
-      count(queryAll(handles, db.select().from(t.accounts).where(eq(t.accounts.workspaceId, workspaceId)))),
-      count(queryAll(handles, db.select().from(t.creditCards).where(eq(t.creditCards.workspaceId, workspaceId)))),
-      count(queryAll(handles, db.select().from(t.billingCycles).where(eq(t.billingCycles.workspaceId, workspaceId)))),
-      count(queryAll(handles, db.select().from(t.categories).where(eq(t.categories.workspaceId, workspaceId)))),
-      count(
-        queryAll(handles, db.select().from(t.financialEvents).where(eq(t.financialEvents.workspaceId, workspaceId))),
-      ),
-      count(queryAll(handles, db.select().from(t.postings).where(eq(t.postings.workspaceId, workspaceId)))),
-      count(
-        queryAll(handles, db.select().from(t.openingPositions).where(eq(t.openingPositions.workspaceId, workspaceId))),
-      ),
-      count(queryAll(handles, db.select().from(t.people).where(eq(t.people.workspaceId, workspaceId)))),
-      count(queryAll(handles, db.select().from(t.claims).where(eq(t.claims.workspaceId, workspaceId)))),
-      count(queryAll(handles, db.select().from(t.eventShares).where(eq(t.eventShares.workspaceId, workspaceId)))),
-      count(
-        queryAll(
-          handles,
-          db.select().from(t.settlementAllocations).where(eq(t.settlementAllocations.workspaceId, workspaceId)),
+    ] = await loadSnapshotQueries(handles, [
+      () => count(queryAll(handles, db.select().from(t.accounts).where(eq(t.accounts.workspaceId, workspaceId)))),
+      () => count(queryAll(handles, db.select().from(t.creditCards).where(eq(t.creditCards.workspaceId, workspaceId)))),
+      () => count(queryAll(handles, db.select().from(t.billingCycles).where(eq(t.billingCycles.workspaceId, workspaceId)))),
+      () => count(queryAll(handles, db.select().from(t.categories).where(eq(t.categories.workspaceId, workspaceId)))),
+      () =>
+        count(queryAll(handles, db.select().from(t.financialEvents).where(eq(t.financialEvents.workspaceId, workspaceId)))),
+      () => count(queryAll(handles, db.select().from(t.postings).where(eq(t.postings.workspaceId, workspaceId)))),
+      () =>
+        count(
+          queryAll(handles, db.select().from(t.openingPositions).where(eq(t.openingPositions.workspaceId, workspaceId))),
         ),
-      ),
-      count(queryAll(handles, db.select().from(t.reservations).where(eq(t.reservations.workspaceId, workspaceId)))),
-      count(
-        queryAll(
-          handles,
-          db.select().from(t.reservationLedger).where(eq(t.reservationLedger.workspaceId, workspaceId)),
+      () => count(queryAll(handles, db.select().from(t.people).where(eq(t.people.workspaceId, workspaceId)))),
+      () => count(queryAll(handles, db.select().from(t.claims).where(eq(t.claims.workspaceId, workspaceId)))),
+      () => count(queryAll(handles, db.select().from(t.eventShares).where(eq(t.eventShares.workspaceId, workspaceId)))),
+      () =>
+        count(
+          queryAll(
+            handles,
+            db.select().from(t.settlementAllocations).where(eq(t.settlementAllocations.workspaceId, workspaceId)),
+          ),
         ),
-      ),
-      count(queryAll(handles, db.select().from(t.surplusCases).where(eq(t.surplusCases.workspaceId, workspaceId)))),
-      count(
-        queryAll(handles, db.select().from(t.incomePolicies).where(eq(t.incomePolicies.workspaceId, workspaceId))),
-      ),
-      count(
-        queryAll(handles, db.select().from(t.fundingCycles).where(eq(t.fundingCycles.workspaceId, workspaceId))),
-      ),
-      count(
-        queryAll(
-          handles,
-          db.select().from(t.obligationTemplates).where(eq(t.obligationTemplates.workspaceId, workspaceId)),
+      () => count(queryAll(handles, db.select().from(t.reservations).where(eq(t.reservations.workspaceId, workspaceId)))),
+      () =>
+        count(
+          queryAll(
+            handles,
+            db.select().from(t.reservationLedger).where(eq(t.reservationLedger.workspaceId, workspaceId)),
+          ),
         ),
-      ),
-      count(
-        queryAll(
-          handles,
-          db.select().from(t.obligationInstances).where(eq(t.obligationInstances.workspaceId, workspaceId)),
+      () => count(queryAll(handles, db.select().from(t.surplusCases).where(eq(t.surplusCases.workspaceId, workspaceId)))),
+      () =>
+        count(queryAll(handles, db.select().from(t.incomePolicies).where(eq(t.incomePolicies.workspaceId, workspaceId)))),
+      () =>
+        count(queryAll(handles, db.select().from(t.fundingCycles).where(eq(t.fundingCycles.workspaceId, workspaceId)))),
+      () =>
+        count(
+          queryAll(
+            handles,
+            db.select().from(t.obligationTemplates).where(eq(t.obligationTemplates.workspaceId, workspaceId)),
+          ),
         ),
-      ),
-      count(loadCardRulesForWorkspace(handles, workspaceId, asOf)),
+      () =>
+        count(
+          queryAll(
+            handles,
+            db.select().from(t.obligationInstances).where(eq(t.obligationInstances.workspaceId, workspaceId)),
+          ),
+        ),
+      () => count(loadCardRulesForWorkspace(handles, workspaceId, asOf)),
     ]);
 
     const openings: OpeningPosition[] = openingRows.map((row) => {

@@ -8,6 +8,7 @@ import { loadCardRule } from "../db/config.js";
 import type { DbHandles } from "../db/client.js";
 import type { WorkspaceContext } from "./context.js";
 import { assertWorkspaceOwned } from "./ownership.js";
+import { withCreditCardWriteLock } from "../db/cardWriteLock.js";
 
 const inputSchema = z.object({
   occurredOn: z.string(),
@@ -35,41 +36,50 @@ export async function recordCardSpend(
   raw: unknown,
 ) {
   const input = inputSchema.parse(raw);
-  await assertWorkspaceOwned(handles, context.workspaceId, [
-    { type: "card", id: input.creditCardId },
+  const refs = [
+    { type: "card" as const, id: input.creditCardId },
     ...input.allocations.map((allocation) => ({ type: "category" as const, id: allocation.categoryId })),
     input.ownerPersonId ? { type: "person" as const, id: input.ownerPersonId } : null,
-  ]);
-  const occurredOn = isoDate(input.occurredOn);
-  const snapshot = await loadSnapshot(handles, context.workspaceId, occurredOn);
-  const rule = await loadCardRule(handles, context.workspaceId, input.creditCardId, occurredOn);
-  const result = recordCardSpendDomain(
-    {
-      occurredOn,
-      capturedAt: input.capturedAt,
-      creditCardId: input.creditCardId,
-      allocations: input.allocations.map((allocation) => ({
-        categoryId: allocation.categoryId,
-        amountPaise: paise(allocation.amountPaise),
-      })),
-      amountPaise: input.amountPaise === undefined ? undefined : paise(input.amountPaise),
-      ownerPersonId: input.ownerPersonId,
-      merchant: input.merchant,
-      notes: input.notes,
-      channel: input.channel,
-      rule,
-    },
-    snapshot,
-  );
+  ];
 
-  if (input.commit) {
-    await persistBatch(handles, context.workspaceId, result.batch);
-  }
+  const run = async (tx: DbHandles) => {
+    await assertWorkspaceOwned(tx, context.workspaceId, refs);
+    const occurredOn = isoDate(input.occurredOn);
+    const snapshot = await loadSnapshot(tx, context.workspaceId, occurredOn);
+    const rule = await loadCardRule(tx, context.workspaceId, input.creditCardId, occurredOn);
+    const result = recordCardSpendDomain(
+      {
+        occurredOn,
+        capturedAt: input.capturedAt,
+        creditCardId: input.creditCardId,
+        allocations: input.allocations.map((allocation) => ({
+          categoryId: allocation.categoryId,
+          amountPaise: paise(allocation.amountPaise),
+        })),
+        amountPaise: input.amountPaise === undefined ? undefined : paise(input.amountPaise),
+        ownerPersonId: input.ownerPersonId,
+        merchant: input.merchant,
+        notes: input.notes,
+        channel: input.channel,
+        rule,
+      },
+      snapshot,
+    );
 
-  return {
-    preview: result.preview,
-    eventId: result.batch.events[0]?.id ?? null,
-    billingCycleId: result.batch.events[0]?.billingCycleId ?? null,
-    committed: input.commit,
+    if (input.commit) {
+      await persistBatch(tx, context.workspaceId, result.batch);
+    }
+
+    return {
+      preview: result.preview,
+      eventId: result.batch.events[0]?.id ?? null,
+      billingCycleId: result.batch.events[0]?.billingCycleId ?? null,
+      committed: input.commit,
+    };
   };
+
+  if (!input.commit) {
+    return run(handles);
+  }
+  return withCreditCardWriteLock(handles, context.workspaceId, input.creditCardId, run);
 }

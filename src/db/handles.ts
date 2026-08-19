@@ -12,6 +12,8 @@ export type SqliteHandles = {
   dialect: "sqlite";
   sqlite: Database.Database;
   db: SqliteDatabase;
+  /** True while the caller already holds a write transaction on this connection. */
+  inTransaction?: boolean;
 };
 
 export type PostgresHandles = {

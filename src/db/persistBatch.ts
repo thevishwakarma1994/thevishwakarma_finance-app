@@ -186,7 +186,7 @@ function assertPersistable(batch: ProposedBatch): void {
 function persistBatchSqlite(handles: SqliteHandles, workspaceId: string, batch: ProposedBatch): void {
   const t = tables(handles);
   const rows = mappedRows(workspaceId, batch);
-  withSqliteTransaction(handles, () => {
+  const write = () => {
     if (rows.cycles.length > 0) anyDb(handles).insert(t.billingCycles).values(rows.cycles).run();
     if (rows.openings.length > 0) anyDb(handles).insert(t.openingPositions).values(rows.openings).run();
     if (rows.instances.length > 0) anyDb(handles).insert(t.obligationInstances).values(rows.instances).run();
@@ -249,7 +249,8 @@ function persistBatchSqlite(handles: SqliteHandles, workspaceId: string, batch: 
         .run();
     }
     if (rows.postings.length > 0) anyDb(handles).insert(t.postings).values(rows.postings).run();
-  });
+  };
+  withSqliteTransaction(handles, write);
 }
 
 async function persistBatchPostgres(

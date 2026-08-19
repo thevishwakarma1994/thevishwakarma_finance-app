@@ -7,6 +7,7 @@ import { persistBatch } from "../db/persistBatch.js";
 import type { DbHandles } from "../db/client.js";
 import type { WorkspaceContext } from "./context.js";
 import { assertWorkspaceOwned } from "./ownership.js";
+import { withCreditCardWriteLock } from "../db/cardWriteLock.js";
 
 const inputSchema = z.object({
   occurredOn: z.string(),
@@ -22,34 +23,43 @@ const inputSchema = z.object({
 
 export async function payCard(handles: DbHandles, context: WorkspaceContext, raw: unknown) {
   const input = inputSchema.parse(raw);
-  await assertWorkspaceOwned(handles, context.workspaceId, [
-    { type: "card", id: input.creditCardId },
-    { type: "cycle", id: input.billingCycleId },
-    { type: "account", id: input.accountId },
-  ]);
-  const occurredOn = isoDate(input.occurredOn);
-  const snapshot = await loadSnapshot(handles, context.workspaceId, occurredOn);
-  const result = payCardDomain(
-    {
-      occurredOn,
-      capturedAt: input.capturedAt,
-      creditCardId: input.creditCardId,
-      billingCycleId: input.billingCycleId,
-      accountId: input.accountId,
-      amountPaise: paise(input.amountPaise),
-      notes: input.notes,
-      channel: input.channel,
-    },
-    snapshot,
-  );
+  const refs = [
+    { type: "card" as const, id: input.creditCardId },
+    { type: "cycle" as const, id: input.billingCycleId },
+    { type: "account" as const, id: input.accountId },
+  ];
 
-  if (input.commit) {
-    await persistBatch(handles, context.workspaceId, result.batch);
-  }
+  const run = async (tx: DbHandles) => {
+    await assertWorkspaceOwned(tx, context.workspaceId, refs);
+    const occurredOn = isoDate(input.occurredOn);
+    const snapshot = await loadSnapshot(tx, context.workspaceId, occurredOn);
+    const result = payCardDomain(
+      {
+        occurredOn,
+        capturedAt: input.capturedAt,
+        creditCardId: input.creditCardId,
+        billingCycleId: input.billingCycleId,
+        accountId: input.accountId,
+        amountPaise: paise(input.amountPaise),
+        notes: input.notes,
+        channel: input.channel,
+      },
+      snapshot,
+    );
 
-  return {
-    preview: result.preview,
-    eventId: result.batch.events[0]?.id ?? null,
-    committed: input.commit,
+    if (input.commit) {
+      await persistBatch(tx, context.workspaceId, result.batch);
+    }
+
+    return {
+      preview: result.preview,
+      eventId: result.batch.events[0]?.id ?? null,
+      committed: input.commit,
+    };
   };
+
+  if (!input.commit) {
+    return run(handles);
+  }
+  return withCreditCardWriteLock(handles, context.workspaceId, input.creditCardId, run);
 }
