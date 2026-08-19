@@ -32,7 +32,8 @@ export function PersonDetail({ personId, onBack, onCapture }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
-  const [openingOpen, setOpeningOpen] = useState(false);
+  const [openingTheyOweOpen, setOpeningTheyOweOpen] = useState(false);
+  const [openingIOweOpen, setOpeningIOweOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [notes, setNotes] = useState("");
 
@@ -112,14 +113,24 @@ export function PersonDetail({ personId, onBack, onCapture }: Props) {
 
               {(() => {
                 const hasNormal = data.history.some(t => !t.meaning.includes("opening"));
-                const hasBase = data.history.some(t => t.meaning === "apply_opening_claim");
-                if (!hasNormal && !hasBase) {
-                  return <button className="secondary" type="button" onClick={() => setOpeningOpen(true)}>Set opening balance</button>;
+                const claimsList = data.claims ?? data.openClaims;
+                const openingTheyOwe = claimsList.find(c => c.originatingMeaning === "apply_opening_claim" && c.direction === "they_owe_user");
+                const openingIOwe = claimsList.find(c => c.originatingMeaning === "apply_opening_claim" && c.direction === "user_owes_them");
+                
+                const buttons = [];
+                if (!hasNormal) {
+                  buttons.push(
+                    <button key="they-owe" className="secondary" type="button" onClick={() => setOpeningTheyOweOpen(true)}>
+                      {openingTheyOwe ? "Correct opening 'They owe me'" : "Set opening 'They owe me'"}
+                    </button>
+                  );
+                  buttons.push(
+                    <button key="i-owe" className="secondary" type="button" onClick={() => setOpeningIOweOpen(true)}>
+                      {openingIOwe ? "Correct opening 'I owe them'" : "Set opening 'I owe them'"}
+                    </button>
+                  );
                 }
-                if (!hasNormal && hasBase) {
-                  return <button className="secondary" type="button" onClick={() => setOpeningOpen(true)}>Correct opening balance</button>;
-                }
-                return null;
+                return buttons.length > 0 ? buttons : null;
               })()}
             </div>
             <button className="text-action" type="button" onClick={() => setHistoryOpen((open) => !open)}>
@@ -158,16 +169,28 @@ export function PersonDetail({ personId, onBack, onCapture }: Props) {
             Notes
           </button>
           {!data.hasOpening ? (
-            <button
-              className="list-row"
-              type="button"
-              onClick={() => {
-                setMenuOpen(false);
-                setOpeningOpen(true);
-              }}
-            >
-              Opening position
-            </button>
+            <div className="stack" style={{ gap: "4px" }}>
+              <button
+                className="list-row"
+                type="button"
+                onClick={() => {
+                  setMenuOpen(false);
+                  setOpeningTheyOweOpen(true);
+                }}
+              >
+                Opening: They owe me
+              </button>
+              <button
+                className="list-row"
+                type="button"
+                onClick={() => {
+                  setMenuOpen(false);
+                  setOpeningIOweOpen(true);
+                }}
+              >
+                Opening: I owe them
+              </button>
+            </div>
           ) : (
             <p className="muted">Opening set {data.openingEffectiveOn}</p>
           )}
@@ -217,18 +240,49 @@ export function PersonDetail({ personId, onBack, onCapture }: Props) {
           </form>
         </Sheet>
       ) : null}
-      {openingOpen ? (
-        <Sheet title="Opening position" onClose={() => setOpeningOpen(false)}>
-          <OpeningClaimForm
-            personId={personId}
-            isCorrection={data?.history.some(t => t.meaning === "apply_opening_claim") ?? false}
-            claimId={data?.openClaims.find(c => c.kind === "direct_loan" || c.kind === "borrowing")?.id}
-            currentAmountPaise={data?.openClaims.find(c => c.kind === "direct_loan" || c.kind === "borrowing")?.openAmountPaise ?? 0}
-            onDone={() => {
-              setOpeningOpen(false);
-              load();
-            }}
-          />
+      {openingTheyOweOpen ? (
+        <Sheet title="Opening position" onClose={() => setOpeningTheyOweOpen(false)}>
+          {(() => {
+            const claimsList = data?.claims ?? data?.openClaims ?? [];
+            const openingTheyOwe = claimsList.find(c => c.originatingMeaning === "apply_opening_claim" && c.direction === "they_owe_user");
+            
+            return (
+              <OpeningClaimForm
+                personId={personId}
+                isCorrection={!!openingTheyOwe}
+                claimId={openingTheyOwe?.id}
+                currentAmountPaise={openingTheyOwe?.openAmountPaise ?? 0}
+                direction="they_owe_user"
+                onDone={() => {
+                  setOpeningTheyOweOpen(false);
+                  load();
+                }}
+              />
+            );
+          })()}
+        </Sheet>
+      ) : null}
+
+      {openingIOweOpen ? (
+        <Sheet title="Opening position" onClose={() => setOpeningIOweOpen(false)}>
+          {(() => {
+            const claimsList = data?.claims ?? data?.openClaims ?? [];
+            const openingIOwe = claimsList.find(c => c.originatingMeaning === "apply_opening_claim" && c.direction === "user_owes_them");
+            
+            return (
+              <OpeningClaimForm
+                personId={personId}
+                isCorrection={!!openingIOwe}
+                claimId={openingIOwe?.id}
+                currentAmountPaise={openingIOwe?.openAmountPaise ?? 0}
+                direction="user_owes_them"
+                onDone={() => {
+                  setOpeningIOweOpen(false);
+                  load();
+                }}
+              />
+            );
+          })()}
         </Sheet>
       ) : null}
     </>

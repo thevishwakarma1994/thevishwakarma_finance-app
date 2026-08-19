@@ -230,8 +230,23 @@ export async function loadSnapshot(
       reservationId: row.reservationId,
     }));
 
-    const ledgerClaims: LedgerClaim[] = claimRows.map((row) =>
-      enrichClaim(
+    const eventMeanings = new Map<string, string>();
+    events.forEach((e) => eventMeanings.set(e.id, e.meaning));
+    const correctionPostingsByClaim = new Map<string, number>();
+    ledgerPostings.forEach((p) => {
+      if (p.claimId && eventMeanings.get(p.eventId) === "correct_opening_claim") {
+        correctionPostingsByClaim.set(
+          p.claimId,
+          (correctionPostingsByClaim.get(p.claimId) || 0) + p.amountPaise,
+        );
+      }
+    });
+
+    const ledgerClaims: LedgerClaim[] = claimRows.map((row) => {
+      const isOpening = eventMeanings.get(row.originatingEventId ?? "") === "apply_opening_claim";
+      const correctionDeltas = isOpening ? (correctionPostingsByClaim.get(row.id) || 0) : 0;
+      
+      return enrichClaim(
         {
           id: row.id,
           personId: row.personId,
@@ -245,8 +260,9 @@ export async function loadSnapshot(
           status: row.status as ClaimStatus,
         },
         loadedAllocations,
-      ),
-    );
+        correctionDeltas,
+      );
+    });
 
     const ledgerReservations = reservationRows.map((row) =>
       enrichReservation({

@@ -98,7 +98,8 @@ export function mapError(
         : error.code === "insufficient_balance" ||
             error.code === "insufficient_available" ||
             error.code === "duplicate_category" ||
-            error.code === "payment_exceeds_outstanding"
+            error.code === "payment_exceeds_outstanding" ||
+            error.code === "idempotency_conflict"
           ? 409
           : error.code === "account_not_found" ||
               error.code === "category_not_found" ||

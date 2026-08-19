@@ -1,6 +1,8 @@
 import { type Paise, paise } from "../money/paise.js";
 import { DomainError, emptyBatch, type LedgerSnapshot, type ProposedBatch, type Posting, type FinancialEvent } from "../ledger/types.js";
 import { isoDate } from "../calendar/isoDate.js";
+import { resolveBillingCycle } from "../cycle/resolve.js";
+import type { BillingCycleRecord } from "../ledger/types.js";
 
 export function applyCardOpening(
   input: {
@@ -21,9 +23,25 @@ export function applyCardOpening(
   const card = snapshot.creditCards.find((c) => c.id === input.creditCardId);
   if (!card) throw new DomainError("not_found", "Card not found");
 
-  // Ensure cycle exists
-  const cycle = snapshot.billingCycles.find((c) => c.id === input.billingCycleId);
-  if (!cycle) throw new DomainError("not_found", "Cycle not found");
+  let cycle: BillingCycleRecord | undefined = snapshot.billingCycles.find((c) => c.id === input.billingCycleId);
+  let newCycles: BillingCycleRecord[] | undefined = undefined;
+  
+  if (!cycle) {
+    const cardRule = snapshot.cardRules.find((r) => r.creditCardId === input.creditCardId);
+    if (!cardRule) {
+       throw new DomainError("not_found", "Card cycle rule not found, cannot materialize cycle");
+    }
+    const resolved = resolveBillingCycle(input.creditCardId, isoDate(input.occurredOn), cardRule.rule, snapshot.billingCycles);
+    // Actually, resolve returns a generated cycle. But we were asked to apply it to `input.billingCycleId`.
+    // Wait, if the UI passes an ID, the UI expects that ID to be used.
+    // If the UI generated a random ID, we should just use that generated ID for the newly materialized cycle.
+    cycle = {
+      ...resolved.cycle,
+      id: input.billingCycleId, // force the UI's ID to keep the payload consistent
+    };
+    newCycles = [cycle];
+  }
+
   if (cycle.creditCardId !== input.creditCardId) {
     throw new DomainError("invalid_opening", "Cycle does not belong to card");
   }
@@ -72,6 +90,7 @@ export function applyCardOpening(
     events: [event],
     postings: [posting],
     openings: [],
+    billingCycles: newCycles,
   };
 }
 

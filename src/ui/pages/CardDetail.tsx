@@ -5,15 +5,17 @@ import {
   ApiError,
   fetchCard,
   fetchPeople,
+  fetchAccounts,
   updateCard,
   type ActivityEvent,
   type CardCycleView,
   type PersonListItem,
+  type Account,
 } from "../apiClient.js";
 import { ErrorState, PageHeader, Sheet, Skeleton } from "../chrome.js";
 import { OverflowIcon } from "../icons.js";
 import type { AddIntent } from "./Add.js";
-import { OpeningCardDebtForm } from "../components/OpeningForms.js";
+import { OpeningCardDebtForm, OpeningEarmarkForm } from "../components/OpeningForms.js";
 
 type Props = {
   cardId: string;
@@ -45,14 +47,17 @@ export function CardDetail({ cardId, onBack, onOpenCycle, onCapture }: Props) {
     cycles: CardCycleView[];
     transactions: ActivityEvent[];
   } | null>(null);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [earmarkFormOpen, setEarmarkFormOpen] = useState(false);
 
   useEffect(() => {
-    Promise.all([fetchCard(cardId), fetchPeople()])
-      .then(([card, peopleData]) => {
+    Promise.all([fetchCard(cardId), fetchPeople(), fetchAccounts()])
+      .then(([card, peopleData, accountsData]) => {
         setData(card);
         setRename(card.displayName);
         setOwnerPersonId(card.defaultOwnerPersonId ?? "");
         setPeople(peopleData.people);
+        setAccounts(accountsData.accounts);
       })
       .catch((caught: unknown) => {
         setError(caught instanceof ApiError ? caught.message : "Could not load card");
@@ -105,13 +110,21 @@ export function CardDetail({ cardId, onBack, onOpenCycle, onCapture }: Props) {
               {(() => {
                 const hasNormal = data.transactions.some(t => !t.meaning.includes("opening"));
                 const baseEvent = data.transactions.find(t => t.meaning === "apply_opening_card_position");
+                const resEvent = data.transactions.find(t => t.meaning === "apply_opening_reservation");
+                const buttons = [];
                 if (!hasNormal && !baseEvent) {
-                  return <button className="secondary" type="button" onClick={() => setOpeningFormOpen(true)}>Set opening debt</button>;
+                  buttons.push(<button key="set-debt" className="secondary" type="button" onClick={() => setOpeningFormOpen(true)}>Set opening debt</button>);
                 }
                 if (!hasNormal && baseEvent) {
-                  return <button className="secondary" type="button" onClick={() => setOpeningFormOpen(true)}>Correct opening debt</button>;
+                  buttons.push(<button key="cor-debt" className="secondary" type="button" onClick={() => setOpeningFormOpen(true)}>Correct opening debt</button>);
                 }
-                return null;
+                if (!hasNormal && !resEvent) {
+                  buttons.push(<button key="set-ear" className="secondary" type="button" onClick={() => setEarmarkFormOpen(true)}>Set already-earmarked money</button>);
+                }
+                if (!hasNormal && resEvent) {
+                  buttons.push(<button key="cor-ear" className="secondary" type="button" onClick={() => setEarmarkFormOpen(true)}>Correct already-earmarked money</button>);
+                }
+                return buttons.length > 0 ? buttons : null;
               })()}
             </div>
             <p className="section-label">Cycles</p>
@@ -140,6 +153,51 @@ export function CardDetail({ cardId, onBack, onOpenCycle, onCapture }: Props) {
           </>
         ) : null}
       </main>
+      
+      {openingFormOpen && data ? (
+        <Sheet
+          title={data.transactions.find(t => t.meaning === "apply_opening_card_position") ? "Correct opening debt" : "Set opening debt"}
+          onClose={() => setOpeningFormOpen(false)}
+        >
+          <OpeningCardDebtForm
+            cardId={cardId}
+            cycleId={dueCycle?.id ?? data.cycles[0]?.id ?? ""} // Form will handle cycleId or backend will resolve
+            isCorrection={!!data.transactions.find(t => t.meaning === "apply_opening_card_position")}
+            currentAmountPaise={
+              data.transactions
+                .filter(t => t.meaning === "apply_opening_card_position" || t.meaning === "correct_opening_card_position")
+                .reduce((acc, t) => acc + t.amountPaise, 0)
+            }
+            onDone={() => {
+              setOpeningFormOpen(false);
+              void fetchCard(cardId).then(setData);
+            }}
+          />
+        </Sheet>
+      ) : null}
+
+      {earmarkFormOpen && data ? (
+        <Sheet
+          title={data.transactions.find(t => t.meaning === "apply_opening_reservation") ? "Correct earmarked money" : "Set already-earmarked money"}
+          onClose={() => setEarmarkFormOpen(false)}
+        >
+          <OpeningEarmarkForm
+            cardId={cardId}
+            cycleId={dueCycle?.id ?? data.cycles[0]?.id ?? ""}
+            accounts={accounts}
+            isCorrection={!!data.transactions.find(t => t.meaning === "apply_opening_reservation")}
+            currentAmountPaise={
+              data.transactions
+                .filter(t => t.meaning === "apply_opening_reservation" || t.meaning === "correct_opening_reservation")
+                .reduce((acc, t) => acc + t.amountPaise, 0)
+            }
+            onDone={() => {
+              setEarmarkFormOpen(false);
+              void fetchCard(cardId).then(setData);
+            }}
+          />
+        </Sheet>
+      ) : null}
       {menuOpen && data ? (
         <Sheet title="Edit card" onClose={() => setMenuOpen(false)}>
           <form

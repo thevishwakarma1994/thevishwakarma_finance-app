@@ -1,14 +1,16 @@
 import { type Paise, paise } from "../money/paise.js";
-import { DomainError, emptyBatch, type LedgerSnapshot, type ProposedBatch, type FinancialEvent, type ReservationRecord, type ReservationMutation, type ReservationLedgerEntry } from "../ledger/types.js";
+import { DomainError, emptyBatch, type LedgerSnapshot, type ProposedBatch, type FinancialEvent, type ReservationRecord, type ReservationMutation, type ReservationLedgerEntry, type BillingCycleRecord } from "../ledger/types.js";
 import { isoDate } from "../calendar/isoDate.js";
 import { accountAvailability } from "../engine/liquidity.js";
 import { enrichReservation, applyReservationDelta } from "../reservations/derive.js";
+import { resolveBillingCycle } from "../cycle/resolve.js";
 
 
 export function applyReservationOpening(
   input: {
     commandId: string;
     sourceAccountId: string;
+    cardId: string;
     billingCycleId: string;
     amountPaise: Paise;
     occurredOn: string;
@@ -25,8 +27,22 @@ export function applyReservationOpening(
   if (!account) throw new DomainError("not_found", "Account not found");
 
   // Ensure cycle exists
-  const cycle = snapshot.billingCycles.find((c) => c.id === input.billingCycleId);
-  if (!cycle) throw new DomainError("not_found", "Billing cycle not found");
+  let cycle: BillingCycleRecord | undefined = snapshot.billingCycles.find((c) => c.id === input.billingCycleId);
+  let newCycles: BillingCycleRecord[] | undefined = undefined;
+
+  if (!cycle) {
+    if (!input.cardId) throw new DomainError("invalid_opening", "Card ID required to materialize cycle");
+    const cardRule = snapshot.cardRules.find((r) => r.creditCardId === input.cardId);
+    if (!cardRule) {
+       throw new DomainError("not_found", "Card cycle rule not found, cannot materialize cycle");
+    }
+    const resolved = resolveBillingCycle(input.cardId, isoDate(input.occurredOn), cardRule.rule, snapshot.billingCycles);
+    cycle = {
+      ...resolved.cycle,
+      id: input.billingCycleId,
+    };
+    newCycles = [cycle];
+  }
 
   // Validate uniqueness
   const hasBaseOpening = snapshot.events.some(
@@ -83,7 +99,10 @@ export function applyReservationOpening(
     events: [event],
     postings: [],
     reservations: [reservationRecord],
+    reservationUpdates: [],
+    reservationLedger: [],
     openings: [],
+    billingCycles: newCycles,
   };
 }
 
@@ -107,7 +126,7 @@ export function correctReservationOpening(
 
   // Validate it's an opening reservation
   const baseOpening = snapshot.events.find(
-    (e) => e.meaning === "apply_opening_reservation" && e.id === reservationRecord.originatingEventId
+    (e) => (e.meaning === "apply_opening_reservation" || e.meaning === "correct_opening_reservation") && e.id === reservationRecord.originatingEventId
   );
   if (!baseOpening) {
     throw new DomainError("invalid_opening", "Cannot correct a non-opening reservation");

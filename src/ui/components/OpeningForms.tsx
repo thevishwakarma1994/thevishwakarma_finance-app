@@ -12,6 +12,7 @@ import {
   ApiError,
   type Account,
 } from "../apiClient.js";
+import { parseInr } from "../../domain/money/inr.js";
 
 // Helper to generate and persist a command ID for the lifetime of a submission attempt
 function useCommandId() {
@@ -47,9 +48,15 @@ export function OpeningCardDebtForm({
       className="stack"
       onSubmit={(e) => {
         e.preventDefault();
-        const num = Math.round(parseFloat(amount) * 100);
-        if (isNaN(num) || num < 0) {
-          setError("Invalid amount");
+        let num: number;
+        try {
+          num = parseInr(amount);
+          if (num < 0) {
+            setError("Invalid amount");
+            return;
+          }
+        } catch (err: unknown) {
+          setError(err instanceof Error ? err.message : "Invalid amount");
           return;
         }
         setSubmitting(true);
@@ -108,16 +115,17 @@ export function OpeningClaimForm({
   isCorrection,
   claimId,
   currentAmountPaise,
+  direction,
   onDone,
 }: {
   personId: string;
   isCorrection: boolean;
   claimId?: string;
   currentAmountPaise?: number;
+  direction: "they_owe_user" | "user_owes_them";
   onDone: () => void;
 }) {
   const [amount, setAmount] = useState(isCorrection ? ((currentAmountPaise ?? 0) / 100).toString() : "");
-  const [direction, setDirection] = useState<"they_owe_user" | "user_owes_them">("they_owe_user");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const getCommandId = useCommandId();
@@ -127,9 +135,15 @@ export function OpeningClaimForm({
       className="stack"
       onSubmit={(e) => {
         e.preventDefault();
-        const num = Math.round(parseFloat(amount) * 100);
-        if (isNaN(num) || num < 0) {
-          setError("Invalid amount");
+        let num: number;
+        try {
+          num = parseInr(amount);
+          if (num < 0) {
+            setError("Invalid amount");
+            return;
+          }
+        } catch (err: unknown) {
+          setError(err instanceof Error ? err.message : "Invalid amount");
           return;
         }
         setSubmitting(true);
@@ -159,28 +173,9 @@ export function OpeningClaimForm({
       </p>
       
       {!isCorrection && (
-        <div className="stack" style={{ marginBottom: "1rem" }}>
-          <label style={{ display: "flex", gap: "0.5rem", alignItems: "center", fontWeight: "normal" }}>
-            <input 
-              type="radio" 
-              name="direction" 
-              checked={direction === "they_owe_user"} 
-              onChange={() => setDirection("they_owe_user")} 
-              disabled={submitting} 
-            />
-            They owe me
-          </label>
-          <label style={{ display: "flex", gap: "0.5rem", alignItems: "center", fontWeight: "normal" }}>
-            <input 
-              type="radio" 
-              name="direction" 
-              checked={direction === "user_owes_them"} 
-              onChange={() => setDirection("user_owes_them")} 
-              disabled={submitting} 
-            />
-            I owe them
-          </label>
-        </div>
+        <p className="muted" style={{ marginTop: "-0.5rem" }}>
+          Direction: <strong>{direction === "they_owe_user" ? "They owe me" : "I owe them"}</strong>
+        </p>
       )}
 
       <label>
@@ -210,6 +205,7 @@ export function OpeningClaimForm({
 }
 
 export function OpeningEarmarkForm({
+  cardId,
   cycleId,
   accounts,
   isCorrection,
@@ -217,6 +213,7 @@ export function OpeningEarmarkForm({
   currentAmountPaise,
   onDone,
 }: {
+  cardId: string;
   cycleId: string;
   accounts: Account[];
   isCorrection: boolean;
@@ -235,9 +232,15 @@ export function OpeningEarmarkForm({
       className="stack"
       onSubmit={(e) => {
         e.preventDefault();
-        const num = Math.round(parseFloat(amount) * 100);
-        if (isNaN(num) || num < 0) {
-          setError("Invalid amount");
+        let num: number;
+        try {
+          num = parseInr(amount);
+          if (num < 0) {
+            setError("Invalid amount");
+            return;
+          }
+        } catch (err: unknown) {
+          setError(err instanceof Error ? err.message : "Invalid amount");
           return;
         }
         if (!isCorrection && !accountId) {
@@ -255,7 +258,7 @@ export function OpeningEarmarkForm({
 
         const promise = isCorrection
           ? correctOpeningReservation({ commandId, occurredOn, capturedAt, reservationId: reservationId!, targetAmountPaise: num })
-          : applyOpeningReservation({ commandId, occurredOn, capturedAt, sourceAccountId: accountId, billingCycleId: cycleId, amountPaise: num });
+          : applyOpeningReservation({ commandId, occurredOn, capturedAt, sourceAccountId: accountId, cardId, billingCycleId: cycleId, amountPaise: num });
 
         promise
           .then(() => onDone())

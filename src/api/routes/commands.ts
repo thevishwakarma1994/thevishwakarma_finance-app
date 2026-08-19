@@ -1,7 +1,6 @@
 import { Hono } from "hono";
 import { utcNowIso, todayKolkata } from "../../domain/calendar/kolkata.js";
 import { isoDate } from "../../domain/calendar/isoDate.js";
-import { applyOpening } from "../../app/applyOpening.js";
 import { recordIncome } from "../../app/recordIncome.js";
 import { recordExpense } from "../../app/recordExpense.js";
 import { transferMoney } from "../../app/transferMoney.js";
@@ -43,17 +42,6 @@ type Env = {
 };
 
 export const commandRoutes = new Hono<Env>();
-
-commandRoutes.post("/commands/opening", async (c) => {
-  try {
-    const body = await c.req.json();
-    const result = await applyOpening(c.get("handles"), { workspaceId: c.get("workspaceId") }, body);
-    return c.json(result);
-  } catch (error) {
-    const mapped = mapError(error);
-    return c.json(mapped.body, mapped.status);
-  }
-});
 
 commandRoutes.post("/commands/income", async (c) => {
   try {

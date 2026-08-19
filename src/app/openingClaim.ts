@@ -9,6 +9,7 @@ import { eq } from "drizzle-orm";
 import type { DbHandles } from "../db/client.js";
 import type { WorkspaceContext } from "./context.js";
 import { assertWorkspaceOwned } from "./ownership.js";
+import { DomainError } from "../domain/ledger/types.js";
 
 const applyInputSchema = z.object({
   commandId: z.string().min(1),
@@ -32,17 +33,16 @@ export async function applyOpeningClaim(
   const t = tables(handles);
   const existingEvent = await anyDb(handles).select().from(t.financialEvents).where(eq(t.financialEvents.id, input.commandId)).limit(1);
   if (existingEvent.length > 0) {
-    if (existingEvent[0].meaning !== "apply_opening_claim") {
-      throw new Error("idempotency_conflict");
+    if (existingEvent[0].workspaceId !== context.workspaceId) {
+      throw new DomainError("idempotency_conflict", "Command ID conflict");
     }
-    const existingClaim = await anyDb(handles).select().from(t.claims).where(eq(t.claims.originatingEventId, input.commandId)).limit(1);
+    if (existingEvent[0].meaning !== "apply_opening_claim") {
+      throw new DomainError("idempotency_conflict", "commandId exists with different meaning");
+    }
     if (
-      existingEvent[0].amountPaise !== input.amountPaise ||
-      !existingClaim.length ||
-      existingClaim[0].personId !== input.personId ||
-      existingClaim[0].direction !== input.direction
+      existingEvent[0].amountPaise !== input.amountPaise
     ) {
-      throw new Error("idempotency_conflict");
+      throw new DomainError("idempotency_conflict", "commandId exists with different payload");
     }
     return { eventId: input.commandId };
   }
@@ -69,18 +69,14 @@ export async function applyOpeningClaim(
     const code = (caught as { code?: string })?.code;
     if (err?.message?.includes("UNIQUE") || code === "23505") {
       const check = await anyDb(handles).select().from(t.financialEvents).where(eq(t.financialEvents.id, input.commandId)).limit(1);
-      if (check.length > 0 && check[0].meaning === "apply_opening_claim") {
-        const existingClaim = await anyDb(handles).select().from(t.claims).where(eq(t.claims.originatingEventId, input.commandId)).limit(1);
+      if (check.length > 0 && check[0].workspaceId === context.workspaceId && check[0].meaning === "apply_opening_claim") {
         if (
-          check[0].amountPaise === input.amountPaise &&
-          existingClaim.length > 0 &&
-          existingClaim[0].personId === input.personId &&
-          existingClaim[0].direction === input.direction
+          check[0].amountPaise === input.amountPaise
         ) {
           return { eventId: input.commandId };
         }
       }
-      throw new Error("idempotency_conflict");
+      throw new DomainError("idempotency_conflict", "Command ID conflict");
     }
     throw err;
   }
@@ -109,16 +105,16 @@ export async function correctOpeningClaim(
   const t = tables(handles);
   const existingEvent = await anyDb(handles).select().from(t.financialEvents).where(eq(t.financialEvents.id, input.commandId)).limit(1);
   if (existingEvent.length > 0) {
-    if (existingEvent[0].meaning !== "correct_opening_claim") {
-      throw new Error("idempotency_conflict");
+    if (existingEvent[0].workspaceId !== context.workspaceId) {
+      throw new DomainError("idempotency_conflict", "Command ID conflict");
     }
-    const existingPosting = await anyDb(handles).select().from(t.postings).where(eq(t.postings.eventId, input.commandId)).limit(1);
+    if (existingEvent[0].meaning !== "correct_opening_claim") {
+      throw new DomainError("idempotency_conflict", "commandId exists with different meaning");
+    }
     if (
-      existingEvent[0].amountPaise !== input.targetAmountPaise ||
-      !existingPosting.length ||
-      existingPosting[0].claimId !== input.claimId
+      existingEvent[0].amountPaise !== input.targetAmountPaise
     ) {
-      throw new Error("idempotency_conflict");
+      throw new DomainError("idempotency_conflict", "commandId exists with different payload");
     }
     return { eventId: input.commandId };
   }
@@ -147,17 +143,14 @@ export async function correctOpeningClaim(
     const err = caught as { message?: string; code?: string };
     if (err.message?.includes("UNIQUE") || err.code === "23505") {
       const check = await anyDb(handles).select().from(t.financialEvents).where(eq(t.financialEvents.id, input.commandId)).limit(1);
-      if (check.length > 0 && check[0].meaning === "correct_opening_claim") {
-        const existingPosting = await anyDb(handles).select().from(t.postings).where(eq(t.postings.eventId, input.commandId)).limit(1);
+      if (check.length > 0 && check[0].workspaceId === context.workspaceId && check[0].meaning === "correct_opening_claim") {
         if (
-          check[0].amountPaise === input.targetAmountPaise &&
-          existingPosting.length > 0 &&
-          existingPosting[0].claimId === input.claimId
+          check[0].amountPaise === input.targetAmountPaise
         ) {
           return { eventId: input.commandId };
         }
       }
-      throw new Error("idempotency_conflict");
+      throw new DomainError("idempotency_conflict", "Command ID conflict");
     }
     throw err;
   }

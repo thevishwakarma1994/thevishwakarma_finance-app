@@ -23,12 +23,17 @@ export function deriveClaimStatus(stored: ClaimStatus, openAmountPaise: Paise): 
 export function enrichClaim(
   claim: Omit<LedgerClaim, "openAmountPaise"> & { openAmountPaise?: Paise },
   allocations: SettlementAllocation[],
+  correctionDeltasPaise: number = 0,
 ): LedgerClaim {
   const allocatedPaise = allocatedToClaim(allocations, claim.id);
-  const openAmountPaise = deriveOpenAmount(claim.originalAmountPaise, allocatedPaise);
+  const effectivePrincipal = paise(claim.originalAmountPaise + correctionDeltasPaise);
+  const openAmountPaise = deriveOpenAmount(effectivePrincipal, allocatedPaise);
+  
+  const status = deriveClaimStatus(claim.status, openAmountPaise);
+
   return {
     ...claim,
     openAmountPaise,
-    status: deriveClaimStatus(claim.status, openAmountPaise),
+    status,
   };
 }

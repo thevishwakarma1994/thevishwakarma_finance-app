@@ -381,23 +381,6 @@ export function updatePerson(body: {
     body: JSON.stringify(body),
   });
 }
-
-export function previewOrCommitOpening(body: {
-  accountId?: string;
-  personId?: string;
-  effectiveOn: string;
-  balancePaise?: number;
-  direction?: "they_owe_user" | "user_owes_them";
-  amountPaise?: number;
-  note?: string | null;
-  commit: boolean;
-}) {
-  return request<CommandResult>("/api/commands/opening", {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
-}
-
 export function previewOrCommitIncome(body: {
   occurredOn: string;
   amountPaise: number;
@@ -909,7 +892,7 @@ export function correctOpeningClaim(body: { commandId: string; occurredOn: strin
   return request<{ eventId: string | null }>("/api/commands/opening/claim/correct", { method: "POST", body: JSON.stringify(body) });
 }
 
-export function applyOpeningReservation(body: { commandId: string; occurredOn: string; capturedAt: string; sourceAccountId: string; billingCycleId: string; amountPaise: number }) {
+export function applyOpeningReservation(body: { commandId: string; occurredOn: string; capturedAt: string; sourceAccountId: string; cardId: string; billingCycleId: string; amountPaise: number }) {
   return request<{ eventId: string | null }>("/api/commands/opening/reservation", { method: "POST", body: JSON.stringify(body) });
 }
 

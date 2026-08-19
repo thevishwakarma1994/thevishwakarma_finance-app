@@ -9,6 +9,7 @@ import { eq } from "drizzle-orm";
 import type { DbHandles } from "../db/client.js";
 import type { WorkspaceContext } from "./context.js";
 import { assertWorkspaceOwned } from "./ownership.js";
+import { DomainError } from "../domain/ledger/types.js";
 
 const applyInputSchema = z.object({
   commandId: z.string().min(1),
@@ -27,22 +28,24 @@ export async function applyOpeningCard(
   const input = applyInputSchema.parse(raw);
   await assertWorkspaceOwned(handles, context.workspaceId, [
     { type: "card", id: input.creditCardId },
-    { type: "cycle", id: input.billingCycleId },
   ]);
 
   // Idempotency check: see if commandId already exists
   const t = tables(handles);
   const existingEvent = await anyDb(handles).select().from(t.financialEvents).where(eq(t.financialEvents.id, input.commandId)).limit(1);
   if (existingEvent.length > 0) {
+    if (existingEvent[0].workspaceId !== context.workspaceId) {
+      throw new DomainError("idempotency_conflict", "Command ID conflict");
+    }
     if (existingEvent[0].meaning !== "apply_opening_card_position") {
-      throw new Error("idempotency_conflict: commandId exists with different meaning");
+      throw new DomainError("idempotency_conflict", "commandId exists with different meaning");
     }
     if (
       existingEvent[0].amountPaise !== input.amountPaise ||
       existingEvent[0].creditCardId !== input.creditCardId ||
       existingEvent[0].billingCycleId !== input.billingCycleId
     ) {
-      throw new Error("idempotency_conflict: commandId exists with different payload");
+      throw new DomainError("idempotency_conflict", "commandId exists with different payload");
     }
     return { eventId: input.commandId };
   }
@@ -68,7 +71,7 @@ export async function applyOpeningCard(
     const err = caught as { message?: string; code?: string };
     if (err.message?.includes("UNIQUE") || err.code === "23505") { // SQLite or Postgres unique violation
       const check = await anyDb(handles).select().from(t.financialEvents).where(eq(t.financialEvents.id, input.commandId)).limit(1);
-      if (check.length > 0 && check[0].meaning === "apply_opening_card_position") {
+      if (check.length > 0 && check[0].workspaceId === context.workspaceId && check[0].meaning === "apply_opening_card_position") {
         if (
           check[0].amountPaise === input.amountPaise &&
           check[0].creditCardId === input.creditCardId &&
@@ -77,7 +80,7 @@ export async function applyOpeningCard(
           return { eventId: input.commandId };
         }
       }
-      throw new Error("idempotency_conflict");
+      throw new DomainError("idempotency_conflict", "Command ID conflict");
     }
     throw err;
   }
@@ -108,15 +111,18 @@ export async function correctOpeningCard(
   const t = tables(handles);
   const existingEvent = await anyDb(handles).select().from(t.financialEvents).where(eq(t.financialEvents.id, input.commandId)).limit(1);
   if (existingEvent.length > 0) {
+    if (existingEvent[0].workspaceId !== context.workspaceId) {
+      throw new DomainError("idempotency_conflict", "Command ID conflict");
+    }
     if (existingEvent[0].meaning !== "correct_opening_card_position") {
-      throw new Error("idempotency_conflict");
+      throw new DomainError("idempotency_conflict", "commandId exists with different meaning");
     }
     if (
       existingEvent[0].amountPaise !== input.targetAmountPaise ||
       existingEvent[0].creditCardId !== input.creditCardId ||
       existingEvent[0].billingCycleId !== input.billingCycleId
     ) {
-      throw new Error("idempotency_conflict: commandId exists with different payload");
+      throw new DomainError("idempotency_conflict", "commandId exists with different payload");
     }
     return { eventId: input.commandId };
   }
@@ -146,7 +152,7 @@ export async function correctOpeningCard(
     const err = caught as { message?: string; code?: string };
     if (err.message?.includes("UNIQUE") || err.code === "23505") {
       const check = await anyDb(handles).select().from(t.financialEvents).where(eq(t.financialEvents.id, input.commandId)).limit(1);
-      if (check.length > 0 && check[0].meaning === "correct_opening_card_position") {
+      if (check.length > 0 && check[0].workspaceId === context.workspaceId && check[0].meaning === "correct_opening_card_position") {
         if (
           check[0].amountPaise === input.targetAmountPaise &&
           check[0].creditCardId === input.creditCardId &&
@@ -155,7 +161,7 @@ export async function correctOpeningCard(
           return { eventId: input.commandId };
         }
       }
-      throw new Error("idempotency_conflict");
+      throw new DomainError("idempotency_conflict", "Command ID conflict");
     }
     throw err;
   }
