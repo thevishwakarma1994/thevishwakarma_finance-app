@@ -95,13 +95,13 @@ export function CardDetail({ cardId, onBack, onOpenCycle, onCapture }: Props) {
               
               {(() => {
                 const hasNormal = data.transactions.some(t => !t.meaning.includes("opening"));
-                const baseEvent = data.transactions.find(t => t.meaning === "apply_opening_card_position");
+                const opening = data.openingCardState;
                 const activeRes = data.openingReservations?.find(r => r.canCorrect);
                 const buttons = [];
-                if (!hasNormal && !baseEvent) {
+                if (opening?.canSetOpening) {
                   buttons.push(<button key="set-debt" className="secondary" type="button" onClick={() => setOpeningFormOpen(true)}>Set opening debt</button>);
                 }
-                if (!hasNormal && baseEvent) {
+                if (opening?.canCorrectOpening) {
                   buttons.push(<button key="cor-debt" className="secondary" type="button" onClick={() => setOpeningFormOpen(true)}>Correct opening debt</button>);
                 }
                 if (!hasNormal && !activeRes) {
@@ -142,21 +142,16 @@ export function CardDetail({ cardId, onBack, onOpenCycle, onCapture }: Props) {
       
       {openingFormOpen && data ? (
         <Sheet
-          title={data.transactions.find(t => t.meaning === "apply_opening_card_position") ? "Correct opening debt" : "Set opening debt"}
+          title={data.openingCardState.hasBaseOpening ? "Correct opening debt" : "Set opening debt"}
           onClose={() => setOpeningFormOpen(false)}
         >
           <OpeningCardDebtForm
             cardId={cardId}
-            cycleId={dueCycle?.id ?? data.cycles[0]?.id ?? ""} // Form will handle cycleId or backend will resolve
-            isCorrection={!!data.transactions.find(t => t.meaning === "apply_opening_card_position")}
-            currentAmountPaise={
-              (() => {
-                const corrections = data.transactions.filter(t => t.meaning === "correct_opening_card_position");
-                if (corrections.length > 0) return corrections[corrections.length - 1]?.amountPaise ?? 0;
-                const base = data.transactions.find(t => t.meaning === "apply_opening_card_position");
-                return base ? base.amountPaise : 0;
-              })()
+            cycleId={
+              data.openingCardState.billingCycleId ?? dueCycle?.id ?? data.cycles[0]?.id ?? ""
             }
+            isCorrection={data.openingCardState.hasBaseOpening}
+            currentAmountPaise={data.openingCardState.currentEffectiveAmountPaise}
             onDone={() => {
               setOpeningFormOpen(false);
               void fetchCard(cardId).then(setData);

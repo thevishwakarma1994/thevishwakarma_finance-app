@@ -4,6 +4,67 @@ import { isoDate } from "../calendar/isoDate.js";
 import { resolveBillingCycle } from "../cycle/resolve.js";
 import type { BillingCycleRecord } from "../ledger/types.js";
 
+const OPENING_CARD_MEANINGS = new Set<string>([
+  "apply_opening_card_position",
+  "correct_opening_card_position",
+]);
+
+const LIFECYCLE_MEANINGS = new Set<string>(["spend_card", "refund", "pay_obligation", "split"]);
+
+export type OpeningCardPosition = {
+  /** Event id of the base `apply_opening_card_position`, when one exists. */
+  baseEventId: string | null;
+  /** Base opening posting plus every correction posting delta. */
+  currentEffectiveAmountPaise: Paise;
+  /** True once a spend, refund, payment, or split lands on the cycle. */
+  hasLifecycleActivity: boolean;
+};
+
+/**
+ * Opening-card provenance for a single billing cycle.
+ *
+ * Correction events carry the *target* amount, so the effective opening debt can
+ * only be derived from postings, which carry the deltas.
+ */
+export function deriveOpeningCardPosition(
+  snapshot: LedgerSnapshot,
+  billingCycleId: string,
+): OpeningCardPosition {
+  const openingEventIds = new Set<string>();
+  let baseEventId: string | null = null;
+  for (const event of snapshot.events) {
+    if (event.billingCycleId !== billingCycleId) continue;
+    if (!OPENING_CARD_MEANINGS.has(event.meaning)) continue;
+    openingEventIds.add(event.id);
+    if (event.meaning === "apply_opening_card_position") {
+      baseEventId = event.id;
+    }
+  }
+
+  let currentEffectiveAmountPaise = paise(0);
+  for (const posting of snapshot.postings) {
+    if (openingEventIds.has(posting.eventId)) {
+      currentEffectiveAmountPaise = paise(currentEffectiveAmountPaise + posting.amountPaise);
+    }
+  }
+
+  const hasLifecycleActivity = snapshot.events.some(
+    (event) =>
+      event.billingCycleId === billingCycleId &&
+      !openingEventIds.has(event.id) &&
+      LIFECYCLE_MEANINGS.has(event.meaning),
+  );
+
+  return { baseEventId, currentEffectiveAmountPaise, hasLifecycleActivity };
+}
+
+/** True once any cycle on the card has left the opening-only state. */
+export function cardHasLifecycleActivity(snapshot: LedgerSnapshot, creditCardId: string): boolean {
+  return snapshot.events.some(
+    (event) => event.creditCardId === creditCardId && LIFECYCLE_MEANINGS.has(event.meaning),
+  );
+}
+
 export function applyCardOpening(
   input: {
     commandId: string;
@@ -118,46 +179,21 @@ export function correctCardOpening(
   const cycle = snapshot.billingCycles.find((c) => c.id === input.billingCycleId);
   if (!cycle) throw new DomainError("not_found", "Cycle not found");
 
-  // Validate base opening exists
-  const baseOpening = snapshot.events.find(
-    (e) => e.meaning === "apply_opening_card_position" && e.billingCycleId === input.billingCycleId
-  );
-  if (!baseOpening) {
+  const position = deriveOpeningCardPosition(snapshot, input.billingCycleId);
+
+  if (!position.baseEventId) {
     throw new DomainError("invalid_opening", "Cannot correct non-existent opening position");
   }
 
-  // Determine current opening liability by summing base + previous corrections
-  const openingEvents = snapshot.events.filter(
-    (e) =>
-      (e.meaning === "apply_opening_card_position" || e.meaning === "correct_opening_card_position") &&
-      e.billingCycleId === input.billingCycleId
-  );
-  const openingEventIds = new Set(openingEvents.map((e) => e.id));
-  
-  let currentOpeningLiability = paise(0);
-  for (const p of snapshot.postings) {
-    if (openingEventIds.has(p.eventId)) {
-      currentOpeningLiability = paise(currentOpeningLiability + p.amountPaise);
-    }
-  }
-
-  // Check for normal lifecycle activity (spend, refund, payment)
-  const hasLifecycleActivity = snapshot.events.some(
-    (e) =>
-      e.billingCycleId === input.billingCycleId &&
-      !openingEventIds.has(e.id) && 
-      (e.meaning === "spend_card" || e.meaning === "refund" || e.meaning === "pay_obligation" || e.meaning === "split")
-  );
-
-  if (hasLifecycleActivity) {
+  if (position.hasLifecycleActivity) {
     throw new DomainError(
       "invalid_opening",
       "Cannot correct opening position after normal lifecycle activity has begun"
     );
   }
 
-  const deltaPaise = paise(input.targetAmountPaise - currentOpeningLiability);
-  
+  const deltaPaise = paise(input.targetAmountPaise - position.currentEffectiveAmountPaise);
+
   if (deltaPaise === 0) {
     return emptyBatch();
   }

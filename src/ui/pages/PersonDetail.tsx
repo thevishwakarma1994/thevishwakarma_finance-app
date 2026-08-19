@@ -175,32 +175,6 @@ export function PersonDetail({ personId, onBack, onCapture }: Props) {
           >
             Notes
           </button>
-          {!data.hasOpening ? (
-            <div className="stack" style={{ gap: "4px" }}>
-              <button
-                className="list-row"
-                type="button"
-                onClick={() => {
-                  setMenuOpen(false);
-                  setOpeningTheyOweOpen(true);
-                }}
-              >
-                Opening: They owe me
-              </button>
-              <button
-                className="list-row"
-                type="button"
-                onClick={() => {
-                  setMenuOpen(false);
-                  setOpeningIOweOpen(true);
-                }}
-              >
-                Opening: I owe them
-              </button>
-            </div>
-          ) : (
-            <p className="muted">Opening set {data.openingEffectiveOn}</p>
-          )}
           {data.status === "active" ? (
             <button
               className="list-row"

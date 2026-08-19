@@ -11,6 +11,7 @@ import { DomainError, type ClaimDirection, type LedgerBillingCycle, type LedgerS
 import { personPosition } from "../domain/people/position.js";
 import { suggestAllocations, suggestableClaimsFor } from "../domain/commands/suggestAllocations.js";
 import { claimLabel } from "../domain/commands/settle.js";
+import { cardHasLifecycleActivity, deriveOpeningCardPosition } from "../domain/commands/openingCard.js";
 import { accountAvailability } from "../domain/engine/liquidity.js";
 import { evaluateSafeToSpend } from "../domain/engine/evaluateSafeToSpend.js";
 import { comingUpItems, filterComingUp, type ComingUpFilter } from "../domain/engine/comingUp.js";
@@ -492,6 +493,29 @@ export async function cardDetail(
       (item) => item.id === event.id && item.creditCardId === card.id,
     ),
   );
+  // Opening-card provenance comes from the snapshot, not from `activity`:
+  // listActivity deliberately omits opening meanings, so it can never reveal an
+  // `apply_opening_card_position`.
+  const baseOpeningCycleId =
+    snapshot.events.find(
+      (event) =>
+        event.meaning === "apply_opening_card_position" &&
+        event.creditCardId === card.id &&
+        event.billingCycleId !== null,
+    )?.billingCycleId ?? null;
+  const openingPosition = baseOpeningCycleId
+    ? deriveOpeningCardPosition(snapshot, baseOpeningCycleId)
+    : null;
+  const cardLifecycleStarted = cardHasLifecycleActivity(snapshot, card.id);
+  const openingCardState = {
+    hasBaseOpening: openingPosition?.baseEventId != null,
+    billingCycleId: baseOpeningCycleId,
+    currentEffectiveAmountPaise: openingPosition?.currentEffectiveAmountPaise ?? paise(0),
+    baseEventId: openingPosition?.baseEventId ?? null,
+    canSetOpening: openingPosition === null && !cardLifecycleStarted,
+    canCorrectOpening: openingPosition !== null && !openingPosition.hasLifecycleActivity,
+  };
+
   return {
     id: card.id,
     displayName: card.displayName,
@@ -510,6 +534,7 @@ export async function cardDetail(
     dueDaysAfterStatement: rule.dueDaysAfterStatement,
     cycles: cycles.map((cycle) => cycleView(cycle, snapshot)),
     transactions: activity,
+    openingCardState,
     openingReservations: snapshot.reservations
       .filter((r) => 
         r.obligationRef.type === "billing_cycle" && 

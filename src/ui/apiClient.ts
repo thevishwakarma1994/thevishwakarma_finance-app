@@ -444,6 +444,14 @@ export function fetchCard(id: string) {
     CardListItem & {
       cycles: CardCycleView[];
       transactions: ActivityEvent[];
+      openingCardState: {
+        hasBaseOpening: boolean;
+        billingCycleId: string | null;
+        currentEffectiveAmountPaise: number;
+        baseEventId: string | null;
+        canSetOpening: boolean;
+        canCorrectOpening: boolean;
+      };
       openingReservations: {
         reservationId: string;
         sourceAccountId: string;
