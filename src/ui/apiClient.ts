@@ -449,16 +449,13 @@ export function fetchCard(id: string) {
       cycles: CardCycleView[];
       transactions: ActivityEvent[];
       openingReservations: {
-        id: string;
+        reservationId: string;
         sourceAccountId: string;
-        amountOriginalPaise: number;
-        amountConsumedPaise: number;
-        amountReleasedPaise: number;
-        amountReassignedPaise: number;
-        amountSurplusHeldPaise: number;
+        billingCycleId: string;
+        remainingPaise: number;
         status: string;
-        obligationRef: { type: string; id: string };
         originatingEventId: string | null;
+        canCorrect: boolean;
       }[];
     }
   >(`/api/cards/${id}`);

@@ -112,24 +112,31 @@ export function PersonDetail({ personId, onBack, onCapture }: Props) {
               </button>
 
               {(() => {
-                const hasNormal = data.history.some(t => !t.meaning.includes("opening"));
                 const claimsList = data.claims ?? data.openClaims;
                 const openingTheyOwe = claimsList.find(c => c.originatingMeaning === "apply_opening_claim" && c.direction === "they_owe_user");
                 const openingIOwe = claimsList.find(c => c.originatingMeaning === "apply_opening_claim" && c.direction === "user_owes_them");
                 
+                const canCorrectTheyOwe = openingTheyOwe && openingTheyOwe.status === "open" && openingTheyOwe.settledAmountPaise === 0;
+                const canCorrectIOwe = openingIOwe && openingIOwe.status === "open" && openingIOwe.settledAmountPaise === 0;
+
                 const buttons = [];
-                if (!hasNormal) {
+                
+                if (!openingTheyOwe || canCorrectTheyOwe) {
                   buttons.push(
                     <button key="they-owe" className="secondary" type="button" onClick={() => setOpeningTheyOweOpen(true)}>
                       {openingTheyOwe ? "Correct opening 'They owe me'" : "Set opening 'They owe me'"}
                     </button>
                   );
+                }
+                
+                if (!openingIOwe || canCorrectIOwe) {
                   buttons.push(
                     <button key="i-owe" className="secondary" type="button" onClick={() => setOpeningIOweOpen(true)}>
                       {openingIOwe ? "Correct opening 'I owe them'" : "Set opening 'I owe them'"}
                     </button>
                   );
                 }
+                
                 return buttons.length > 0 ? buttons : null;
               })()}
             </div>

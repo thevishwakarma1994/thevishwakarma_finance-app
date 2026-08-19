@@ -98,7 +98,7 @@ describe("Phase 16A Final Scenario", () => {
     });
 
     const snapshotTemp = await loadSnapshot(handles, workspaceId);
-    const reservationId = snapshotTemp.reservations.find(r => r.originatingEventId === `${workspaceId}_c5`)!.id;
+    const reservationId = snapshotTemp.reservations.find(r => r.originatingEventId === `c5`)!.id;
 
     await correctOpeningReservation(handles, context, {
       commandId: "c6", reservationId, targetAmountPaise: 500000,

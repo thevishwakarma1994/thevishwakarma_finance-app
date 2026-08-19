@@ -34,19 +34,7 @@ export function CardDetail({ cardId, onBack, onOpenCycle, onCapture }: Props) {
   const [rename, setRename] = useState("");
   const [ownerPersonId, setOwnerPersonId] = useState("");
   const [people, setPeople] = useState<PersonListItem[]>([]);
-  const [data, setData] = useState<{
-    displayName: string;
-    issuer: string;
-    label: string;
-    mask: string | null;
-    outstandingPaise: number;
-    statementDay: number;
-    dueDaysAfterStatement: number;
-    defaultOwnerPersonId: string | null;
-    defaultOwnerName: string | null;
-    cycles: CardCycleView[];
-    transactions: ActivityEvent[];
-  } | null>(null);
+  const [data, setData] = useState<Awaited<ReturnType<typeof fetchCard>> | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [earmarkFormOpen, setEarmarkFormOpen] = useState(false);
 
@@ -110,7 +98,7 @@ export function CardDetail({ cardId, onBack, onOpenCycle, onCapture }: Props) {
               {(() => {
                 const hasNormal = data.transactions.some(t => !t.meaning.includes("opening"));
                 const baseEvent = data.transactions.find(t => t.meaning === "apply_opening_card_position");
-                const activeRes = data.openingReservations?.find(r => r.status === "active");
+                const activeRes = data.openingReservations?.find(r => r.canCorrect);
                 const buttons = [];
                 if (!hasNormal && !baseEvent) {
                   buttons.push(<button key="set-debt" className="secondary" type="button" onClick={() => setOpeningFormOpen(true)}>Set opening debt</button>);
@@ -166,7 +154,7 @@ export function CardDetail({ cardId, onBack, onOpenCycle, onCapture }: Props) {
             currentAmountPaise={
               (() => {
                 const corrections = data.transactions.filter(t => t.meaning === "correct_opening_card_position");
-                if (corrections.length > 0) return corrections[corrections.length - 1].amountPaise;
+                if (corrections.length > 0) return corrections[corrections.length - 1]?.amountPaise ?? 0;
                 const base = data.transactions.find(t => t.meaning === "apply_opening_card_position");
                 return base ? base.amountPaise : 0;
               })()
@@ -181,19 +169,19 @@ export function CardDetail({ cardId, onBack, onOpenCycle, onCapture }: Props) {
 
       {earmarkFormOpen && data ? (
         <Sheet
-          title={data.openingReservations?.find(r => r.status === "active") ? "Correct earmarked money" : "Set already-earmarked money"}
+          title={data.openingReservations?.find(r => r.canCorrect) ? "Correct earmarked money" : "Set already-earmarked money"}
           onClose={() => setEarmarkFormOpen(false)}
         >
           <OpeningEarmarkForm
             cardId={cardId}
             cycleId={dueCycle?.id ?? data.cycles[0]?.id ?? ""}
             accounts={accounts}
-            reservationId={data.openingReservations?.find(r => r.status === "active")?.id}
-            isCorrection={!!data.openingReservations?.find(r => r.status === "active")}
+            reservationId={data.openingReservations?.find(r => r.canCorrect)?.reservationId}
+            isCorrection={!!data.openingReservations?.find(r => r.canCorrect)}
             currentAmountPaise={
               (() => {
-                const activeRes = data.openingReservations?.find(r => r.status === "active");
-                return activeRes ? (activeRes.amountOriginalPaise - activeRes.amountReleasedPaise - activeRes.amountConsumedPaise - activeRes.amountReassignedPaise) : 0;
+                const activeRes = data.openingReservations?.find(r => r.canCorrect);
+                return activeRes ? activeRes.remainingPaise : 0;
               })()
             }
             onDone={() => {

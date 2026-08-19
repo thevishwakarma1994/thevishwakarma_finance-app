@@ -32,8 +32,7 @@ export async function applyOpeningCard(
 
   // Idempotency check: see if commandId already exists
   const t = tables(handles);
-  const scopedCommandId = `${context.workspaceId}_${input.commandId}`;
-  const existingEvent = await anyDb(handles).select().from(t.financialEvents).where(eq(t.financialEvents.id, scopedCommandId)).limit(1);
+  const existingEvent = await anyDb(handles).select().from(t.financialEvents).where(eq(t.financialEvents.id, input.commandId)).limit(1);
   if (existingEvent.length > 0) {
     if (existingEvent[0].workspaceId !== context.workspaceId) {
       throw new DomainError("idempotency_conflict", "Command ID conflict");
@@ -56,7 +55,7 @@ export async function applyOpeningCard(
   
   const batch = applyCardOpeningDomain(
     {
-      commandId: scopedCommandId,
+      commandId: input.commandId,
       creditCardId: input.creditCardId,
       billingCycleId: input.billingCycleId || undefined,
       amountPaise: paise(input.amountPaise),
@@ -71,7 +70,7 @@ export async function applyOpeningCard(
   } catch (caught) {
     const err = caught as { message?: string; code?: string };
     if (err.message?.includes("UNIQUE") || err.code === "23505") { // SQLite or Postgres unique violation
-      const check = await anyDb(handles).select().from(t.financialEvents).where(eq(t.financialEvents.id, scopedCommandId)).limit(1);
+      const check = await anyDb(handles).select().from(t.financialEvents).where(eq(t.financialEvents.id, input.commandId)).limit(1);
       if (check.length > 0 && check[0].workspaceId === context.workspaceId && check[0].meaning === "apply_opening_card_position") {
         if (
           check[0].amountPaise === input.amountPaise &&
@@ -110,8 +109,7 @@ export async function correctOpeningCard(
   ]);
 
   const t = tables(handles);
-  const scopedCommandId = `${context.workspaceId}_${input.commandId}`;
-  const existingEvent = await anyDb(handles).select().from(t.financialEvents).where(eq(t.financialEvents.id, scopedCommandId)).limit(1);
+  const existingEvent = await anyDb(handles).select().from(t.financialEvents).where(eq(t.financialEvents.id, input.commandId)).limit(1);
   if (existingEvent.length > 0) {
     if (existingEvent[0].workspaceId !== context.workspaceId) {
       throw new DomainError("idempotency_conflict", "Command ID conflict");
@@ -134,7 +132,7 @@ export async function correctOpeningCard(
   
   const batch = correctCardOpeningDomain(
     {
-      commandId: scopedCommandId,
+      commandId: input.commandId,
       creditCardId: input.creditCardId,
       billingCycleId: input.billingCycleId,
       targetAmountPaise: paise(input.targetAmountPaise),
@@ -153,7 +151,7 @@ export async function correctOpeningCard(
   } catch (caught) {
     const err = caught as { message?: string; code?: string };
     if (err.message?.includes("UNIQUE") || err.code === "23505") {
-      const check = await anyDb(handles).select().from(t.financialEvents).where(eq(t.financialEvents.id, scopedCommandId)).limit(1);
+      const check = await anyDb(handles).select().from(t.financialEvents).where(eq(t.financialEvents.id, input.commandId)).limit(1);
       if (check.length > 0 && check[0].workspaceId === context.workspaceId && check[0].meaning === "correct_opening_card_position") {
         if (
           check[0].amountPaise === input.targetAmountPaise &&

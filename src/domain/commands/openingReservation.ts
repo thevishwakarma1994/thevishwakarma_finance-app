@@ -11,7 +11,7 @@ export function applyReservationOpening(
     commandId: string;
     sourceAccountId: string;
     cardId: string;
-    billingCycleId: string;
+    billingCycleId?: string;
     amountPaise: Paise;
     occurredOn: string;
     capturedAt: string;
@@ -37,11 +37,13 @@ export function applyReservationOpening(
        throw new DomainError("not_found", "Card cycle rule not found, cannot materialize cycle");
     }
     const resolved = resolveBillingCycle(input.cardId, isoDate(input.occurredOn), cardRule.rule, snapshot.billingCycles);
-    cycle = {
-      ...resolved.cycle,
-      id: input.billingCycleId,
-    };
-    newCycles = [cycle];
+    cycle = resolved.cycle;
+    if (input.billingCycleId && resolved.isNew) {
+      cycle = { ...cycle, id: input.billingCycleId };
+    }
+    if (resolved.isNew) {
+      newCycles = [cycle];
+    }
   }
 
   // Validate uniqueness
@@ -89,7 +91,7 @@ export function applyReservationOpening(
     amountReassignedPaise: paise(0),
     amountSurplusHeldPaise: paise(0),
     status: "active",
-    obligationRef: { type: "billing_cycle", id: input.billingCycleId },
+    obligationRef: { type: "billing_cycle", id: cycle.id },
     originatingEventId: event.id,
     originatingClaimId: null,
     createdOn: isoDate(input.occurredOn),

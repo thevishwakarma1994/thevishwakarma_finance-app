@@ -15,16 +15,7 @@ const accountSchema = z.object({
   commit: z.boolean().default(true),
 });
 
-const personSchema = z.object({
-  personId: z.string().min(1),
-  effectiveOn: z.string(),
-  direction: z.enum(["they_owe_user", "user_owes_them"]),
-  amountPaise: z.number().int().positive(),
-  note: z.string().nullable().optional(),
-  commit: z.boolean().default(true),
-});
-
-const inputSchema = z.union([accountSchema, personSchema]);
+const inputSchema = accountSchema;
 
 export async function applyOpening(
   handles: DbHandles,
@@ -33,22 +24,10 @@ export async function applyOpening(
 ) {
   const input = inputSchema.parse(raw);
   await assertWorkspaceOwned(handles, context.workspaceId, [
-    "personId" in input ? { type: "person", id: input.personId } : { type: "account", id: input.accountId },
+    { type: "account", id: input.accountId },
   ]);
   const snapshot = await loadSnapshot(handles, context.workspaceId);
-  const result =
-    "personId" in input
-      ? applyOpeningDomain(
-          {
-            personId: input.personId,
-            effectiveOn: isoDate(input.effectiveOn),
-            direction: input.direction,
-            amountPaise: paise(input.amountPaise),
-            note: input.note,
-          },
-          snapshot,
-        )
-      : applyOpeningDomain(
+  const result = applyOpeningDomain(
           {
             accountId: input.accountId,
             effectiveOn: isoDate(input.effectiveOn),

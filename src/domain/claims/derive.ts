@@ -15,8 +15,8 @@ export function deriveOpenAmount(originalAmountPaise: Paise, allocatedPaise: Pai
   return paise(open < 0 ? 0 : open);
 }
 
-export function deriveClaimStatus(stored: ClaimStatus, openAmountPaise: Paise, effectivePrincipal: Paise = paise(1)): ClaimStatus {
-  if (stored === "void" || effectivePrincipal === 0) return "void";
+export function deriveClaimStatus(stored: ClaimStatus, openAmountPaise: Paise): ClaimStatus {
+  if (stored === "void") return "void";
   return openAmountPaise > 0 ? "open" : "settled";
 }
 
@@ -29,7 +29,7 @@ export function enrichClaim(
   const effectivePrincipal = paise(claim.originalAmountPaise + correctionDeltasPaise);
   const openAmountPaise = deriveOpenAmount(effectivePrincipal, allocatedPaise);
   
-  const status = deriveClaimStatus(claim.status, openAmountPaise, effectivePrincipal);
+  const status = deriveClaimStatus(claim.status, openAmountPaise);
 
   return {
     ...claim,

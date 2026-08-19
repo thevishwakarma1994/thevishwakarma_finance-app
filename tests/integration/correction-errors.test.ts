@@ -67,7 +67,7 @@ describe("correction errors", () => {
       personId: ctx.rahulId,
       accountId: ctx.hdfcId,
       amountPaise: 1_000_00,
-      allocations: [{ claimId: `${ctx.workspaceId}_cmd-open-rec_claim`, amountPaise: 1_000_00 }],
+      allocations: [{ claimId: `cmd-open-rec_claim`, amountPaise: 1_000_00 }],
       commit: true,
     });
 
@@ -76,7 +76,7 @@ describe("correction errors", () => {
         commandId: "cmd-cor-fail",
         occurredOn: "2026-08-26",
         capturedAt,
-        claimId: `${ctx.workspaceId}_cmd-open-rec_claim`,
+        claimId: `cmd-open-rec_claim`,
         targetAmountPaise: 6_000_00,
       })
     ).rejects.toMatchObject({ code: "invalid_opening" });

@@ -510,11 +510,27 @@ export async function cardDetail(
     dueDaysAfterStatement: rule.dueDaysAfterStatement,
     cycles: cycles.map((cycle) => cycleView(cycle, snapshot)),
     transactions: activity,
-    openingReservations: snapshot.reservations.filter((r) => 
-      r.obligationRef.type === "cycle" && 
-      cycles.some((c) => c.id === r.obligationRef.id) &&
-      snapshot.events.some((e) => e.id === r.originatingEventId && (e.meaning === "apply_opening_reservation" || e.meaning === "correct_opening_reservation"))
-    ),
+    openingReservations: snapshot.reservations
+      .filter((r) => 
+        r.obligationRef.type === "billing_cycle" && 
+        cycles.some((c) => c.id === r.obligationRef.id) &&
+        snapshot.events.some((e) => e.id === r.originatingEventId && (e.meaning === "apply_opening_reservation" || e.meaning === "correct_opening_reservation"))
+      )
+      .map(r => {
+        const remainingPaise = r.amountOriginalPaise - r.amountConsumedPaise - r.amountReleasedPaise - r.amountReassignedPaise;
+        const hasNormalTransactions = activity.some(a => !a.meaning.includes("opening"));
+        // Only eligible for correction if no normal transactions have occurred yet, and no part of it has been consumed/reassigned/released (or rather, just hasn't been consumed by a normal payCard yet)
+        const canCorrect = r.status === "active" && !hasNormalTransactions && r.amountConsumedPaise === 0 && r.amountReassignedPaise === 0;
+        return {
+          reservationId: r.id,
+          sourceAccountId: r.sourceAccountId,
+          billingCycleId: r.obligationRef.id,
+          remainingPaise,
+          status: r.status,
+          originatingEventId: r.originatingEventId,
+          canCorrect
+        };
+      }),
   };
 }
 

@@ -3,7 +3,8 @@ import { enrichBillingCycles } from "../cycle/lifecycle.js";
 import { enrichClaim } from "../claims/derive.js";
 import { enrichReservation } from "../reservations/derive.js";
 import type { IsoDate } from "../calendar/isoDate.js";
-import type { LedgerSnapshot, ProposedBatch } from "../ledger/types.js";
+import type { LedgerSnapshot, ProposedBatch, LedgerClaim } from "../ledger/types.js";
+import type { Paise } from "../money/paise.js";
 
 export function cloneSnapshot(snapshot: LedgerSnapshot): LedgerSnapshot {
   return {
@@ -59,7 +60,7 @@ export function applyBatchOverlay(
     }
   });
 
-  const enrichWithCorrections = (claim: any) => {
+  const enrichWithCorrections = (claim: Omit<LedgerClaim, "openAmountPaise"> & { openAmountPaise?: Paise }) => {
     const isOpening = eventMeanings.get(claim.originatingEventId ?? "") === "apply_opening_claim";
     const correctionDeltas = isOpening ? (correctionPostingsByClaim.get(claim.id) || 0) : 0;
     return enrichClaim(claim, next.settlementAllocations, correctionDeltas);

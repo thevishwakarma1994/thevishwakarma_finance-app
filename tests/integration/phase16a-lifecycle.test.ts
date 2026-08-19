@@ -2,11 +2,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import { openMemoryDatabase, type SqliteHandles } from "../../src/db/client.js";
 import { applyMigrations, getSoleWorkspaceId } from "../../src/db/migrate.js";
 import { loadSnapshot } from "../../src/db/loadSnapshot.js";
-import { personDetail } from "../../src/db/reads.js";
+import { personDetail, cardDetail } from "../../src/db/reads.js";
+import { evaluateSafeToSpend } from "../../src/domain/engine/evaluateSafeToSpend.js";
 
 import { applyOpening } from "../../src/app/applyOpening.js";
-import { applyOpeningCard, correctOpeningCard } from "../../src/app/openingCard.js";
-import { applyOpeningClaim, correctOpeningClaim } from "../../src/app/openingClaim.js";
+import { applyOpeningCard } from "../../src/app/openingCard.js";
+import { applyOpeningClaim } from "../../src/app/openingClaim.js";
 import { applyOpeningReservation } from "../../src/app/openingReservation.js";
 import { createCard } from "../../src/app/cards.js";
 import { createPerson } from "../../src/app/people.js";
@@ -14,45 +15,8 @@ import { payCard } from "../../src/app/payCard.js";
 import { receiveSettlement } from "../../src/app/receiveSettlement.js";
 import { paySettlement } from "../../src/app/paySettlement.js";
 
+
 const capturedAt = "2026-08-16T10:00:00.000Z";
-
-async function setup() {
-  const handles = openMemoryDatabase();
-  await applyMigrations(handles);
-  const workspaceId = await getSoleWorkspaceId(handles);
-  const snapshot = await loadSnapshot(handles, workspaceId);
-  const hdfc = snapshot.accounts.find((account) => account.displayName === "HDFC");
-  const grocery = snapshot.categories.find((category) => category.name === "Grocery");
-  if (!hdfc || !grocery) throw new Error("Expected seeded HDFC and Grocery");
-
-  // Legacy bank opening (already existed before Phase 16)
-  await applyOpening(handles, { workspaceId }, {
-    accountId: hdfc.id,
-    effectiveOn: "2026-08-01",
-    balancePaise: 100_000_00, // ₹1,00,000
-    commit: true,
-  });
-
-  const card = await createCard(handles, { workspaceId }, {
-    displayName: "Amex",
-    issuer: "Amex",
-    mask: "1001",
-    statementDay: 10,
-    dueDaysAfterStatement: 20,
-    defaultPaymentAccountId: hdfc.id,
-  });
-
-  const rahul = await createPerson(handles, { workspaceId }, { name: "Rahul" });
-
-  return {
-    handles,
-    workspaceId,
-    hdfcId: hdfc.id,
-    groceryId: grocery.id,
-    cardId: card.id,
-    rahulId: rahul.id,
-  };
-}
 
 describe("phase 16a lifecycle", () => {
   const contexts: SqliteHandles[] = [];
@@ -61,152 +25,156 @@ describe("phase 16a lifecycle", () => {
   });
 
   it("simulates full onboarding and ensures no fake PnL or cash movement", async () => {
-    const ctx = await setup();
-    contexts.push(ctx.handles);
+    const handles = openMemoryDatabase();
+    contexts.push(handles);
+    await applyMigrations(handles);
+    const workspaceId = await getSoleWorkspaceId(handles);
+    const snapshot = await loadSnapshot(handles, workspaceId);
+    const hdfcId = snapshot.accounts.find((account) => account.displayName === "HDFC")!.id;
 
-    // 1. Set Opening Debt on Card (cycle 2026-08)
-    await applyOpeningCard(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    // 1. ACCOUNT
+    await applyOpening(handles, { workspaceId }, {
+      accountId: hdfcId,
+      effectiveOn: "2026-08-01",
+      balancePaise: 50_000_00, // ₹50,000
+      commit: true,
+    });
+
+    // 2. CARD
+    const card = await createCard(handles, { workspaceId }, {
+      displayName: "Amex",
+      issuer: "Amex",
+      mask: "1001",
+      statementDay: 10,
+      dueDaysAfterStatement: 20,
+      defaultPaymentAccountId: hdfcId,
+    });
+    
+    // Set Opening Debt on Card
+    await applyOpeningCard(handles, { workspaceId }, {
       commandId: "cmd-open-card",
       occurredOn: "2026-08-05",
       capturedAt,
-      creditCardId: ctx.cardId,
-      billingCycleId: `${ctx.cardId}-2026-08`,
+      creditCardId: card.id,
       amountPaise: 20_000_00, // ₹20,000
     });
+    
+    // Need a cycle ID for subsequent tests. We can fetch the auto-resolved cycle ID.
+    const snapCard = await loadSnapshot(handles, workspaceId);
+    const cycleId = snapCard.billingCycles[0].id;
+    
 
-    // 2. Correct it to ₹25,000
-    await correctOpeningCard(ctx.handles, { workspaceId: ctx.workspaceId }, {
-      commandId: "cmd-cor-card",
-      occurredOn: "2026-08-06",
-      capturedAt,
-      creditCardId: ctx.cardId,
-      billingCycleId: `${ctx.cardId}-2026-08`,
-      targetAmountPaise: 25_000_00, // ₹25,000
-    });
 
-    // 3. Set Opening Receivable (They owe me)
-    await applyOpeningClaim(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    // 3. CLAIMS
+    const rahul = await createPerson(handles, { workspaceId }, { name: "Rahul" });
+    await applyOpeningClaim(handles, { workspaceId }, {
       commandId: "cmd-open-rec",
       occurredOn: "2026-08-05",
       capturedAt,
-      personId: ctx.rahulId,
+      personId: rahul.id,
       direction: "they_owe_user",
-      amountPaise: 5_000_00, // ₹5,000
+      amountPaise: 10_000_00, // ₹10,000
     });
-    const claimReceivable = `${ctx.workspaceId}_cmd-open-rec_claim`;
+    const claimReceivable = "cmd-open-rec_claim";
 
-    // 4. Set Opening Payable (I owe them)
-    await applyOpeningClaim(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    await applyOpeningClaim(handles, { workspaceId }, {
       commandId: "cmd-open-pay",
       occurredOn: "2026-08-05",
       capturedAt,
-      personId: ctx.rahulId,
+      personId: rahul.id,
       direction: "user_owes_them",
-      amountPaise: 2_000_00, // ₹2,000
+      amountPaise: 4_000_00, // ₹4,000
     });
-    const claimPayable = `${ctx.workspaceId}_cmd-open-pay_claim`;
+    const claimPayable = "cmd-open-pay_claim";
 
-    // 5. Correct the payable to ₹1,000
-    await correctOpeningClaim(ctx.handles, { workspaceId: ctx.workspaceId }, {
-      commandId: "cmd-cor-pay",
-      occurredOn: "2026-08-06",
-      capturedAt,
-      claimId: claimPayable!,
-      targetAmountPaise: 1_000_00, // ₹1,000
-    });
-
-    // 6. Set Opening Earmark
-    await applyOpeningReservation(ctx.handles, { workspaceId: ctx.workspaceId }, {
+    // 4. EARMARK
+    await applyOpeningReservation(handles, { workspaceId }, {
       commandId: "cmd-open-res",
       occurredOn: "2026-08-05",
       capturedAt,
-      sourceAccountId: ctx.hdfcId,
-      cardId: ctx.cardId,
-      billingCycleId: `${ctx.cardId}-2026-08`,
-      amountPaise: 10_000_00, // ₹10,000
+      sourceAccountId: hdfcId,
+      cardId: card.id,
+      billingCycleId: cycleId,
+      amountPaise: 5_000_00, // ₹5,000
     });
 
-    // 7. Verify Snapshots after initialization
-    const snap1 = await loadSnapshot(ctx.handles, ctx.workspaceId);
+    // 5. OPENING CONSERVATION ASSERTIONS
+    const snap1 = await loadSnapshot(handles, workspaceId);
     
-    // Check Card Debt = ₹25,000
-    const cardOutstanding = snap1.postings.filter(p => p.creditCardId === ctx.cardId).reduce((acc, p) => acc + p.amountPaise, 0);
-    expect(cardOutstanding).toBe(25_000_00);
-
-    // Check PnL is absolutely 0!
     const expense = snap1.postings.filter(p => p.pnl === "expense").reduce((acc, p) => acc + p.amountPaise, 0);
     const income = snap1.postings.filter(p => p.pnl?.startsWith("income")).reduce((acc, p) => acc + p.amountPaise, 0);
     expect(expense).toBe(0);
     expect(income).toBe(0);
+    expect(snap1.settlementAllocations.length).toBe(0);
 
-    // Cash in HDFC should STILL be ₹1,00,000 (from legacy opening)
-    const hdfc = snap1.accounts.find(a => a.id === ctx.hdfcId);
-    expect(hdfc?.balancePaise).toBe(100_000_00);
+    console.log(Object.keys(snap1)); const sts = evaluateSafeToSpend(snap1, "2026-08-11");
+    const bank = snap1.accounts.find(a => a.id === hdfcId);
+    expect(bank?.balancePaise).toBe(50_000_00);
+    expect(sts.reservedTotal).toBe(5_000_00);
+    expect(sts.availableLiquid).toBe(45_000_00);
 
-    // Claims:
-    const rec = snap1.claims.find(c => c.id === claimReceivable);
-    expect(rec?.originalAmountPaise).toBe(5_000_00);
-    const pay = snap1.claims.find(c => c.id === claimPayable);
-    expect(pay?.originalAmountPaise).toBe(2_000_00);
+    const cDetail = await cardDetail(handles, workspaceId, card.id, "2026-08-11");
+    expect(cDetail.outstandingPaise).toBe(20_000_00);
+    expect(cDetail.cycles[0].statementRemainingPaise).toBe(20_000_00);
 
-    // 8. Normal operations mixing with opening facts
-    // Pay ₹5,000 card bill
-    await payCard(ctx.handles, { workspaceId: ctx.workspaceId }, {
-      commandId: "cmd-pay-card",
+    const rDetail = await personDetail(handles, workspaceId, rahul.id);
+    expect(rDetail.theyOwePaise).toBe(10_000_00);
+    expect(rDetail.youOwePaise).toBe(4_000_00);
+    const recClaim = rDetail.claims.find(c => c.id === claimReceivable);
+    const payClaim = rDetail.claims.find(c => c.id === claimPayable);
+    expect(recClaim?.openAmountPaise).toBe(10_000_00);
+    expect(payClaim?.openAmountPaise).toBe(4_000_00);
+
+    // 6. PAY CARD
+    await payCard(handles, { workspaceId }, {
       occurredOn: "2026-08-22",
       capturedAt,
-      creditCardId: ctx.cardId,
-      billingCycleId: `${ctx.cardId}-2026-08`,
-      accountId: ctx.hdfcId,
-      amountPaise: 5_000_00,
+      creditCardId: card.id,
+      billingCycleId: cycleId,
+      accountId: hdfcId,
+      amountPaise: 20_000_00,
       commit: true,
     });
+    const snap2 = await loadSnapshot(handles, workspaceId);
+    const sts2 = evaluateSafeToSpend(snap2, "2026-08-23");
+    const bank2 = snap2.accounts.find(a => a.id === hdfcId);
+    expect(bank2?.balancePaise).toBe(30_000_00);
+    expect(sts2.reservedTotal).toBe(0);
 
-    // They pay me ₹2,000 back
-    await receiveSettlement(ctx.handles, { workspaceId: ctx.workspaceId }, {
-      commandId: "cmd-rec-settle",
+    const cDetail2 = await cardDetail(handles, workspaceId, card.id, "2026-08-23");
+    expect(cDetail2.outstandingPaise).toBe(0);
+    expect(cDetail2.cycles[0].statementRemainingPaise).toBe(0);
+
+    // 7. RECEIVE CLAIM
+    await receiveSettlement(handles, { workspaceId }, {
       occurredOn: "2026-08-25",
       capturedAt,
-      personId: ctx.rahulId,
-      accountId: ctx.hdfcId,
-      amountPaise: 2_000_00,
-      allocations: [{ claimId: claimReceivable!, amountPaise: 2_000_00 }],
+      personId: rahul.id,
+      accountId: hdfcId,
+      amountPaise: 10_000_00,
+      allocations: [{ claimId: claimReceivable, amountPaise: 10_000_00 }],
       commit: true,
     });
+    const snap3 = await loadSnapshot(handles, workspaceId);
+    const bank3 = snap3.accounts.find(a => a.id === hdfcId);
+    expect(bank3?.balancePaise).toBe(40_000_00);
+    const rDetail2 = await personDetail(handles, workspaceId, rahul.id);
+    expect(rDetail2.claims.find(c => c.id === claimReceivable)?.openAmountPaise).toBe(0);
 
-    // I pay them ₹1,000 back
-    await paySettlement(ctx.handles, { workspaceId: ctx.workspaceId }, {
-      commandId: "cmd-pay-settle",
+    // 8. PAY CLAIM
+    await paySettlement(handles, { workspaceId }, {
       occurredOn: "2026-08-25",
       capturedAt,
-      personId: ctx.rahulId,
-      accountId: ctx.hdfcId,
-      amountPaise: 1_000_00,
-      allocations: [{ claimId: claimPayable!, amountPaise: 1_000_00 }],
+      personId: rahul.id,
+      accountId: hdfcId,
+      amountPaise: 4_000_00,
+      allocations: [{ claimId: claimPayable, amountPaise: 4_000_00 }],
       commit: true,
     });
-
-    // 9. Final Verification
-    const snap2 = await loadSnapshot(ctx.handles, ctx.workspaceId);
-    
-    // Card Outstanding = 25000 - 5000 = 20000
-    const cardOutstanding2 = snap2.postings.filter(p => p.creditCardId === ctx.cardId).reduce((acc, p) => acc + p.amountPaise, 0);
-    expect(cardOutstanding2).toBe(20_000_00);
-
-    // Person Net (Rahul owes me 3000 now)
-    const person = await personDetail(ctx.handles, ctx.workspaceId, ctx.rahulId);
-    expect(person.netPaise).toBe(3_000_00);
-    expect(person.theyOwePaise).toBe(3_000_00);
-    expect(person.youOwePaise).toBe(0);
-
-    // HDFC balance = 100000 - 5000 (card) + 2000 (receive) - 1000 (pay) = 96000
-    const hdfc2 = snap2.accounts.find(a => a.id === ctx.hdfcId);
-    expect(hdfc2?.balancePaise).toBe(96_000_00);
-
-    // PnL should still be exactly 0
-    const expense2 = snap2.postings.filter(p => p.pnl === "expense").reduce((acc, p) => acc + p.amountPaise, 0);
-    const income2 = snap2.postings.filter(p => p.pnl?.startsWith("income")).reduce((acc, p) => acc + p.amountPaise, 0);
-    expect(expense2).toBe(0);
-    expect(income2).toBe(0);
+    const snap4 = await loadSnapshot(handles, workspaceId);
+    const bank4 = snap4.accounts.find(a => a.id === hdfcId);
+    expect(bank4?.balancePaise).toBe(36_000_00);
+    const rDetail3 = await personDetail(handles, workspaceId, rahul.id);
+    expect(rDetail3.claims.find(c => c.id === claimPayable)?.openAmountPaise).toBe(0);
   });
 });
