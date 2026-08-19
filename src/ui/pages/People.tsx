@@ -5,9 +5,9 @@ import {
   ApiError,
   createPerson,
   fetchPeople,
-  updatePerson,
   type PersonListItem,
 } from "../apiClient.js";
+import { EmptyState, ErrorState, PageHeader, PlusIcon, RowChevron, Sheet, Skeleton } from "../chrome.js";
 
 type Props = {
   onOpenPerson: (id: string) => void;
@@ -19,14 +19,18 @@ function groupLabel(group: PersonListItem["group"]): string {
   return "Settled";
 }
 
+function netCopy(person: PersonListItem): string {
+  if (person.netPaise > 0) return "They owe you";
+  if (person.netPaise < 0) return "You owe";
+  return "Settled";
+}
+
 export function People({ onOpenPerson }: Props) {
-  const [people, setPeople] = useState<PersonListItem[]>([]);
+  const [people, setPeople] = useState<PersonListItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   const [notes, setNotes] = useState("");
-  const [renameId, setRenameId] = useState<string | null>(null);
-  const [renameName, setRenameName] = useState("");
-  const [renameNotes, setRenameNotes] = useState("");
 
   function load() {
     return fetchPeople().then((data) => setPeople(data.people));
@@ -45,6 +49,7 @@ export function People({ onOpenPerson }: Props) {
       await createPerson({ name, notes: notes.trim() || null });
       setName("");
       setNotes("");
+      setAdding(false);
       await load();
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : "Could not create person");
@@ -52,116 +57,85 @@ export function People({ onOpenPerson }: Props) {
   }
 
   const groups: PersonListItem["group"][] = ["they_owe_you", "you_owe", "settled"];
+  const list = people ?? [];
 
   return (
     <>
-      <header className="header">
-        <h1>People</h1>
-      </header>
+      <PageHeader
+        title="People"
+        trailing={
+          <button className="header-icon-btn" type="button" aria-label="Add person" onClick={() => setAdding(true)}>
+            <PlusIcon />
+          </button>
+        }
+      />
       <main className="page">
+        {error ? (
+          <ErrorState
+            message={error}
+            onRetry={() => {
+              setError(null);
+              void load();
+            }}
+          />
+        ) : null}
+        {people === null && !error ? <Skeleton rows={4} /> : null}
+        {people && people.length === 0 ? (
+          <EmptyState title="No people yet." actionLabel="Add a person" onAction={() => setAdding(true)} />
+        ) : null}
         {groups.map((group) => {
-          const rows = people.filter((person) => person.group === group);
+          const rows = list.filter((person) => person.group === group);
+          if (rows.length === 0) return null;
           return (
-            <section className="card stack" key={group}>
-              <p>{groupLabel(group)}</p>
-              {rows.length === 0 ? <p className="muted">None yet.</p> : null}
+            <section key={group}>
+              <p className="section-label">{groupLabel(group)}</p>
               {rows.map((person) => (
                 <button
-                  className="link-card"
+                  className="list-row"
                   type="button"
                   key={person.id}
                   onClick={() => onOpenPerson(person.id)}
                 >
-                  <div className="row">
-                    <strong>
+                  <span className="list-row-copy">
+                    <span className="list-row-title">
                       {person.name}
                       {person.status === "archived" ? " · archived" : ""}
-                    </strong>
-                    <span>{formatInr(paise(Math.abs(person.netPaise)))}</span>
-                  </div>
-                  <p className="muted">
-                    They owe {formatInr(paise(person.theyOwePaise))} · You owe{" "}
-                    {formatInr(paise(person.youOwePaise))} · {person.openItemCount} open
-                  </p>
+                    </span>
+                    <span className="list-row-meta">
+                      {netCopy(person)}
+                      {person.openItemCount ? ` · ${person.openItemCount} open` : ""}
+                    </span>
+                  </span>
+                  <span className="amount">{formatInr(paise(Math.abs(person.netPaise)))}</span>
+                  <RowChevron />
                 </button>
               ))}
             </section>
           );
         })}
-        <form className="card stack" onSubmit={(event) => void onCreate(event)}>
-          <p>Add person</p>
-          <label>
-            Name
-            <input value={name} onChange={(event) => setName(event.target.value)} required />
-          </label>
-          <label>
-            Notes
-            <input value={notes} onChange={(event) => setNotes(event.target.value)} />
-          </label>
-          <button className="primary" type="submit">
-            Create person
-          </button>
-        </form>
-        {renameId ? (
-          <form
-            className="card stack"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void updatePerson({
-                personId: renameId,
-                name: renameName,
-                notes: renameNotes.trim() || null,
-              })
-                .then(() => {
-                  setRenameId(null);
-                  return load();
-                })
-                .catch((caught: unknown) => {
-                  setError(caught instanceof ApiError ? caught.message : "Could not update");
-                });
-            }}
-          >
-            <p>Edit person</p>
-            <input value={renameName} onChange={(event) => setRenameName(event.target.value)} />
-            <input value={renameNotes} onChange={(event) => setRenameNotes(event.target.value)} />
-            <button className="secondary" type="submit">
-              Save
-            </button>
-          </form>
-        ) : null}
-        {people
-          .filter((person) => person.status === "active")
-          .map((person) => (
-            <p className="muted" key={`edit-${person.id}`}>
-              <button
-                className="linkish"
-                type="button"
-                onClick={() => {
-                  setRenameId(person.id);
-                  setRenameName(person.name);
-                  setRenameNotes(person.notes ?? "");
-                }}
-              >
-                Rename {person.name}
-              </button>
-              {" · "}
-              <button
-                className="linkish"
-                type="button"
-                onClick={() =>
-                  void updatePerson({ personId: person.id, status: "archived" })
-                    .then(load)
-                    .catch((caught: unknown) => {
-                      setError(caught instanceof ApiError ? caught.message : "Could not archive");
-                    })
-                }
-              >
-                Archive
-              </button>
-            </p>
-          ))}
-        {error ? <p className="danger">{error}</p> : null}
       </main>
+      {adding ? (
+        <Sheet
+          title="Add person"
+          onClose={() => setAdding(false)}
+          footer={
+            <button className="primary" type="submit" form="add-person-form">
+              Create person
+            </button>
+          }
+        >
+          <form id="add-person-form" className="sheet-form" onSubmit={(event) => void onCreate(event)}>
+            <label>
+              Name
+              <input value={name} onChange={(event) => setName(event.target.value)} required />
+            </label>
+            <label>
+              Notes (optional)
+              <input value={notes} onChange={(event) => setNotes(event.target.value)} />
+            </label>
+          </form>
+        </Sheet>
+      ) : null}
     </>
   );
 }

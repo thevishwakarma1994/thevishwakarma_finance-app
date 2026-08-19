@@ -16,3 +16,7 @@ data
 .DS_Store
 dev-dist
 .pnpm-store
+backups/
+*.dump
+*.manifest.json
+

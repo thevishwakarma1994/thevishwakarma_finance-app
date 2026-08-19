@@ -1,108 +1,41 @@
-import { useEffect, useState, type FormEvent } from "react";
-import { formatInr, parseInr } from "../../domain/money/inr.js";
+import { useEffect, useState } from "react";
+import { formatInr } from "../../domain/money/inr.js";
 import { paise } from "../../domain/money/paise.js";
-import { todayKolkata } from "../../domain/calendar/kolkata.js";
 import {
   ApiError,
-  createAccount,
-  createCard,
-  createCategory,
-  archiveObligationTemplate,
-  changeObligationFrom,
-  createObligationTemplate,
-  createOneOffObligation,
   fetchMoney,
-  previewOrCommitOpening,
   previewOrCommitResolveSurplus,
-  signOut,
-  updateAccount,
-  updateCategory,
   type Account,
   type CardListItem,
-  type Category,
-  type ComingCardPayment,
   type MonthSpend,
   type PendingSurplus,
-  type PersonListItem,
 } from "../apiClient.js";
+import { EmptyState, ErrorState, GearIcon, PageHeader, RowChevron, Sheet, Skeleton } from "../chrome.js";
 
 type Props = {
-  onSignedOut: () => void;
   onOpenMonth: () => void;
   onOpenCard: (cardId: string) => void;
-  onOpenCycle: (cycleId: string) => void;
+  onOpenAccount: (accountId: string) => void;
+  onOpenManage: () => void;
 };
 
-export function Money({ onSignedOut, onOpenMonth, onOpenCard, onOpenCycle }: Props) {
+export function Money({ onOpenMonth, onOpenCard, onOpenAccount, onOpenManage }: Props) {
   const [accounts, setAccounts] = useState<Account[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
   const [cards, setCards] = useState<CardListItem[]>([]);
-  const [coming, setComing] = useState<ComingCardPayment[]>([]);
   const [month, setMonth] = useState<MonthSpend | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [openingAccountId, setOpeningAccountId] = useState<string | null>(null);
-  const [openingAmount, setOpeningAmount] = useState("");
-  const [newAccountName, setNewAccountName] = useState("");
-  const [newAccountKind, setNewAccountKind] = useState<"bank" | "cash">("bank");
-  const [newCategoryName, setNewCategoryName] = useState("");
-  const [newCategoryParentId, setNewCategoryParentId] = useState("");
-  const [newCardName, setNewCardName] = useState("");
-  const [newCardIssuer, setNewCardIssuer] = useState("");
-  const [newCardMask, setNewCardMask] = useState("");
-  const [newCardStatementDay, setNewCardStatementDay] = useState("12");
-  const [newCardDueDays, setNewCardDueDays] = useState("18");
-  const [newCardLimit, setNewCardLimit] = useState("");
-  const [newCardPaymentAccountId, setNewCardPaymentAccountId] = useState("");
-  const [newCardOwnerPersonId, setNewCardOwnerPersonId] = useState("");
-  const [people, setPeople] = useState<PersonListItem[]>([]);
   const [surplus, setSurplus] = useState<PendingSurplus[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   const [surplusId, setSurplusId] = useState<string | null>(null);
   const [surplusResolution, setSurplusResolution] = useState("");
   const [surplusClaimId, setSurplusClaimId] = useState("");
   const [surplusCycleId, setSurplusCycleId] = useState("");
-  const [renameAccountId, setRenameAccountId] = useState<string | null>(null);
-  const [renameAccountName, setRenameAccountName] = useState("");
-  const [renameCategoryId, setRenameCategoryId] = useState<string | null>(null);
-  const [renameCategoryName, setRenameCategoryName] = useState("");
-  const [templates, setTemplates] = useState<
-    { id: string; name: string; priority: string; dueRule: { dayOfMonth: number }; effectiveFrom: string; effectiveTo: string | null }[]
-  >([]);
-  const [oblName, setOblName] = useState("Rent");
-  const [oblDay, setOblDay] = useState("5");
-  const [oblAmount, setOblAmount] = useState("12000");
-  const [oblPriority, setOblPriority] = useState<"must_pay" | "committed" | "planned">("must_pay");
-  const [oneOffName, setOneOffName] = useState("");
-  const [oneOffDue, setOneOffDue] = useState<string>(todayKolkata());
-  const [oneOffAmount, setOneOffAmount] = useState("");
-  const [editTemplateId, setEditTemplateId] = useState("");
-  const [editFrom, setEditFrom] = useState<string>(todayKolkata());
-  const [editAmount, setEditAmount] = useState("");
-  const [archiveTo, setArchiveTo] = useState<string>(todayKolkata());
-  const [loading, setLoading] = useState(true);
 
   function applyMoney(data: Awaited<ReturnType<typeof fetchMoney>>) {
     setAccounts(data.accounts ?? []);
     setMonth(data.month);
-    setCategories(data.categories ?? []);
     setCards(data.cards ?? []);
-    setComing(data.comingCardPayments ?? []);
-    setPeople(data.people ?? []);
     setSurplus(data.surplus ?? []);
-    setTemplates(data.templates ?? []);
-    if (data.accounts?.[0]) {
-      setNewCardPaymentAccountId(data.accounts[0].id);
-    }
-    if (data.templates?.[0]) {
-      setEditTemplateId((current) => current || data.templates[0]?.id || "");
-    }
-  }
-
-  function load() {
-    return fetchMoney()
-      .then(applyMoney)
-      .finally(() => {
-        setLoading(false);
-      });
   }
 
   useEffect(() => {
@@ -124,156 +57,106 @@ export function Money({ onSignedOut, onOpenMonth, onOpenCard, onOpenCycle }: Pro
     };
   }, []);
 
-  async function retry() {
-    setError(null);
-    setLoading(true);
-    try {
-      await load();
-    } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "Could not load Money");
-    }
-  }
-
-  async function onSignOut() {
-    try {
-      await signOut();
-    } catch {
-      // Firebase client may already be signed out.
-    }
-    onSignedOut();
-  }
-
-  async function onOpening(event: FormEvent) {
-    event.preventDefault();
-    if (!openingAccountId) return;
-    setError(null);
-    try {
-      await previewOrCommitOpening({
-        accountId: openingAccountId,
-        effectiveOn: todayKolkata(),
-        balancePaise: parseInr(openingAmount),
-        commit: true,
-      });
-      setOpeningAccountId(null);
-      setOpeningAmount("");
-      await load();
-    } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "Could not set opening");
-    }
-  }
-
-  async function onCreateAccount(event: FormEvent) {
-    event.preventDefault();
-    setError(null);
-    try {
-      await createAccount({ displayName: newAccountName, kind: newAccountKind });
-      setNewAccountName("");
-      await load();
-    } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "Could not create account");
-    }
-  }
-
-  async function onCreateCategory(event: FormEvent) {
-    event.preventDefault();
-    setError(null);
-    try {
-      await createCategory({
-        name: newCategoryName,
-        parentId: newCategoryParentId || null,
-      });
-      setNewCategoryName("");
-      setNewCategoryParentId("");
-      await load();
-    } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "Could not create category");
-    }
-  }
-
-  async function onCreateCard(event: FormEvent) {
-    event.preventDefault();
-    setError(null);
-    try {
-      await createCard({
-        displayName: newCardName,
-        issuer: newCardIssuer || newCardName,
-        mask: newCardMask || null,
-        statementDay: Number(newCardStatementDay),
-        dueDaysAfterStatement: Number(newCardDueDays),
-        creditLimitPaise: newCardLimit ? parseInr(newCardLimit) : null,
-        defaultPaymentAccountId: newCardPaymentAccountId || null,
-        defaultOwnerPersonId: newCardOwnerPersonId || null,
-      });
-      setNewCardName("");
-      setNewCardIssuer("");
-      setNewCardMask("");
-      setNewCardLimit("");
-      await load();
-    } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "Could not create card");
-    }
-  }
+  const reservedTotal = accounts.reduce((sum, account) => sum + (account.reservedPaise ?? 0), 0);
+  const banksTotal = accounts.reduce((sum, account) => sum + account.balancePaise, 0);
+  const cardsDue = cards.reduce((sum, card) => sum + card.outstandingPaise, 0);
+  const resolving = surplus.find((item) => item.id === surplusId);
 
   return (
     <>
-      <header className="header">
-        <h1>Money</h1>
-        <button className="linkish" type="button" onClick={() => void onSignOut()}>
-          Sign out
-        </button>
-      </header>
-      <main className="page">
-        {loading ? <p className="muted">Loading…</p> : null}
-        {error ? (
-          <div className="stack">
-            <p className="danger">{error}</p>
-            <button className="secondary" type="button" onClick={() => void retry()}>
-              Retry
-            </button>
-          </div>
-        ) : null}
-        {month ? (
-          <button className="card link-card" type="button" onClick={onOpenMonth}>
-            <p className="muted">Personal spending · {month.month}</p>
-            <p className="balance">{formatInr(paise(month.spentPaise))}</p>
-            <p className="muted">Open Month Review</p>
+      <PageHeader
+        title="Money"
+        trailing={
+          <button
+            className="header-icon-btn"
+            type="button"
+            aria-label="Manage money"
+            onClick={onOpenManage}
+          >
+            <GearIcon />
           </button>
+        }
+      />
+      <main className="page" data-screen="money-overview">
+        {loading ? <Skeleton rows={5} /> : null}
+        {error ? <ErrorState message={error} /> : null}
+
+        <p className="section-label">Banks & cash</p>
+        {accounts.length === 0 && !loading ? (
+          <EmptyState title="No accounts yet." actionLabel="Add one in Manage" onAction={onOpenManage} />
         ) : null}
-        {coming.length > 0 ? (
-          <section className="card stack">
-            <p>Coming card payments</p>
-            {coming.map((item) => (
-              <button
-                className="link-card"
-                type="button"
-                key={item.cycleId}
-                onClick={() => onOpenCycle(item.cycleId)}
-              >
-                <div className="row">
-                  <strong>{item.cardLabel}</strong>
-                  <span>{formatInr(paise(item.statementRemainingPaise))}</span>
-                </div>
-                <p className="muted">
-                  Due {item.dueOn}
-                  {item.mismatch ? " · statement mismatch" : ""}
+        {accounts.map((account) => (
+          <button
+            className="list-row"
+            type="button"
+            key={account.id}
+            onClick={() => onOpenAccount(account.id)}
+          >
+            <span className="list-row-copy">
+              <span className="list-row-title">{account.displayName}</span>
+              <span className="list-row-meta">
+                {account.kind === "cash" ? "Cash" : "Bank"}
+                {account.isPrimarySalary ? " · Salary" : ""}
+                {(account.reservedPaise ?? 0) > 0
+                  ? ` · Reserved ${formatInr(paise(account.reservedPaise ?? 0))}`
+                  : ""}
+              </span>
+            </span>
+            <span className="amount">{formatInr(paise(account.balancePaise))}</span>
+          </button>
+        ))}
+        {accounts.length > 0 ? (
+          <p className="muted">Banks & cash {formatInr(paise(banksTotal))}</p>
+        ) : null}
+
+        <p className="section-label">Cards</p>
+        {cards.length === 0 && !loading ? (
+          <EmptyState title="No cards yet." actionLabel="Add one in Manage" onAction={onOpenManage} />
+        ) : null}
+        {cards.map((card) => (
+          <button className="list-row" type="button" key={card.id} onClick={() => onOpenCard(card.id)}>
+            <span className="list-row-copy">
+              <span className="list-row-title">{card.label}</span>
+              {card.nextDueOn ? <span className="list-row-meta">Due {card.nextDueOn}</span> : null}
+            </span>
+            <span className="amount">{formatInr(paise(card.outstandingPaise))}</span>
+          </button>
+        ))}
+        {cards.length > 0 ? <p className="muted">To pay {formatInr(paise(cardsDue))}</p> : null}
+
+        {reservedTotal > 0 ? (
+          <>
+            <p className="section-label">Reserved</p>
+            <p className="muted">Reserved {formatInr(paise(reservedTotal))}</p>
+            {accounts.flatMap((account) =>
+              (account.reservedDetails ?? []).map((detail) => (
+                <p className="muted" key={detail.reservationId}>
+                  {formatInr(paise(detail.amountPaise))} for {detail.cardLabel}
+                  {detail.dueOn ? ` due ${detail.dueOn}` : ""}
+                  {detail.personName ? ` · ${detail.personName}` : ""}
                 </p>
-              </button>
-            ))}
-          </section>
+              )),
+            )}
+          </>
         ) : null}
+
         {surplus.length > 0 ? (
-          <section className="card stack">
-            <p>Needs review {formatInr(paise(surplus.reduce((sum, item) => sum + item.amountPaise, 0)))}</p>
+          <>
+            <p className="section-label">Needs review</p>
+            <p className="muted">
+              Needs review {formatInr(paise(surplus.reduce((sum, item) => sum + item.amountPaise, 0)))}
+            </p>
             {surplus.map((item) => (
-              <article key={item.id}>
-                <p>{item.explanation}</p>
-                <p className="muted">
-                  {formatInr(paise(item.amountPaise))}
-                  {item.accountName ? ` · ${item.accountName}` : ""}
-                  {item.personName ? ` · ${item.personName}` : ""}
-                </p>
+              <div className="list-row" key={item.id}>
+                <span className="list-row-copy">
+                  <span className="list-row-title">{item.explanation}</span>
+                  <span className="list-row-meta">
+                    {formatInr(paise(item.amountPaise))}
+                    {item.personName ? ` · ${item.personName}` : ""}
+                  </span>
+                </span>
                 <button
-                  className="secondary"
+                  className="secondary compact"
                   type="button"
                   onClick={() => {
                     setSurplusId(item.id);
@@ -284,555 +167,108 @@ export function Money({ onSignedOut, onOpenMonth, onOpenCard, onOpenCycle }: Pro
                 >
                   Resolve
                 </button>
-              </article>
-            ))}
-          </section>
-        ) : null}
-        {surplusId ? (
-          <form
-            className="card stack"
-            onSubmit={(event) => {
-              event.preventDefault();
-              const item = surplus.find((row) => row.id === surplusId);
-              if (!item || !surplusResolution) return;
-              void previewOrCommitResolveSurplus({
-                surplusCaseId: item.id,
-                resolution: surplusResolution as
-                  | "apply_to_other_claim"
-                  | "convert_to_payable"
-                  | "treat_as_mine_correction"
-                  | "reassign_reservation",
-                claimId: surplusResolution === "apply_to_other_claim" ? surplusClaimId : undefined,
-                billingCycleId: surplusResolution === "reassign_reservation" ? surplusCycleId : undefined,
-                confirmed: surplusResolution === "treat_as_mine_correction" ? true : undefined,
-                commit: true,
-              })
-                .then(() => {
-                  setSurplusId(null);
-                  return load();
-                })
-                .catch((caught: unknown) => {
-                  setError(caught instanceof ApiError ? caught.message : "Could not resolve");
-                });
-            }}
-          >
-            <p>Resolve surplus</p>
-            <label>
-              Action
-              <select
-                value={surplusResolution}
-                onChange={(event) => setSurplusResolution(event.target.value)}
-              >
-                {(surplus.find((item) => item.id === surplusId)?.resolutions ?? []).map((resolution) => (
-                  <option key={resolution} value={resolution}>
-                    {resolution === "apply_to_other_claim"
-                      ? "Apply to another claim"
-                      : resolution === "convert_to_payable"
-                        ? "Convert to payable"
-                        : resolution === "treat_as_mine_correction"
-                          ? "Treat as mine"
-                          : "Reassign reservation"}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {surplusResolution === "apply_to_other_claim" ? (
-              <label>
-                Claim
-                <select value={surplusClaimId} onChange={(event) => setSurplusClaimId(event.target.value)}>
-                  {(surplus.find((item) => item.id === surplusId)?.openClaims ?? []).map((claim) => (
-                    <option key={claim.id} value={claim.id}>
-                      {claim.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
-            {surplusResolution === "reassign_reservation" ? (
-              <label>
-                Cycle
-                <select value={surplusCycleId} onChange={(event) => setSurplusCycleId(event.target.value)}>
-                  {(surplus.find((item) => item.id === surplusId)?.unpaidCycles ?? []).map((cycle) => (
-                    <option key={cycle.id} value={cycle.id}>
-                      {cycle.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
-            {surplusResolution === "treat_as_mine_correction" ? (
-              <p className="danger">This will treat this amount as your money. It is not recorded as income.</p>
-            ) : null}
-            <button className="primary" type="submit">
-              Confirm resolution
-            </button>
-            <button className="secondary" type="button" onClick={() => setSurplusId(null)}>
-              Cancel
-            </button>
-          </form>
-        ) : null}
-        {accounts.map((account) => (
-          <section className="card" key={account.id}>
-            <div className="row">
-              <strong>
-                {account.displayName}
-                {account.mask ? ` · ${account.mask}` : ""}
-                {account.kind === "cash" ? " · Cash" : ""}
-                {account.isPrimarySalary ? " · Salary" : ""}
-              </strong>
-              <span>{formatInr(paise(account.balancePaise))}</span>
-            </div>
-            <p className="muted">
-              Balance {formatInr(paise(account.balancePaise))} · Reserved{" "}
-              {formatInr(paise(account.reservedPaise ?? 0))} · Available{" "}
-              {formatInr(paise(account.availablePaise ?? account.balancePaise))}
-            </p>
-            {(account.reservedDetails ?? []).map((detail) => (
-              <p className="muted" key={detail.reservationId}>
-                {formatInr(paise(detail.amountPaise))} reserved for {detail.cardLabel}
-                {detail.dueOn ? ` due ${detail.dueOn}` : ""}
-                {detail.personName ? ` · ${detail.personName}` : ""}
-              </p>
-            ))}
-            <div className="actions">
-              {!account.hasOpening ? (
-                <button className="secondary" type="button" onClick={() => setOpeningAccountId(account.id)}>
-                  Set opening
-                </button>
-              ) : null}
-              <button
-                className="secondary"
-                type="button"
-                onClick={() => {
-                  setRenameAccountId(account.id);
-                  setRenameAccountName(account.displayName);
-                }}
-              >
-                Rename
-              </button>
-              {!account.isPrimarySalary ? (
-                <button
-                  className="secondary"
-                  type="button"
-                  onClick={() =>
-                    void updateAccount({ accountId: account.id, isPrimarySalary: true })
-                      .then(load)
-                      .catch((caught: unknown) => {
-                        setError(caught instanceof ApiError ? caught.message : "Could not update");
-                      })
-                  }
-                >
-                  Primary salary
-                </button>
-              ) : null}
-              <button
-                className="secondary"
-                type="button"
-                onClick={() =>
-                  void updateAccount({ accountId: account.id, status: "archived" })
-                    .then(load)
-                    .catch((caught: unknown) => {
-                      setError(caught instanceof ApiError ? caught.message : "Could not archive");
-                    })
-                }
-              >
-                Archive
-              </button>
-            </div>
-          </section>
-        ))}
-        {openingAccountId ? (
-          <form className="card stack" onSubmit={onOpening}>
-            <p>Starting balance — this is not income.</p>
-            <label>
-              Amount (INR)
-              <input
-                inputMode="decimal"
-                value={openingAmount}
-                onChange={(event) => setOpeningAmount(event.target.value)}
-                required
-              />
-            </label>
-            <button className="primary" type="submit">
-              Save opening
-            </button>
-          </form>
-        ) : null}
-        {renameAccountId ? (
-          <form
-            className="card stack"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void updateAccount({ accountId: renameAccountId, displayName: renameAccountName })
-                .then(() => {
-                  setRenameAccountId(null);
-                  return load();
-                })
-                .catch((caught: unknown) => {
-                  setError(caught instanceof ApiError ? caught.message : "Could not rename");
-                });
-            }}
-          >
-            <label>
-              Account name
-              <input value={renameAccountName} onChange={(event) => setRenameAccountName(event.target.value)} />
-            </label>
-            <button className="primary" type="submit">
-              Save name
-            </button>
-          </form>
-        ) : null}
-        <form className="card stack" onSubmit={onCreateAccount}>
-          <p>Add account</p>
-          <label>
-            Name
-            <input value={newAccountName} onChange={(event) => setNewAccountName(event.target.value)} required />
-          </label>
-          <label>
-            Kind
-            <select
-              value={newAccountKind}
-              onChange={(event) => setNewAccountKind(event.target.value as "bank" | "cash")}
-            >
-              <option value="bank">Bank</option>
-              <option value="cash">Cash</option>
-            </select>
-          </label>
-          <button className="primary" type="submit">
-            Create account
-          </button>
-        </form>
-        <section className="card stack">
-          <p>Cards</p>
-          {cards.length === 0 ? <p className="muted">No cards yet.</p> : null}
-          {cards.map((card) => (
-            <button className="link-card" type="button" key={card.id} onClick={() => onOpenCard(card.id)}>
-              <div className="row">
-                <strong>{card.label}</strong>
-                <span>{formatInr(paise(card.outstandingPaise))}</span>
               </div>
-              <p className="muted">
-                {card.currentCycle
-                  ? `Open cycle statement ${card.currentCycle.expectedStatementOn}`
-                  : "No open cycle yet"}
-                {card.nextDueOn ? ` · due ${card.nextDueOn}` : ""}
-              </p>
+            ))}
+          </>
+        ) : null}
+
+        {month ? (
+          <>
+            <p className="section-label">Monthly summary</p>
+            <button className="list-row" type="button" onClick={onOpenMonth}>
+              <span className="list-row-copy">
+                <span className="list-row-title">This month you spent</span>
+                <span className="list-row-meta">Tap for review</span>
+              </span>
+              <span className="amount">{formatInr(paise(month.spentPaise))}</span>
+              <RowChevron />
             </button>
-          ))}
-        </section>
-        <form className="card stack" onSubmit={(event) => void onCreateCard(event)}>
-          <p>Add card</p>
-          <label>
-            Name
-            <input value={newCardName} onChange={(event) => setNewCardName(event.target.value)} required />
-          </label>
-          <label>
-            Issuer
-            <input value={newCardIssuer} onChange={(event) => setNewCardIssuer(event.target.value)} />
-          </label>
-          <label>
-            Last 4
-            <input
-              value={newCardMask}
-              onChange={(event) => setNewCardMask(event.target.value)}
-              inputMode="numeric"
-              maxLength={4}
-            />
-          </label>
-          <label>
-            Statement day
-            <input
-              value={newCardStatementDay}
-              onChange={(event) => setNewCardStatementDay(event.target.value)}
-              inputMode="numeric"
-              required
-            />
-          </label>
-          <label>
-            Due days after statement
-            <input
-              value={newCardDueDays}
-              onChange={(event) => setNewCardDueDays(event.target.value)}
-              inputMode="numeric"
-              required
-            />
-          </label>
-          <label>
-            Credit limit (optional)
-            <input
-              inputMode="decimal"
-              value={newCardLimit}
-              onChange={(event) => setNewCardLimit(event.target.value)}
-            />
-          </label>
-          <label>
-            Default payment account
-            <select
-              value={newCardPaymentAccountId}
-              onChange={(event) => setNewCardPaymentAccountId(event.target.value)}
-            >
-              <option value="">None</option>
-              {accounts.map((account) => (
-                <option key={account.id} value={account.id}>
-                  {account.displayName}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Default owner
-            <select
-              value={newCardOwnerPersonId}
-              onChange={(event) => setNewCardOwnerPersonId(event.target.value)}
-            >
-              <option value="">You</option>
-              {people
-                .filter((person) => person.status === "active")
-                .map((person) => (
-                  <option key={person.id} value={person.id}>
-                    {person.name}
-                  </option>
-                ))}
-            </select>
-          </label>
-          <button className="primary" type="submit">
-            Create card
-          </button>
-        </form>
-        <section className="card stack">
-          <p>Categories</p>
-          {categories.map((category) => (
-            <div className="row" key={category.id}>
-              <span>
-                {category.parentId
-                  ? `${categories.find((item) => item.id === category.parentId)?.name ?? ""} / ${category.name}`
-                  : category.name}
-              </span>
-              <span className="actions">
-                <button
-                  className="linkish"
-                  type="button"
-                  onClick={() => {
-                    setRenameCategoryId(category.id);
-                    setRenameCategoryName(category.name);
-                  }}
-                >
-                  Rename
-                </button>
-                <button
-                  className="linkish"
-                  type="button"
-                  onClick={() =>
-                    void updateCategory({ categoryId: category.id, archive: true })
-                      .then(load)
-                      .catch((caught: unknown) => {
-                        setError(caught instanceof ApiError ? caught.message : "Could not archive");
-                      })
-                  }
-                >
-                  Archive
-                </button>
-              </span>
-            </div>
-          ))}
-          {renameCategoryId ? (
+          </>
+        ) : null}
+
+        {resolving ? (
+          <Sheet title="Resolve surplus" onClose={() => setSurplusId(null)}>
             <form
-              className="stack"
+              className="sheet-form"
               onSubmit={(event) => {
                 event.preventDefault();
-                void updateCategory({ categoryId: renameCategoryId, name: renameCategoryName })
+                if (!surplusResolution) return;
+                void previewOrCommitResolveSurplus({
+                  surplusCaseId: resolving.id,
+                  resolution: surplusResolution as
+                    | "apply_to_other_claim"
+                    | "convert_to_payable"
+                    | "treat_as_mine_correction"
+                    | "reassign_reservation",
+                  claimId: surplusResolution === "apply_to_other_claim" ? surplusClaimId : undefined,
+                  billingCycleId: surplusResolution === "reassign_reservation" ? surplusCycleId : undefined,
+                  confirmed: surplusResolution === "treat_as_mine_correction" ? true : undefined,
+                  commit: true,
+                })
                   .then(() => {
-                    setRenameCategoryId(null);
-                    return load();
+                    setSurplusId(null);
+                    return fetchMoney().then(applyMoney);
                   })
                   .catch((caught: unknown) => {
-                    setError(caught instanceof ApiError ? caught.message : "Could not rename");
-                  });
-              }}
-            >
-              <input value={renameCategoryName} onChange={(event) => setRenameCategoryName(event.target.value)} />
-              <button className="secondary" type="submit">
-                Save category
-              </button>
-            </form>
-          ) : null}
-          <form className="stack" onSubmit={onCreateCategory}>
-            <label>
-              New category
-              <input value={newCategoryName} onChange={(event) => setNewCategoryName(event.target.value)} required />
-            </label>
-            <label>
-              Parent (optional)
-              <select
-                value={newCategoryParentId}
-                onChange={(event) => setNewCategoryParentId(event.target.value)}
-              >
-                <option value="">None</option>
-                {categories.map((category) => (
-                  <option key={category.id} value={category.id}>
-                    {category.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <button className="secondary" type="submit">
-              Add category
-            </button>
-          </form>
-        </section>
-        <section className="card">
-          <h2>Obligations</h2>
-          {templates.map((template) => (
-            <p key={template.id} className="muted">
-              {template.name} · day {template.dueRule.dayOfMonth} · {template.priority.replace("_", " ")}
-              {template.effectiveTo ? ` · ends ${template.effectiveTo}` : ""}
-            </p>
-          ))}
-          <form
-            className="stack"
-            onSubmit={(event) => {
-              event.preventDefault();
-              const amountPaise = parseInr(oblAmount);
-              void createObligationTemplate({
-                name: oblName,
-                priority: oblPriority,
-                dayOfMonth: Number(oblDay),
-                amountPaise,
-                effectiveFrom: todayKolkata(),
-              })
-                .then(() => load())
-                .catch((caught: unknown) => {
-                  setError(caught instanceof ApiError ? caught.message : "Could not save obligation");
-                });
-            }}
-          >
-            <label>
-              Recurring name
-              <input value={oblName} onChange={(event) => setOblName(event.target.value)} required />
-            </label>
-            <label>
-              Due day
-              <input value={oblDay} onChange={(event) => setOblDay(event.target.value)} required />
-            </label>
-            <label>
-              Amount
-              <input value={oblAmount} onChange={(event) => setOblAmount(event.target.value)} required />
-            </label>
-            <label>
-              Priority
-              <select
-                value={oblPriority}
-                onChange={(event) =>
-                  setOblPriority(event.target.value as "must_pay" | "committed" | "planned")
-                }
-              >
-                <option value="must_pay">Must pay</option>
-                <option value="committed">Committed</option>
-                <option value="planned">Planned</option>
-              </select>
-            </label>
-            <button className="secondary" type="submit">
-              Add recurring
-            </button>
-          </form>
-          {templates.length > 0 ? (
-            <form
-              className="stack"
-              onSubmit={(event) => {
-                event.preventDefault();
-                if (!editTemplateId) return;
-                const amountPaise = parseInr(editAmount);
-                void changeObligationFrom({
-                  templateId: editTemplateId,
-                  effectiveFrom: editFrom,
-                  amountPaise,
-                  priority: oblPriority,
-                })
-                  .then(() => load())
-                  .catch((caught: unknown) => {
-                    setError(caught instanceof ApiError ? caught.message : "Could not change obligation");
+                    setError(caught instanceof ApiError ? caught.message : "Could not resolve");
                   });
               }}
             >
               <label>
-                Change from date
-                <select value={editTemplateId} onChange={(event) => setEditTemplateId(event.target.value)}>
-                  {templates.map((template) => (
-                    <option key={template.id} value={template.id}>
-                      {template.name}
+                Action
+                <select
+                  value={surplusResolution}
+                  onChange={(event) => setSurplusResolution(event.target.value)}
+                >
+                  {resolving.resolutions.map((resolution) => (
+                    <option key={resolution} value={resolution}>
+                      {resolution === "apply_to_other_claim"
+                        ? "Apply to another claim"
+                        : resolution === "convert_to_payable"
+                          ? "Convert to payable"
+                          : resolution === "treat_as_mine_correction"
+                            ? "Treat as mine"
+                            : "Reassign reservation"}
                     </option>
                   ))}
                 </select>
               </label>
-              <label>
-                Effective from
-                <input type="date" value={editFrom} onChange={(event) => setEditFrom(event.target.value)} required />
-              </label>
-              <label>
-                New amount
-                <input value={editAmount} onChange={(event) => setEditAmount(event.target.value)} required />
-              </label>
-              <button className="secondary" type="submit">
-                Apply from date
+              {surplusResolution === "apply_to_other_claim" ? (
+                <label>
+                  Claim
+                  <select value={surplusClaimId} onChange={(event) => setSurplusClaimId(event.target.value)}>
+                    {resolving.openClaims.map((claim) => (
+                      <option key={claim.id} value={claim.id}>
+                        {claim.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+              {surplusResolution === "reassign_reservation" ? (
+                <label>
+                  Cycle
+                  <select value={surplusCycleId} onChange={(event) => setSurplusCycleId(event.target.value)}>
+                    {resolving.unpaidCycles.map((cycle) => (
+                      <option key={cycle.id} value={cycle.id}>
+                        {cycle.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+              {surplusResolution === "treat_as_mine_correction" ? (
+                <p className="danger">This will treat this amount as your money. It is not recorded as income.</p>
+              ) : null}
+              <button className="primary" type="submit">
+                Confirm resolution
+              </button>
+              <button className="secondary" type="button" onClick={() => setSurplusId(null)}>
+                Cancel
               </button>
             </form>
-          ) : null}
-          {templates.length > 0 ? (
-            <form
-              className="stack"
-              onSubmit={(event) => {
-                event.preventDefault();
-                if (!editTemplateId) return;
-                void archiveObligationTemplate({ templateId: editTemplateId, effectiveTo: archiveTo })
-                  .then(() => load())
-                  .catch((caught: unknown) => {
-                    setError(caught instanceof ApiError ? caught.message : "Could not end obligation");
-                  });
-              }}
-            >
-              <label>
-                End on
-                <input type="date" value={archiveTo} onChange={(event) => setArchiveTo(event.target.value)} required />
-              </label>
-              <button className="secondary" type="submit">
-                Archive template
-              </button>
-            </form>
-          ) : null}
-          <form
-            className="stack"
-            onSubmit={(event) => {
-              event.preventDefault();
-              const amountPaise = parseInr(oneOffAmount);
-              void createOneOffObligation({
-                name: oneOffName,
-                dueOn: oneOffDue,
-                amountPaise,
-                priority: oblPriority,
-              })
-                .then(() => load())
-                .catch((caught: unknown) => {
-                  setError(caught instanceof ApiError ? caught.message : "Could not save one-off");
-                });
-            }}
-          >
-            <label>
-              One-off name
-              <input value={oneOffName} onChange={(event) => setOneOffName(event.target.value)} required />
-            </label>
-            <label>
-              Due
-              <input type="date" value={oneOffDue} onChange={(event) => setOneOffDue(event.target.value)} required />
-            </label>
-            <label>
-              Amount
-              <input value={oneOffAmount} onChange={(event) => setOneOffAmount(event.target.value)} required />
-            </label>
-            <button className="secondary" type="submit">
-              Add one-off
-            </button>
-          </form>
-        </section>
+          </Sheet>
+        ) : null}
       </main>
     </>
   );

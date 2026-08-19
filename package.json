@@ -13,7 +13,10 @@
     "lint": "eslint src tests",
     "db:generate": "drizzle-kit generate",
     "db:generate:pg": "drizzle-kit generate --config=drizzle.pg.config.ts",
-    "db:migrate": "tsx --env-file=.env src/db/migrate.ts"
+    "db:migrate": "tsx --env-file=.env src/db/migrate.ts",
+    "db:backup": "node scripts/backup-pg.mjs",
+    "db:restore-drill": "node scripts/restore-drill-pg.mjs",
+    "db:verify-restore": "node scripts/verify-pg-backup.mjs"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.1",

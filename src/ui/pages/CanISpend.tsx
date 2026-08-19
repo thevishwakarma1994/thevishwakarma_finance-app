@@ -13,6 +13,7 @@ import {
   type HomeView,
 } from "../apiClient.js";
 import { cacheHomeView, getCachedHomeView } from "../homeCache.js";
+import { PageHeader } from "../chrome.js";
 
 type Props = {
   onBack: () => void;
@@ -69,14 +70,9 @@ export function CanISpend({ onBack }: Props) {
   }
 
   return (
-    <main className="page">
-      <header className="header">
-        <button className="linkish" type="button" onClick={onBack}>
-          Back
-        </button>
-        <h1>Can I spend this?</h1>
-        <span />
-      </header>
+    <>
+      <PageHeader title="Can I spend this?" onBack={onBack} />
+      <main className="page">
       {error ? <p className="danger">{error}</p> : null}
       {home ? (
         <p className="muted">Safe to spend now {formatInr(paise(home.currentCycleSafeToSpend))}</p>
@@ -131,7 +127,13 @@ export function CanISpend({ onBack }: Props) {
             <strong>{formatInr(paise(result.worstProjectedSafeToSpend))}</strong>
           </div>
           <p>
-            <strong>{result.conclusion.code}</strong>
+            <strong>
+              {result.conclusion.code === "comfortable"
+                ? "This looks comfortable"
+                : result.conclusion.code === "tight"
+                  ? "This is tight"
+                  : "Better not spend this"}
+            </strong>
           </p>
           {result.conclusion.reasons.map((reason) => (
             <p key={reason} className="muted">
@@ -141,5 +143,6 @@ export function CanISpend({ onBack }: Props) {
         </section>
       ) : null}
     </main>
+    </>
   );
 }

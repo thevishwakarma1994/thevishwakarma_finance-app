@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { ApiError } from "../apiClient.js";
+import { ErrorState } from "../chrome.js";
 import {
   firebaseConfigured,
   firebaseErrorMessage,
@@ -69,12 +70,14 @@ export function SignIn({ onSignedIn }: Props) {
   }
 
   return (
-    <main className="page">
-      <header className="header">
+    <main className="page" data-screen="sign-in">
+      <header className="header" style={{ margin: "var(--space-6) 0 var(--space-4)" }}>
+        <span className="header-slot" />
         <h1>Finance App</h1>
+        <span className="header-slot" />
       </header>
       {!configured ? (
-        <p className="danger">Firebase is not configured. Add VITE_FIREBASE_* values to .env.</p>
+        <ErrorState message="Firebase is not configured. Add VITE_FIREBASE_* values to .env." />
       ) : (
         <div className="card stack">
           <button className="secondary" type="button" disabled={busy} onClick={() => void onGoogle()}>
@@ -105,7 +108,7 @@ export function SignIn({ onSignedIn }: Props) {
                 />
               </label>
             ) : null}
-            {error ? <p className="danger">{error}</p> : null}
+            {error ? <ErrorState message={error} /> : null}
             {notice ? <p className="muted">{notice}</p> : null}
             <button className="primary" type="submit" disabled={busy}>
               {busy

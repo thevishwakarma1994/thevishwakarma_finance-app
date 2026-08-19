@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { parseInr } from "../../domain/money/inr.js";
+import { formatInrDelta, parseInr } from "../../domain/money/inr.js";
+import { paise } from "../../domain/money/paise.js";
 import { todayKolkata } from "../../domain/calendar/kolkata.js";
 import {
   ApiError,
@@ -26,16 +27,112 @@ import {
   type ConsequencePreview,
   type PersonListItem,
 } from "../apiClient.js";
+import { RowChevron, Sheet } from "../chrome.js";
 
-type Intent = "income" | "expense" | "transfer" | "card_spend" | "pay_card" | "split" | "lend" | "borrow" | "settlement_in" | "settlement_out" | null;
+export type AddIntent =
+  | "income"
+  | "expense"
+  | "transfer"
+  | "card_spend"
+  | "pay_card"
+  | "split"
+  | "lend"
+  | "borrow"
+  | "settlement_in"
+  | "settlement_out";
 type CardOwnership = "mine" | "theirs" | "split";
 
-type Props = {
-  onDone: () => void;
+export type AddDefaults = {
+  personId?: string;
+  cardId?: string;
+  cycleId?: string;
+  fromAccountId?: string;
 };
 
-export function Add({ onDone }: Props) {
-  const [intent, setIntent] = useState<Intent>(null);
+type Props = {
+  intent: AddIntent;
+  defaults?: AddDefaults;
+  onDone: () => void;
+  onClose: () => void;
+  onBackToChooser?: () => void;
+};
+
+const INTENT_TITLE: Record<AddIntent, string> = {
+  expense: "I spent money",
+  card_spend: "Card spend",
+  income: "I got paid",
+  transfer: "Move money",
+  pay_card: "I paid a card",
+  split: "We split something",
+  lend: "I lent",
+  borrow: "I borrowed",
+  settlement_in: "They paid me",
+  settlement_out: "I paid them",
+};
+
+const CHOOSER_GROUPS: { label: string; items: { intent: AddIntent; title: string }[] }[] = [
+  {
+    label: "Spend",
+    items: [
+      { intent: "expense", title: "I spent money" },
+      { intent: "card_spend", title: "Card spend" },
+    ],
+  },
+  {
+    label: "Move money",
+    items: [
+      { intent: "income", title: "I got paid" },
+      { intent: "transfer", title: "Move money" },
+      { intent: "pay_card", title: "I paid a card" },
+    ],
+  },
+  {
+    label: "People",
+    items: [
+      { intent: "split", title: "We split something" },
+      { intent: "settlement_in", title: "They paid me" },
+      { intent: "settlement_out", title: "I paid them" },
+    ],
+  },
+  {
+    label: "More",
+    items: [
+      { intent: "lend", title: "I lent" },
+      { intent: "borrow", title: "I borrowed" },
+    ],
+  },
+];
+
+export function AddChooser({
+  onPick,
+  onClose,
+}: {
+  onPick: (intent: AddIntent) => void;
+  onClose: () => void;
+}) {
+  return (
+    <Sheet title="What happened?" onClose={onClose}>
+      {CHOOSER_GROUPS.map((group) => (
+        <section key={group.label}>
+          <p className="section-label">{group.label}</p>
+          {group.items.map((item) => (
+            <button
+              key={item.intent}
+              className="list-row"
+              type="button"
+              onClick={() => onPick(item.intent)}
+            >
+              <span className="list-row-title">{item.title}</span>
+              <RowChevron />
+            </button>
+          ))}
+        </section>
+      ))}
+    </Sheet>
+  );
+}
+
+export function Add({ intent, defaults, onDone, onClose, onBackToChooser }: Props) {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [cards, setCards] = useState<CardListItem[]>([]);
@@ -97,25 +194,36 @@ export function Add({ onDone }: Props) {
         setCards(cardData.cards);
         setComing(comingData.items);
         setPeople(peopleData.people);
-        setAccountId(accountData.accounts[0]?.id ?? "");
-        setToAccountId(accountData.accounts[1]?.id ?? accountData.accounts[0]?.id ?? "");
+        const firstPerson =
+          peopleData.people.find((person) => person.id === defaults?.personId && person.status === "active") ??
+          peopleData.people.find((person) => person.status === "active");
+        const firstCard =
+          cardData.cards.find((card) => card.id === defaults?.cardId) ?? cardData.cards[0];
+        const fromAccount =
+          defaults?.fromAccountId ??
+          (intent === "card_spend" || intent === "pay_card"
+            ? firstCard?.defaultPaymentAccountId
+            : undefined) ??
+          accountData.accounts[0]?.id ??
+          "";
+        setAccountId(fromAccount);
+        setToAccountId(
+          accountData.accounts.find((account) => account.id !== fromAccount)?.id ??
+            accountData.accounts[0]?.id ??
+            "",
+        );
         setCategoryId(categoryData.categories[0]?.id ?? "");
-        const firstPerson = peopleData.people.find((person) => person.status === "active");
         setPersonId(firstPerson?.id ?? "");
         setPersonShareRows([{ personId: firstPerson?.id ?? "", amount: "" }]);
-        const firstCard = cardData.cards[0];
         setCardId(firstCard?.id ?? "");
         const firstPayable = comingData.items.find((item) => item.cardId === firstCard?.id);
-        setCycleId(firstPayable?.cycleId ?? firstCard?.currentCycle?.id ?? "");
-        if (firstCard?.defaultPaymentAccountId) {
-          setAccountId(firstCard.defaultPaymentAccountId);
-        }
-        applyCardDefault(firstCard);
+        setCycleId(defaults?.cycleId ?? firstPayable?.cycleId ?? firstCard?.currentCycle?.id ?? "");
+        if (intent === "card_spend") applyCardDefault(firstCard);
       })
       .catch((caught: unknown) => {
         setError(caught instanceof ApiError ? caught.message : "Could not load form");
       });
-  }, []);
+  }, [defaults, intent]);
 
   async function runCommand(commit: boolean) {
     const amountPaise = parseInr(amount);
@@ -233,99 +341,51 @@ export function Add({ onDone }: Props) {
     }
   }
 
-  if (!intent) {
-    return (
-      <>
-        <header className="header">
-          <h1>Add</h1>
-        </header>
-        <main className="page choice">
-          <button className="primary" type="button" onClick={() => setIntent("income")}>
-            I got paid
-          </button>
-          <button className="secondary" type="button" onClick={() => setIntent("expense")}>
-            I spent money
-          </button>
-          <button className="secondary" type="button" onClick={() => setIntent("card_spend")}>
-            Card spend
-          </button>
-          <button className="secondary" type="button" onClick={() => setIntent("split")}>
-            We split something
-          </button>
-          <button className="secondary" type="button" onClick={() => setIntent("lend")}>
-            I lent money
-          </button>
-          <button className="secondary" type="button" onClick={() => setIntent("borrow")}>
-            I borrowed money
-          </button>
-          <button className="secondary" type="button" onClick={() => setIntent("settlement_in")}>
-            They paid me
-          </button>
-          <button className="secondary" type="button" onClick={() => setIntent("settlement_out")}>
-            I paid them
-          </button>
-          <button className="secondary" type="button" onClick={() => setIntent("pay_card")}>
-            I paid a card
-          </button>
-          <button className="secondary" type="button" onClick={() => setIntent("transfer")}>
-            Move money
-          </button>
-        </main>
-      </>
-    );
-  }
+  const title = INTENT_TITLE[intent];
+  const formBack = preview ? () => setPreview(null) : onBackToChooser;
 
   if (preview) {
+    const [primary, ...notes] = preview.narrative;
+    const movement = preview.effects.filter(
+      (effect) => effect.kind === "account" || effect.kind === "card",
+    );
+    const peopleEffects = preview.effects.filter((effect) => effect.kind === "claim");
+    const otherEffects = preview.effects.filter(
+      (effect) => effect.kind !== "account" && effect.kind !== "card" && effect.kind !== "claim",
+    );
     return (
-      <>
-        <header className="header">
-          <h1>Check this first</h1>
-        </header>
-        <main className="page">
-          <section className="card preview">
-            {preview.warnings.map((line) => (
-              <p key={line} className="danger">
-                {line}
-              </p>
-            ))}
-            {preview.narrative.map((line) => (
-              <p key={line}>{line}</p>
-            ))}
-          </section>
-          {error ? <p className="danger">{error}</p> : null}
-          <div className="stack">
-            <button className="primary" type="button" disabled={busy} onClick={() => void onConfirm()}>
-              Save
-            </button>
-            <button className="secondary" type="button" onClick={() => setPreview(null)}>
-              Back
-            </button>
+      <Sheet
+        title="What will happen"
+        tall
+        onClose={onClose}
+        onBack={formBack}
+        footer={
+          <button className="primary" type="button" disabled={busy} onClick={() => void onConfirm()}>
+            {busy ? "Saving…" : "Confirm"}
+          </button>
+        }
+      >
+        {preview.warnings.map((line) => (
+          <p key={line} className="danger">
+            {line}
+          </p>
+        ))}
+        {primary ? <p className="preview-primary">{primary}</p> : null}
+        {[...movement, ...peopleEffects, ...otherEffects].map((effect, index) => (
+          <div className="list-row" key={`${effect.kind}-${effect.label}-${index}`}>
+            <span>{effect.label}</span>
+            <strong>{formatInrDelta(paise(effect.deltaPaise))}</strong>
           </div>
-        </main>
-      </>
+        ))}
+        {notes.map((line) => (
+          <p className="preview-note" key={line}>
+            {line}
+          </p>
+        ))}
+        {error ? <p className="danger">{error}</p> : null}
+      </Sheet>
     );
   }
-
-  const title =
-    intent === "income"
-      ? "I got paid"
-      : intent === "transfer"
-        ? "Move money"
-        : intent === "card_spend"
-          ? "Card spend"
-          : intent === "pay_card"
-            ? "I paid a card"
-            : intent === "split"
-              ? "We split something"
-              : intent === "lend"
-                ? "I lent money"
-                : intent === "borrow"
-                  ? "I borrowed money"
-                  : intent === "settlement_in"
-                    ? "They paid me"
-                    : intent === "settlement_out"
-                      ? "I paid them"
-                  : "I spent money";
 
   const showSplitFields = intent === "split" || (intent === "card_spend" && ownership === "split");
   const showCategory =
@@ -334,14 +394,20 @@ export function Add({ onDone }: Props) {
     (showSplitFields && Boolean(userShare.trim()));
 
   return (
-    <>
-      <header className="header">
-        <h1>{title}</h1>
-      </header>
-      <main className="page">
-        <form className="card stack" onSubmit={onPreview}>
+    <Sheet
+      title={title}
+      tall
+      onClose={onClose}
+      onBack={formBack}
+      footer={
+        <button className="primary" type="submit" form="add-form" disabled={busy}>
+          {busy ? "Checking…" : "See what this will do"}
+        </button>
+      }
+    >
+      <form id="add-form" className="sheet-form" onSubmit={onPreview}>
           <label>
-            Amount (INR)
+            Amount
             <input
               inputMode="decimal"
               value={amount}
@@ -634,14 +700,7 @@ export function Add({ onDone }: Props) {
             <input type="date" value={occurredOn} onChange={(event) => setOccurredOn(event.target.value)} />
           </label>
           {error ? <p className="danger">{error}</p> : null}
-          <button className="primary" type="submit" disabled={busy}>
-            {busy ? "Checking…" : "See what this will do"}
-          </button>
-          <button className="secondary" type="button" onClick={() => setIntent(null)}>
-            Cancel
-          </button>
-        </form>
-      </main>
-    </>
+      </form>
+    </Sheet>
   );
 }

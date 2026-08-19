@@ -1,16 +1,32 @@
 import { useEffect, useState } from "react";
 import { formatInr } from "../../domain/money/inr.js";
 import { paise } from "../../domain/money/paise.js";
-import { ApiError, fetchCard, fetchPeople, updateCard, type ActivityEvent, type CardCycleView, type PersonListItem } from "../apiClient.js";
+import {
+  ApiError,
+  fetchCard,
+  fetchPeople,
+  updateCard,
+  type ActivityEvent,
+  type CardCycleView,
+  type PersonListItem,
+} from "../apiClient.js";
+import { ErrorState, PageHeader, Sheet, Skeleton } from "../chrome.js";
+import { OverflowIcon } from "../icons.js";
+import type { AddIntent } from "./Add.js";
 
 type Props = {
   cardId: string;
   onBack: () => void;
   onOpenCycle: (cycleId: string) => void;
+  onCapture: (
+    intent: Extract<AddIntent, "card_spend" | "pay_card">,
+    defaults: { cardId: string; cycleId?: string },
+  ) => void;
 };
 
-export function CardDetail({ cardId, onBack, onOpenCycle }: Props) {
+export function CardDetail({ cardId, onBack, onOpenCycle, onCapture }: Props) {
   const [error, setError] = useState<string | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [rename, setRename] = useState("");
   const [ownerPersonId, setOwnerPersonId] = useState("");
   const [people, setPeople] = useState<PersonListItem[]>([]);
@@ -41,125 +57,134 @@ export function CardDetail({ cardId, onBack, onOpenCycle }: Props) {
       });
   }, [cardId]);
 
-  if (!data) {
-    return (
-      <>
-        <header className="header">
-          <h1>Card</h1>
-          <button className="linkish" type="button" onClick={onBack}>
-            Back
-          </button>
-        </header>
-        <main className="page">
-          {error ? <p className="danger">{error}</p> : <p className="muted">Loading…</p>}
-        </main>
-      </>
-    );
-  }
+  const dueCycle =
+    data?.cycles.find((cycle) => cycle.remainingPaise > 0) ?? data?.cycles[0] ?? null;
 
   return (
     <>
-      <header className="header">
-        <h1>{data.label}</h1>
-        <button className="linkish" type="button" onClick={onBack}>
-          Back
-        </button>
-      </header>
-      <main className="page">
-        <section className="card">
-          <p className="muted">Current outstanding</p>
-          <p className="balance">{formatInr(paise(data.outstandingPaise))}</p>
-          <p className="muted">
-            Statement day {data.statementDay} · due {data.dueDaysAfterStatement} days later
-            {data.defaultOwnerName ? ` · default owner ${data.defaultOwnerName}` : " · default owner you"}
-          </p>
-        </section>
-        <form
-          className="card stack"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void updateCard({
-              cardId,
-              displayName: rename,
-              defaultOwnerPersonId: ownerPersonId || null,
-            })
-              .then(() => fetchCard(cardId))
-              .then((card) => {
-                setData(card);
-                setRename(card.displayName);
-                setOwnerPersonId(card.defaultOwnerPersonId ?? "");
-              })
-              .catch((caught: unknown) => {
-                setError(caught instanceof ApiError ? caught.message : "Could not save");
-              });
-          }}
-        >
-          <label>
-            Name
-            <input value={rename} onChange={(event) => setRename(event.target.value)} />
-          </label>
-          <label>
-            Default owner
-            <select value={ownerPersonId} onChange={(event) => setOwnerPersonId(event.target.value)}>
-              <option value="">You</option>
-              {people
-                .filter((person) => person.status === "active")
-                .map((person) => (
-                  <option key={person.id} value={person.id}>
-                    {person.name}
-                  </option>
-                ))}
-            </select>
-          </label>
-          <button className="secondary" type="submit">
-            Save
+      <PageHeader
+        title={data?.label ?? "Card"}
+        onBack={onBack}
+        trailing={
+          <button className="header-icon-btn" type="button" aria-label="More" onClick={() => setMenuOpen(true)}>
+            <OverflowIcon />
           </button>
-          <button
-            className="secondary"
-            type="button"
-            onClick={() =>
-              void updateCard({ cardId, status: "inactive" })
-                .then(onBack)
-                .catch((caught: unknown) => {
-                  setError(caught instanceof ApiError ? caught.message : "Could not archive");
-                })
-            }
-          >
-            Archive
-          </button>
-        </form>
-        <section className="card stack">
-          <p>Cycles</p>
-          {data.cycles.length === 0 ? <p className="muted">No cycles yet.</p> : null}
-          {data.cycles.map((cycle) => (
-            <button className="link-card" type="button" key={cycle.id} onClick={() => onOpenCycle(cycle.id)}>
-              <div className="row">
-                <strong>Statement {cycle.expectedStatementOn}</strong>
-                <span>{formatInr(paise(cycle.remainingPaise))}</span>
-              </div>
-              <p className="muted">
-                Due {cycle.dueOn} · {cycle.lifecycle.replaceAll("_", " ")}
-                {cycle.mismatch ? " · statement mismatch" : ""}
-              </p>
-            </button>
-          ))}
-        </section>
-        <section className="card stack">
-          <p>Transactions</p>
-          {data.transactions.length === 0 ? <p className="muted">None yet.</p> : null}
-          {data.transactions.map((event) => (
-            <div className="row" key={event.id}>
-              <span>
-                {event.meaning === "pay_obligation"
-                  ? `Paid ${formatInr(paise(event.amountPaise))}`
-                  : `${formatInr(paise(event.amountPaise))}${event.categories[0] ? ` · ${event.categories[0].name}` : ""}`}
-              </span>
-              <span className="muted">{event.occurredOn}</span>
+        }
+      />
+      <main className="page" data-screen="card-detail">
+        {error ? <ErrorState message={error} /> : null}
+        {!data && !error ? (
+          <Skeleton rows={4} />
+        ) : data ? (
+          <>
+            <p className="muted">To pay the card</p>
+            <p className="hero-number">{formatInr(paise(data.outstandingPaise))}</p>
+            {dueCycle ? <p className="muted">Due {dueCycle.dueOn}</p> : null}
+            <div className="stack">
+              {data.outstandingPaise > 0 ? (
+                <button
+                  className="primary"
+                  type="button"
+                  onClick={() =>
+                    onCapture("pay_card", { cardId, cycleId: dueCycle?.id })
+                  }
+                >
+                  Pay this card
+                </button>
+              ) : null}
+              <button
+                className={data.outstandingPaise > 0 ? "secondary" : "primary"}
+                type="button"
+                onClick={() => onCapture("card_spend", { cardId, cycleId: dueCycle?.id })}
+              >
+                Add purchase
+              </button>
             </div>
-          ))}
-        </section>
-        {error ? <p className="danger">{error}</p> : null}
+            <p className="section-label">Cycles</p>
+            {data.cycles.length === 0 ? <p className="muted">No cycles yet.</p> : null}
+            {data.cycles.map((cycle) => (
+              <button className="list-row" type="button" key={cycle.id} onClick={() => onOpenCycle(cycle.id)}>
+                <span>
+                  Statement {cycle.expectedStatementOn}
+                  <span className="muted"> · due {cycle.dueOn}</span>
+                </span>
+                <strong>{formatInr(paise(cycle.remainingPaise))}</strong>
+              </button>
+            ))}
+            <p className="section-label">Purchases</p>
+            {data.transactions.length === 0 ? <p className="muted">None yet.</p> : null}
+            {data.transactions.map((event) => (
+              <div className="list-row" key={event.id}>
+                <span>
+                  {event.meaning === "pay_obligation"
+                    ? `Paid ${formatInr(paise(event.amountPaise))}`
+                    : `${formatInr(paise(event.amountPaise))}${event.categories[0] ? ` · ${event.categories[0].name}` : ""}`}
+                </span>
+                <span className="muted">{event.occurredOn}</span>
+              </div>
+            ))}
+          </>
+        ) : null}
       </main>
+      {menuOpen && data ? (
+        <Sheet title="Edit card" onClose={() => setMenuOpen(false)}>
+          <form
+            className="stack"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void updateCard({
+                cardId,
+                displayName: rename,
+                defaultOwnerPersonId: ownerPersonId || null,
+              })
+                .then(() => fetchCard(cardId))
+                .then((card) => {
+                  setData(card);
+                  setRename(card.displayName);
+                  setOwnerPersonId(card.defaultOwnerPersonId ?? "");
+                  setMenuOpen(false);
+                })
+                .catch((caught: unknown) => {
+                  setError(caught instanceof ApiError ? caught.message : "Could not save");
+                });
+            }}
+          >
+            <label>
+              Name
+              <input value={rename} onChange={(event) => setRename(event.target.value)} />
+            </label>
+            <label>
+              Default owner
+              <select value={ownerPersonId} onChange={(event) => setOwnerPersonId(event.target.value)}>
+                <option value="">You</option>
+                {people
+                  .filter((person) => person.status === "active")
+                  .map((person) => (
+                    <option key={person.id} value={person.id}>
+                      {person.name}
+                    </option>
+                  ))}
+              </select>
+            </label>
+            <button className="secondary" type="submit">
+              Save
+            </button>
+            <button
+              className="secondary"
+              type="button"
+              onClick={() =>
+                void updateCard({ cardId, status: "inactive" })
+                  .then(onBack)
+                  .catch((caught: unknown) => {
+                    setError(caught instanceof ApiError ? caught.message : "Could not archive");
+                  })
+              }
+            >
+              Archive
+            </button>
+          </form>
+        </Sheet>
+      ) : null}
     </>
   );
 }

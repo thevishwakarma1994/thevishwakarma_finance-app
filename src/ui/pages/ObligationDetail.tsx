@@ -10,6 +10,7 @@ import {
   skipObligation,
   type Account,
 } from "../apiClient.js";
+import { ErrorState, PageHeader, Skeleton } from "../chrome.js";
 
 type Props = {
   instanceId: string;
@@ -25,6 +26,7 @@ export function ObligationDetail({ instanceId, onBack }: Props) {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [accountId, setAccountId] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(() => {
@@ -40,9 +42,13 @@ export function ObligationDetail({ instanceId, onBack }: Props) {
   }, [instanceId]);
 
   useEffect(() => {
-    load().catch((caught: unknown) => {
-      setError(caught instanceof ApiError ? caught.message : "Could not load obligation");
-    });
+    load()
+      .catch((caught: unknown) => {
+        setError(caught instanceof ApiError ? caught.message : "Could not load obligation");
+      })
+      .finally(() => {
+        setLoading(false);
+      });
   }, [load]);
 
   async function onPay(event: FormEvent) {
@@ -78,51 +84,63 @@ export function ObligationDetail({ instanceId, onBack }: Props) {
     }
   }
 
+  const priorityLabel =
+    priority === "must_pay"
+      ? "Must pay"
+      : priority === "committed"
+        ? "Protected"
+        : priority === "planned"
+          ? "Planned"
+          : priority.replace("_", " ");
+
   return (
-    <main className="page">
-      <header className="header">
-        <button className="linkish" type="button" onClick={onBack}>
-          Back
-        </button>
-        <h1>{name || "Obligation"}</h1>
-        <span />
-      </header>
-      {error ? <p className="danger">{error}</p> : null}
-      <section className="card">
-        <div className="row">
-          <span>Due</span>
-          <strong>{dueOn}</strong>
-        </div>
-        <div className="row">
-          <span>Amount</span>
-          <strong>{formatInr(paise(amountPaise))}</strong>
-        </div>
-        <p className="muted">
-          {priority.replace("_", " ")} · {status}
-        </p>
-      </section>
-      {status === "open" ? (
-        <form className="card" onSubmit={(event) => void onPay(event)}>
-          <label>
-            Pay from
-            <select value={accountId} onChange={(event) => setAccountId(event.target.value)}>
-              {accounts.map((account) => (
-                <option key={account.id} value={account.id}>
-                  {account.displayName}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="actions">
-            <button className="primary" disabled={busy} type="submit">
-              Mark paid
-            </button>
-            <button className="secondary" disabled={busy} type="button" onClick={() => void onSkip()}>
-              Skip
-            </button>
-          </div>
-        </form>
-      ) : null}
-    </main>
+    <>
+      <PageHeader title={name || "Bill"} onBack={onBack} />
+      <main className="page" data-screen="obligation-detail">
+        {loading ? <Skeleton rows={3} /> : null}
+        {error ? <ErrorState message={error} /> : null}
+
+        {!loading && !error ? (
+          <>
+            <section className="card stack">
+              <div>
+                <p className="muted">Amount</p>
+                <p className="hero-number">{formatInr(paise(amountPaise))}</p>
+              </div>
+              <div className="row">
+                <span>Due</span>
+                <strong>{dueOn}</strong>
+              </div>
+              <p className="muted">
+                {priorityLabel} · {status}
+              </p>
+            </section>
+
+            {status === "open" ? (
+              <form className="card stack" onSubmit={(event) => void onPay(event)}>
+                <label>
+                  Pay from
+                  <select value={accountId} onChange={(event) => setAccountId(event.target.value)}>
+                    {accounts.map((account) => (
+                      <option key={account.id} value={account.id}>
+                        {account.displayName}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="actions">
+                  <button className="primary" disabled={busy} type="submit">
+                    Mark paid
+                  </button>
+                  <button className="secondary" disabled={busy} type="button" onClick={() => void onSkip()}>
+                    Skip
+                  </button>
+                </div>
+              </form>
+            ) : null}
+          </>
+        ) : null}
+      </main>
+    </>
   );
 }

@@ -225,6 +225,19 @@ describe("authenticated app access", () => {
         return jsonResponse(200, { authenticated: true, userId: "user-1", workspaceId: "ws-1" });
       }
       if (url.includes("/api/home")) return jsonResponse(200, homeBody);
+      if (url.includes("/api/money")) {
+        return jsonResponse(200, {
+          asOf: "2026-08-16",
+          accounts: [],
+          categories: [],
+          cards: [],
+          comingCardPayments: [],
+          people: [],
+          surplus: [],
+          templates: [],
+          month: { asOf: "2026-08-16", month: "2026-08", spentPaise: 0 },
+        });
+      }
       return jsonResponse(200, {});
     });
     render(<App />);
@@ -233,6 +246,14 @@ describe("authenticated app access", () => {
     });
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Home" })).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole("link", { name: "Money" }));
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Money" })).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Manage money" }));
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Manage money" })).toBeTruthy();
     });
     await act(async () => {
       screen.getByRole("button", { name: "Sign out" }).click();
