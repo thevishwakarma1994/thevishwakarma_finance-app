@@ -84,6 +84,21 @@ export function applyCardOpening(
   const card = snapshot.creditCards.find((c) => c.id === input.creditCardId);
   if (!card) throw new DomainError("not_found", "Card not found");
 
+  const hasBaseOpening = snapshot.events.some(
+    (event) =>
+      event.meaning === "apply_opening_card_position" && event.creditCardId === input.creditCardId,
+  );
+  if (hasBaseOpening) {
+    throw new DomainError("already_exists", "Opening position already exists for this card");
+  }
+
+  if (cardHasLifecycleActivity(snapshot, input.creditCardId)) {
+    throw new DomainError(
+      "invalid_opening",
+      "Cannot apply opening position after normal lifecycle activity has begun",
+    );
+  }
+
   let cycle: BillingCycleRecord | undefined = input.billingCycleId 
     ? snapshot.billingCycles.find((c) => c.id === input.billingCycleId)
     : undefined;
@@ -110,14 +125,6 @@ export function applyCardOpening(
 
   if (cycle.creditCardId !== input.creditCardId) {
     throw new DomainError("invalid_opening", "Cycle does not belong to card");
-  }
-
-  // Validate uniqueness
-  const hasBaseOpening = snapshot.events.some(
-    (e) => e.meaning === "apply_opening_card_position" && e.billingCycleId === finalCycleId
-  );
-  if (hasBaseOpening) {
-    throw new DomainError("already_exists", "Opening position already exists for this cycle");
   }
 
   const event: FinancialEvent = {

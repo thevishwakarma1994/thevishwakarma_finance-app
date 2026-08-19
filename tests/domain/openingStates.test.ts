@@ -195,6 +195,57 @@ describe("applyCardOpening", () => {
       ),
     ).toThrow(DomainError);
   });
+
+  it("rejects a second base opening on another cycle of the same card", () => {
+    const base = openingCardEntries("c1", "apply_opening_card_position", 20_000_00, 20_000_00);
+    const snapshot = cardSnapshot({
+      billingCycles: [
+        cycleFixture({ id: CYCLE_ID, creditCardId: CARD_ID }),
+        cycleFixture({ id: "cycle-2", creditCardId: CARD_ID }),
+      ],
+      events: [base.event],
+      postings: [base.posting],
+    });
+
+    expect(() =>
+      applyCardOpening(
+        {
+          commandId: "c2",
+          creditCardId: CARD_ID,
+          billingCycleId: "cycle-2",
+          amountPaise: paise(5_000_00),
+          occurredOn: "2026-09-15",
+          capturedAt,
+        },
+        snapshot,
+      ),
+    ).toThrow("Opening position already exists for this card");
+  });
+
+  it("rejects a base opening after tracked spend on the card", () => {
+    const spend = eventFixture({
+      id: "spend-1",
+      meaning: "spend_card",
+      amountPaise: paise(1_000_00),
+      creditCardId: CARD_ID,
+      billingCycleId: CYCLE_ID,
+    });
+    const snapshot = cardSnapshot({ events: [spend] });
+
+    expect(() =>
+      applyCardOpening(
+        {
+          commandId: "c1",
+          creditCardId: CARD_ID,
+          billingCycleId: CYCLE_ID,
+          amountPaise: paise(20_000_00),
+          occurredOn: "2026-08-19",
+          capturedAt,
+        },
+        snapshot,
+      ),
+    ).toThrow("Cannot apply opening position after normal lifecycle activity has begun");
+  });
 });
 
 describe("correctCardOpening", () => {

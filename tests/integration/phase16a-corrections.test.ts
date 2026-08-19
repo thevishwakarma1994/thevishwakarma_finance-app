@@ -13,6 +13,8 @@ import { receiveSettlement } from "../../src/app/receiveSettlement.js";
 import { paySettlement } from "../../src/app/paySettlement.js";
 import { payCard } from "../../src/app/payCard.js";
 import { createCard } from "../../src/app/cards.js";
+import { recordCardSpend } from "../../src/app/recordCardSpend.js";
+import { recordSplit } from "../../src/app/recordSplit.js";
 import { cardDetail } from "../../src/db/reads.js";
 
 
@@ -351,5 +353,107 @@ describe("phase 16a correction workflows", () => {
         commit: true,
       })
     ).rejects.toMatchObject({ code: "invalid_allocation" }); // cannot settle voided claim
+  });
+
+  it("6. rejects base opening after real card spend or split", async () => {
+    const ctx = await setup();
+    contexts.push(ctx.handles);
+    const groceryId = (await loadSnapshot(ctx.handles, ctx.workspaceId)).categories.find(
+      (category) => category.name === "Grocery",
+    )!.id;
+
+    await recordCardSpend(ctx.handles, { workspaceId: ctx.workspaceId }, {
+      occurredOn: "2026-08-05",
+      capturedAt,
+      creditCardId: ctx.cardId,
+      allocations: [{ categoryId: groceryId, amountPaise: 1_000_00 }],
+      commit: true,
+    });
+
+    await expect(
+      applyOpeningCard(ctx.handles, { workspaceId: ctx.workspaceId }, {
+        commandId: "cmd-open-after-spend",
+        occurredOn: "2026-08-05",
+        capturedAt,
+        creditCardId: ctx.cardId,
+        amountPaise: 20_000_00,
+      }),
+    ).rejects.toMatchObject({ code: "invalid_opening" });
+
+    const otherCard = await createCard(ctx.handles, { workspaceId: ctx.workspaceId }, {
+      displayName: "Visa",
+      issuer: "Visa",
+      mask: "2002",
+      statementDay: 10,
+      dueDaysAfterStatement: 20,
+      defaultPaymentAccountId: ctx.hdfcId,
+    });
+    await recordSplit(ctx.handles, { workspaceId: ctx.workspaceId }, {
+      occurredOn: "2026-08-05",
+      capturedAt,
+      amountPaise: 2_000_00,
+      source: { type: "card", creditCardId: otherCard.id },
+      userSharePaise: 1_000_00,
+      personShares: [{ personId: ctx.rahulId, amountPaise: 1_000_00 }],
+      allocations: [{ categoryId: groceryId, amountPaise: 1_000_00 }],
+      commit: true,
+    });
+
+    await expect(
+      applyOpeningCard(ctx.handles, { workspaceId: ctx.workspaceId }, {
+        commandId: "cmd-open-after-split",
+        occurredOn: "2026-08-05",
+        capturedAt,
+        creditCardId: otherCard.id,
+        amountPaise: 20_000_00,
+      }),
+    ).rejects.toMatchObject({ code: "invalid_opening" });
+  });
+
+  it("7. rejects a second base opening on another billing cycle of the same card", async () => {
+    const ctx = await setup();
+    contexts.push(ctx.handles);
+
+    await applyOpeningCard(ctx.handles, { workspaceId: ctx.workspaceId }, {
+      commandId: "cmd-open-cycle-a",
+      occurredOn: "2026-08-05",
+      capturedAt,
+      creditCardId: ctx.cardId,
+      amountPaise: 20_000_00,
+    });
+    const snapA = await loadSnapshot(ctx.handles, ctx.workspaceId);
+    expect(snapA.billingCycles).toHaveLength(1);
+    const cycleAId = snapA.billingCycles[0]!.id;
+
+    await applyOpeningReservation(ctx.handles, { workspaceId: ctx.workspaceId }, {
+      commandId: "cmd-res-cycle-b",
+      occurredOn: "2026-09-15",
+      capturedAt,
+      sourceAccountId: ctx.hdfcId,
+      cardId: ctx.cardId,
+      amountPaise: 1_000_00,
+    });
+    const snapB = await loadSnapshot(ctx.handles, ctx.workspaceId);
+    const cycleB = snapB.billingCycles.find((cycle) => cycle.id !== cycleAId);
+    expect(cycleB).toBeDefined();
+
+    await expect(
+      applyOpeningCard(ctx.handles, { workspaceId: ctx.workspaceId }, {
+        commandId: "cmd-open-cycle-b",
+        occurredOn: "2026-09-15",
+        capturedAt,
+        creditCardId: ctx.cardId,
+        billingCycleId: cycleB!.id,
+        amountPaise: 5_000_00,
+      }),
+    ).rejects.toMatchObject({ code: "already_exists" });
+
+    const snapFinal = await loadSnapshot(ctx.handles, ctx.workspaceId);
+    expect(
+      snapFinal.events.filter(
+        (event) =>
+          event.meaning === "apply_opening_card_position" && event.creditCardId === ctx.cardId,
+      ),
+    ).toHaveLength(1);
   });
 });
