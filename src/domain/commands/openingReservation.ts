@@ -46,6 +46,19 @@ export function applyReservationOpening(
     }
   }
 
+  const existingCycle = snapshot.billingCycles.find((row) => row.id === cycle.id);
+  if (
+    existingCycle &&
+    (existingCycle.status === "paid" ||
+      existingCycle.status === "closed" ||
+      existingCycle.lifecycle === "paid")
+  ) {
+    throw new DomainError(
+      "invalid_opening",
+      "Cannot apply opening reservation after the billing cycle is paid",
+    );
+  }
+
   // Validate uniqueness
   const hasBaseOpening = snapshot.events.some(
     (e) => e.meaning === "apply_opening_reservation" &&

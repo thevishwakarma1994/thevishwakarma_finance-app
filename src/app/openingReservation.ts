@@ -28,6 +28,49 @@ export async function applyOpeningReservation(
   raw: unknown,
 ) {
   const input = applyInputSchema.parse(raw);
+  const creditCardId = await creditCardIdForOpeningReservationApply(
+    handles,
+    context.workspaceId,
+    input,
+  );
+  if (creditCardId) {
+    return withCreditCardWriteLock(handles, context.workspaceId, creditCardId, (tx) =>
+      runApplyOpeningReservation(tx, context, input),
+    );
+  }
+  return runApplyOpeningReservation(handles, context, input);
+}
+
+async function creditCardIdForOpeningReservationApply(
+  handles: DbHandles,
+  workspaceId: string,
+  input: z.infer<typeof applyInputSchema>,
+): Promise<string | null> {
+  const billingCycleId = input.billingCycleId || undefined;
+  if (billingCycleId) {
+    const t = tables(handles);
+    const cycle = await queryGet<{ workspaceId: string; creditCardId: string }>(
+      handles,
+      anyDb(handles)
+        .select({
+          workspaceId: t.billingCycles.workspaceId,
+          creditCardId: t.billingCycles.creditCardId,
+        })
+        .from(t.billingCycles)
+        .where(eq(t.billingCycles.id, billingCycleId)),
+    );
+    if (cycle && cycle.workspaceId === workspaceId) {
+      return cycle.creditCardId;
+    }
+  }
+  return input.cardId || null;
+}
+
+async function runApplyOpeningReservation(
+  handles: DbHandles,
+  context: WorkspaceContext,
+  input: z.infer<typeof applyInputSchema>,
+) {
   const checks: { type: "account" | "cycle" | "card"; id: string }[] = [
     { type: "account", id: input.sourceAccountId },
   ];

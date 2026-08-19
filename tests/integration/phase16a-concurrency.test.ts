@@ -300,6 +300,97 @@ async function assertReservationVsPayCardRace(
   }
 }
 
+async function seedOutstandingCycle(
+  handles: DbHandles,
+  workspaceId: string,
+  cardId: string,
+  hdfcId: string,
+  openingCommandId: string,
+) {
+  await applyOpening(handles, { workspaceId }, {
+    accountId: hdfcId,
+    effectiveOn: "2026-08-01",
+    balancePaise: 50_000_00,
+    commit: true,
+  });
+  await applyOpeningCard(handles, { workspaceId }, openingPayload(openingCommandId, cardId));
+  const snapshot = await loadSnapshot(handles, workspaceId);
+  const cycle = snapshot.billingCycles.find((row) => row.creditCardId === cardId);
+  if (!cycle) throw new Error("Expected opening to materialize a billing cycle");
+  await confirmStatement(handles, { workspaceId }, {
+    cycleId: cycle.id,
+    actualStatementAmountPaise: 20_000_00,
+    actualStatementOn: "2026-08-10",
+    actualDueOn: "2026-08-30",
+  });
+  return { cycleId: cycle.id };
+}
+
+async function assertApplyReservationVsPayCardRace(
+  left: DbHandles,
+  right: DbHandles,
+  workspaceId: string,
+  cardId: string,
+  hdfcId: string,
+  cycleId: string,
+) {
+  const results = await Promise.allSettled([
+    applyOpeningReservation(left, { workspaceId }, {
+      commandId: "cmd-apply-res-race",
+      occurredOn: "2026-08-05",
+      capturedAt,
+      sourceAccountId: hdfcId,
+      cardId,
+      billingCycleId: cycleId,
+      amountPaise: 5_000_00,
+    }),
+    payCard(right, { workspaceId }, {
+      occurredOn: "2026-08-22",
+      capturedAt,
+      creditCardId: cardId,
+      billingCycleId: cycleId,
+      accountId: hdfcId,
+      amountPaise: 20_000_00,
+      commit: true,
+    }),
+  ]);
+  const apply = results[0]!;
+  const payment = results[1]!;
+  expect(payment.status).toBe("fulfilled");
+
+  const snapshot = await loadSnapshot(left, workspaceId);
+  const applyEvents = snapshot.events.filter((event) => event.id === "cmd-apply-res-race");
+  const payEvents = snapshot.events.filter(
+    (event) => event.meaning === "pay_obligation" && event.creditCardId === cardId,
+  );
+  expect(payEvents).toHaveLength(1);
+
+  const openings = openingReservationsForCycle(snapshot, cycleId);
+  expect(openings.filter((row) => row.status === "active")).toHaveLength(0);
+
+  const bank = snapshot.accounts.find((account) => account.id === hdfcId)!;
+  expect(bank.balancePaise).toBe(30_000_00);
+  const sts = evaluateSafeToSpend(snapshot, "2026-08-23" as IsoDate);
+  expect(sts.reservedTotal).toBe(0);
+
+  const cycle = snapshot.billingCycles.find((row) => row.id === cycleId)!;
+  expect(cycle.remainingPaise).toBe(0);
+  expect(cycle.status).toBe("paid");
+  expect(cycle.lifecycle).toBe("paid");
+
+  if (apply.status === "fulfilled") {
+    expect(applyEvents).toHaveLength(1);
+    const created = snapshot.reservations.find((row) => row.id === "cmd-apply-res-race_res");
+    expect(created).toBeTruthy();
+    expect(created!.status).not.toBe("active");
+    expect(created!.amountConsumedPaise).toBe(5_000_00);
+  } else {
+    expect(isDomain(apply.reason, "invalid_opening")).toBe(true);
+    expect(applyEvents).toHaveLength(0);
+    expect(snapshot.reservations.find((row) => row.id === "cmd-apply-res-race_res")).toBeUndefined();
+  }
+}
+
 describe("phase 16a card-write serialization (sqlite two connections)", () => {
   const cleanup: Array<{ handles: SqliteHandles[]; dir: string }> = [];
 
@@ -355,6 +446,25 @@ describe("phase 16a card-write serialization (sqlite two connections)", () => {
       ctx.hdfcId,
       seeded.cycleId,
       seeded.reservationId,
+    );
+  });
+
+  it("serializes opening-reservation apply vs real payCard", async () => {
+    const ctx = await dualSqlite();
+    const seeded = await seedOutstandingCycle(
+      ctx.a,
+      ctx.workspaceId,
+      ctx.cardId,
+      ctx.hdfcId,
+      "cmd-open-card-apply-res",
+    );
+    await assertApplyReservationVsPayCardRace(
+      ctx.a,
+      ctx.b,
+      ctx.workspaceId,
+      ctx.cardId,
+      ctx.hdfcId,
+      seeded.cycleId,
     );
   });
 });
@@ -437,6 +547,25 @@ describePg("phase 16a card-write serialization (postgres)", { timeout: 120_000 }
       ctx.hdfcId,
       seeded.cycleId,
       seeded.reservationId,
+    );
+  });
+
+  it("serializes opening-reservation apply vs real payCard", async () => {
+    const ctx = await setupPg();
+    const seeded = await seedOutstandingCycle(
+      ctx.handles,
+      ctx.workspaceId,
+      ctx.cardId,
+      ctx.hdfcId,
+      "cmd-open-card-apply-res",
+    );
+    await assertApplyReservationVsPayCardRace(
+      ctx.handles,
+      ctx.handles,
+      ctx.workspaceId,
+      ctx.cardId,
+      ctx.hdfcId,
+      seeded.cycleId,
     );
   });
 });

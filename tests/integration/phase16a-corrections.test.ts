@@ -456,4 +456,56 @@ describe("phase 16a correction workflows", () => {
       ),
     ).toHaveLength(1);
   });
+
+  it("8. rejects opening earmark on a fully paid cycle", async () => {
+    const ctx = await setup();
+    contexts.push(ctx.handles);
+
+    await applyOpeningCard(ctx.handles, { workspaceId: ctx.workspaceId }, {
+      commandId: "cmd-card-paid-res",
+      occurredOn: "2026-08-05",
+      capturedAt,
+      creditCardId: ctx.cardId,
+      amountPaise: 20_000_00,
+    });
+    const cycleId = (await loadSnapshot(ctx.handles, ctx.workspaceId)).billingCycles[0]!.id;
+    await confirmStatement(ctx.handles, { workspaceId: ctx.workspaceId }, {
+      cycleId,
+      actualStatementAmountPaise: 20_000_00,
+      actualStatementOn: "2026-08-10",
+      actualDueOn: "2026-08-30",
+    });
+    await payCard(ctx.handles, { workspaceId: ctx.workspaceId }, {
+      occurredOn: "2026-08-22",
+      capturedAt,
+      creditCardId: ctx.cardId,
+      accountId: ctx.hdfcId,
+      billingCycleId: cycleId,
+      amountPaise: 20_000_00,
+      commit: true,
+    });
+
+    const before = await loadSnapshot(ctx.handles, ctx.workspaceId);
+    expect(before.billingCycles[0]!.status).toBe("paid");
+    expect(before.billingCycles[0]!.lifecycle).toBe("paid");
+    const eventIds = before.events.map((event) => event.id).sort();
+
+    await expect(
+      applyOpeningReservation(ctx.handles, { workspaceId: ctx.workspaceId }, {
+        commandId: "cmd-res-after-pay",
+        occurredOn: "2026-08-23",
+        capturedAt,
+        sourceAccountId: ctx.hdfcId,
+        cardId: ctx.cardId,
+        billingCycleId: cycleId,
+        amountPaise: 5_000_00,
+      }),
+    ).rejects.toMatchObject({ code: "invalid_opening" });
+
+    const after = await loadSnapshot(ctx.handles, ctx.workspaceId);
+    expect(after.events.map((event) => event.id).sort()).toEqual(eventIds);
+    expect(after.reservations).toHaveLength(before.reservations.length);
+    expect(after.events.filter((event) => event.meaning === "apply_opening_reservation")).toHaveLength(0);
+    expect(after.reservations.filter((row) => row.status === "active")).toHaveLength(0);
+  });
 });
