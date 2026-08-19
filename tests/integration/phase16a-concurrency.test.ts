@@ -4,11 +4,18 @@ import { afterEach, describe, expect, it } from "vitest";
 import { closeDatabase, openDatabase, type DbHandles, type SqliteHandles } from "../../src/db/client.js";
 import { applyMigrations, getSoleWorkspaceId, LEGACY_WORKSPACE_NAME } from "../../src/db/migrate.js";
 import { loadSnapshot } from "../../src/db/loadSnapshot.js";
-import { applyOpeningCard } from "../../src/app/openingCard.js";
+import { applyOpeningCard, correctOpeningCard } from "../../src/app/openingCard.js";
+import { applyOpeningReservation, correctOpeningReservation } from "../../src/app/openingReservation.js";
+import { applyOpening } from "../../src/app/applyOpening.js";
+import { confirmStatement } from "../../src/app/confirmStatement.js";
+import { payCard } from "../../src/app/payCard.js";
 import { recordCardSpend } from "../../src/app/recordCardSpend.js";
 import { createCard } from "../../src/app/cards.js";
-import { DomainError } from "../../src/domain/ledger/types.js";
+import { evaluateSafeToSpend } from "../../src/domain/engine/evaluateSafeToSpend.js";
+import { deriveOpeningCardPosition } from "../../src/domain/commands/openingCard.js";
+import { DomainError, type LedgerSnapshot } from "../../src/domain/ledger/types.js";
 import { utcNowIso } from "../../src/domain/calendar/kolkata.js";
+import type { IsoDate } from "../../src/domain/calendar/isoDate.js";
 import { newId } from "../../src/domain/ids.js";
 import { anyDb, tables } from "../../src/db/exec.js";
 import { openPostgresDatabase } from "../../src/db/pg/client.js";
@@ -121,6 +128,178 @@ async function assertOpeningVsSpendRace(
   }
 }
 
+async function seedEligibleCardOpening(handles: DbHandles, workspaceId: string, cardId: string) {
+  await applyOpeningCard(handles, { workspaceId }, openingPayload("cmd-open-eligible", cardId));
+  const snapshot = await loadSnapshot(handles, workspaceId);
+  const cycle = snapshot.billingCycles.find((row) => row.creditCardId === cardId);
+  if (!cycle) throw new Error("Expected opening to materialize a billing cycle");
+  return cycle.id;
+}
+
+async function assertCorrectionVsSpendRace(
+  left: DbHandles,
+  right: DbHandles,
+  workspaceId: string,
+  cardId: string,
+  groceryId: string,
+  billingCycleId: string,
+) {
+  const results = await Promise.allSettled([
+    correctOpeningCard(left, { workspaceId }, {
+      commandId: "cmd-cor-card-race",
+      occurredOn: "2026-08-06",
+      capturedAt,
+      creditCardId: cardId,
+      billingCycleId,
+      targetAmountPaise: 18_000_00,
+    }),
+    recordCardSpend(right, { workspaceId }, {
+      occurredOn: "2026-08-05",
+      capturedAt,
+      creditCardId: cardId,
+      allocations: [{ categoryId: groceryId, amountPaise: 1_000_00 }],
+      commit: true,
+    }),
+  ]);
+  const correction = results[0]!;
+  const spend = results[1]!;
+  expect(spend.status).toBe("fulfilled");
+
+  const snapshot = await loadSnapshot(left, workspaceId);
+  const correctionEvents = snapshot.events.filter(
+    (event) => event.meaning === "correct_opening_card_position" && event.creditCardId === cardId,
+  );
+  const spendEvents = snapshot.events.filter(
+    (event) => event.meaning === "spend_card" && event.creditCardId === cardId,
+  );
+  expect(spendEvents).toHaveLength(1);
+
+  const position = deriveOpeningCardPosition(snapshot, billingCycleId);
+  expect(position.hasLifecycleActivity).toBe(true);
+  expect(position.baseEventId).toBe("cmd-open-eligible");
+
+  if (correction.status === "fulfilled") {
+    expect(correctionEvents).toHaveLength(1);
+    expect(position.currentEffectiveAmountPaise).toBe(18_000_00);
+  } else {
+    expect(isDomain(correction.reason, "invalid_opening")).toBe(true);
+    expect(correctionEvents).toHaveLength(0);
+    expect(position.currentEffectiveAmountPaise).toBe(20_000_00);
+  }
+}
+
+function openingReservationsForCycle(snapshot: LedgerSnapshot, cycleId: string) {
+  return snapshot.reservations.filter((reservation) => {
+    if (reservation.obligationRef.type !== "billing_cycle" || reservation.obligationRef.id !== cycleId) {
+      return false;
+    }
+    const origin = snapshot.events.find((event) => event.id === reservation.originatingEventId);
+    return origin?.meaning === "apply_opening_reservation" || origin?.meaning === "correct_opening_reservation";
+  });
+}
+
+async function seedReservationPayRace(
+  handles: DbHandles,
+  workspaceId: string,
+  cardId: string,
+  hdfcId: string,
+) {
+  await applyOpening(handles, { workspaceId }, {
+    accountId: hdfcId,
+    effectiveOn: "2026-08-01",
+    balancePaise: 50_000_00,
+    commit: true,
+  });
+  await applyOpeningCard(handles, { workspaceId }, openingPayload("cmd-open-card-res", cardId));
+  const snapshot = await loadSnapshot(handles, workspaceId);
+  const cycle = snapshot.billingCycles.find((row) => row.creditCardId === cardId);
+  if (!cycle) throw new Error("Expected opening to materialize a billing cycle");
+  await confirmStatement(handles, { workspaceId }, {
+    cycleId: cycle.id,
+    actualStatementAmountPaise: 20_000_00,
+    actualStatementOn: "2026-08-10",
+    actualDueOn: "2026-08-30",
+  });
+  await applyOpeningReservation(handles, { workspaceId }, {
+    commandId: "cmd-open-res",
+    occurredOn: "2026-08-05",
+    capturedAt,
+    sourceAccountId: hdfcId,
+    cardId,
+    billingCycleId: cycle.id,
+    amountPaise: 5_000_00,
+  });
+  return { cycleId: cycle.id, reservationId: "cmd-open-res_res" };
+}
+
+async function assertReservationVsPayCardRace(
+  left: DbHandles,
+  right: DbHandles,
+  workspaceId: string,
+  cardId: string,
+  hdfcId: string,
+  cycleId: string,
+  reservationId: string,
+) {
+  const results = await Promise.allSettled([
+    correctOpeningReservation(left, { workspaceId }, {
+      commandId: "cmd-cor-res-race",
+      occurredOn: "2026-08-06",
+      capturedAt,
+      reservationId,
+      targetAmountPaise: 3_000_00,
+    }),
+    payCard(right, { workspaceId }, {
+      occurredOn: "2026-08-22",
+      capturedAt,
+      creditCardId: cardId,
+      billingCycleId: cycleId,
+      accountId: hdfcId,
+      amountPaise: 20_000_00,
+      commit: true,
+    }),
+  ]);
+  const correction = results[0]!;
+  const payment = results[1]!;
+  expect(payment.status).toBe("fulfilled");
+
+  const snapshot = await loadSnapshot(left, workspaceId);
+  const original = snapshot.reservations.find((row) => row.id === reservationId);
+  const replacement = snapshot.reservations.find((row) => row.id === "cmd-cor-res-race_res");
+  const correctionEvents = snapshot.events.filter((event) => event.meaning === "correct_opening_reservation");
+  const payEvents = snapshot.events.filter(
+    (event) => event.meaning === "pay_obligation" && event.creditCardId === cardId,
+  );
+  expect(payEvents).toHaveLength(1);
+  expect(original).toBeTruthy();
+
+  const openings = openingReservationsForCycle(snapshot, cycleId);
+  expect(openings.filter((row) => row.status === "active")).toHaveLength(0);
+
+  const bank = snapshot.accounts.find((account) => account.id === hdfcId)!;
+  expect(bank.balancePaise).toBe(30_000_00);
+  const sts = evaluateSafeToSpend(snapshot, "2026-08-23" as IsoDate);
+  expect(sts.reservedTotal).toBe(0);
+
+  const cycle = snapshot.billingCycles.find((row) => row.id === cycleId)!;
+  expect(cycle.remainingPaise).toBe(0);
+
+  if (correction.status === "fulfilled") {
+    expect(correctionEvents).toHaveLength(1);
+    expect(replacement).toBeTruthy();
+    expect(original!.amountReleasedPaise).toBe(5_000_00);
+    expect(original!.amountConsumedPaise).toBe(0);
+    expect(replacement!.amountConsumedPaise).toBe(3_000_00);
+    expect(replacement!.status).not.toBe("active");
+  } else {
+    expect(isDomain(correction.reason, "invalid_opening")).toBe(true);
+    expect(correctionEvents).toHaveLength(0);
+    expect(replacement).toBeUndefined();
+    expect(original!.amountConsumedPaise).toBe(5_000_00);
+    expect(original!.amountReleasedPaise).toBe(0);
+  }
+}
+
 describe("phase 16a card-write serialization (sqlite two connections)", () => {
   const cleanup: Array<{ handles: SqliteHandles[]; dir: string }> = [];
 
@@ -150,6 +329,33 @@ describe("phase 16a card-write serialization (sqlite two connections)", () => {
   it("serializes opening vs real card spend", async () => {
     const ctx = await dualSqlite();
     await assertOpeningVsSpendRace(ctx.a, ctx.b, ctx.workspaceId, ctx.cardId, ctx.groceryId);
+  });
+
+  it("serializes opening-card correction vs real card spend", async () => {
+    const ctx = await dualSqlite();
+    const billingCycleId = await seedEligibleCardOpening(ctx.a, ctx.workspaceId, ctx.cardId);
+    await assertCorrectionVsSpendRace(
+      ctx.a,
+      ctx.b,
+      ctx.workspaceId,
+      ctx.cardId,
+      ctx.groceryId,
+      billingCycleId,
+    );
+  });
+
+  it("serializes opening-reservation correction vs real payCard", async () => {
+    const ctx = await dualSqlite();
+    const seeded = await seedReservationPayRace(ctx.a, ctx.workspaceId, ctx.cardId, ctx.hdfcId);
+    await assertReservationVsPayCardRace(
+      ctx.a,
+      ctx.b,
+      ctx.workspaceId,
+      ctx.cardId,
+      ctx.hdfcId,
+      seeded.cycleId,
+      seeded.reservationId,
+    );
   });
 });
 
@@ -205,5 +411,32 @@ describePg("phase 16a card-write serialization (postgres)", { timeout: 120_000 }
   it("serializes opening vs real card spend", async () => {
     const ctx = await setupPg();
     await assertOpeningVsSpendRace(ctx.handles, ctx.handles, ctx.workspaceId, ctx.cardId, ctx.groceryId);
+  });
+
+  it("serializes opening-card correction vs real card spend", async () => {
+    const ctx = await setupPg();
+    const billingCycleId = await seedEligibleCardOpening(ctx.handles, ctx.workspaceId, ctx.cardId);
+    await assertCorrectionVsSpendRace(
+      ctx.handles,
+      ctx.handles,
+      ctx.workspaceId,
+      ctx.cardId,
+      ctx.groceryId,
+      billingCycleId,
+    );
+  });
+
+  it("serializes opening-reservation correction vs real payCard", async () => {
+    const ctx = await setupPg();
+    const seeded = await seedReservationPayRace(ctx.handles, ctx.workspaceId, ctx.cardId, ctx.hdfcId);
+    await assertReservationVsPayCardRace(
+      ctx.handles,
+      ctx.handles,
+      ctx.workspaceId,
+      ctx.cardId,
+      ctx.hdfcId,
+      seeded.cycleId,
+      seeded.reservationId,
+    );
   });
 });

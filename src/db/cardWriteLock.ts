@@ -5,9 +5,10 @@ import { anyDb, queryGet, tables } from "./exec.js";
 import { withPostgresTransaction, withSqliteImmediateTransaction } from "./tx.js";
 
 /**
- * Serialize every writer that can create card opening or normal card lifecycle
- * events (`apply_opening_card_position`, `spend_card`, `pay_obligation`,
- * `split`, `refund`) against one credit card.
+ * Serialize every writer that can create card opening, opening correction, or
+ * normal card lifecycle events (`apply_opening_card_position`,
+ * `correct_opening_card_position`, `correct_opening_reservation`, `spend_card`,
+ * `pay_obligation`, `split`, `refund`) against one credit card.
  *
  * Lock order: the `credit_cards` row only, taken first and held until commit.
  * Commands that also touch accounts/claims/categories do not lock those rows

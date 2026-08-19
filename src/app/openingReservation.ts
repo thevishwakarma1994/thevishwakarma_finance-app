@@ -4,12 +4,13 @@ import { paise } from "../domain/money/paise.js";
 import { applyReservationOpening as applyReservationOpeningDomain, correctReservationOpening as correctReservationOpeningDomain } from "../domain/commands/openingReservation.js";
 import { loadSnapshot } from "../db/loadSnapshot.js";
 import { persistBatch } from "../db/persistBatch.js";
-import { tables, anyDb } from "../db/exec.js";
+import { tables, anyDb, queryGet } from "../db/exec.js";
 import { eq } from "drizzle-orm";
 import type { DbHandles } from "../db/client.js";
 import type { WorkspaceContext } from "./context.js";
 import { assertWorkspaceOwned } from "./ownership.js";
 import { DomainError } from "../domain/ledger/types.js";
+import { withCreditCardWriteLock } from "../db/cardWriteLock.js";
 
 const applyInputSchema = z.object({
   commandId: z.string().min(1),
@@ -111,10 +112,71 @@ export async function correctOpeningReservation(
   raw: unknown,
 ) {
   const input = correctInputSchema.parse(raw);
+  const creditCardId = await creditCardIdForBillingCycleReservation(
+    handles,
+    context.workspaceId,
+    input.reservationId,
+  );
+  if (creditCardId) {
+    return withCreditCardWriteLock(handles, context.workspaceId, creditCardId, (tx) =>
+      runCorrectOpeningReservation(tx, context, input),
+    );
+  }
+  return runCorrectOpeningReservation(handles, context, input);
+}
+
+async function creditCardIdForBillingCycleReservation(
+  handles: DbHandles,
+  workspaceId: string,
+  reservationId: string,
+): Promise<string | null> {
+  const t = tables(handles);
+  const reservation = await queryGet<{
+    workspaceId: string;
+    obligationRefType: string;
+    obligationRefId: string;
+  }>(
+    handles,
+    anyDb(handles)
+      .select({
+        workspaceId: t.reservations.workspaceId,
+        obligationRefType: t.reservations.obligationRefType,
+        obligationRefId: t.reservations.obligationRefId,
+      })
+      .from(t.reservations)
+      .where(eq(t.reservations.id, reservationId)),
+  );
+  if (!reservation || reservation.workspaceId !== workspaceId) {
+    throw new DomainError("reservation_not_found", "Reservation not found");
+  }
+  if (reservation.obligationRefType !== "billing_cycle") {
+    return null;
+  }
+  const cycle = await queryGet<{ workspaceId: string; creditCardId: string }>(
+    handles,
+    anyDb(handles)
+      .select({
+        workspaceId: t.billingCycles.workspaceId,
+        creditCardId: t.billingCycles.creditCardId,
+      })
+      .from(t.billingCycles)
+      .where(eq(t.billingCycles.id, reservation.obligationRefId)),
+  );
+  if (!cycle || cycle.workspaceId !== workspaceId) {
+    throw new DomainError("cycle_not_found", "Billing cycle not found");
+  }
+  return cycle.creditCardId;
+}
+
+async function runCorrectOpeningReservation(
+  handles: DbHandles,
+  context: WorkspaceContext,
+  input: z.infer<typeof correctInputSchema>,
+) {
   await assertWorkspaceOwned(handles, context.workspaceId, [
     { type: "reservation", id: input.reservationId },
   ]);
-  
+
   const t = tables(handles);
   const existingEvent = await anyDb(handles).select().from(t.financialEvents).where(eq(t.financialEvents.id, input.commandId)).limit(1);
   if (existingEvent.length > 0) {
@@ -137,7 +199,7 @@ export async function correctOpeningReservation(
 
   const occurredOn = isoDate(input.occurredOn);
   const snapshot = await loadSnapshot(handles, context.workspaceId, occurredOn);
-  
+
   const batch = correctReservationOpeningDomain(
     {
       commandId: input.commandId,

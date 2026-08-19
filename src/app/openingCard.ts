@@ -105,68 +105,70 @@ export async function correctOpeningCard(
   raw: unknown,
 ) {
   const input = correctInputSchema.parse(raw);
-  await assertWorkspaceOwned(handles, context.workspaceId, [
-    { type: "card", id: input.creditCardId },
-    { type: "cycle", id: input.billingCycleId },
-  ]);
+  return withCreditCardWriteLock(handles, context.workspaceId, input.creditCardId, async (tx) => {
+    await assertWorkspaceOwned(tx, context.workspaceId, [
+      { type: "card", id: input.creditCardId },
+      { type: "cycle", id: input.billingCycleId },
+    ]);
 
-  const t = tables(handles);
-  const existingEvent = await anyDb(handles).select().from(t.financialEvents).where(eq(t.financialEvents.id, input.commandId)).limit(1);
-  if (existingEvent.length > 0) {
-    if (existingEvent[0].workspaceId !== context.workspaceId) {
-      throw new DomainError("idempotency_conflict", "Command ID conflict");
-    }
-    if (existingEvent[0].meaning !== "correct_opening_card_position") {
-      throw new DomainError("idempotency_conflict", "commandId exists with different meaning");
-    }
-    if (
-      existingEvent[0].amountPaise !== input.targetAmountPaise ||
-      existingEvent[0].creditCardId !== input.creditCardId ||
-      existingEvent[0].billingCycleId !== input.billingCycleId
-    ) {
-      throw new DomainError("idempotency_conflict", "commandId exists with different payload");
-    }
-    return { eventId: input.commandId };
-  }
-
-  const occurredOn = isoDate(input.occurredOn);
-  const snapshot = await loadSnapshot(handles, context.workspaceId, occurredOn);
-  
-  const batch = correctCardOpeningDomain(
-    {
-      commandId: input.commandId,
-      creditCardId: input.creditCardId,
-      billingCycleId: input.billingCycleId,
-      targetAmountPaise: paise(input.targetAmountPaise),
-      occurredOn,
-      capturedAt: input.capturedAt,
-    },
-    snapshot,
-  );
-
-  if (batch.events.length === 0) {
-    return { eventId: null };
-  }
-
-  try {
-    await persistBatch(handles, context.workspaceId, batch);
-  } catch (caught) {
-    const err = caught as { message?: string; code?: string };
-    if (err.message?.includes("UNIQUE") || err.code === "23505") {
-      const check = await anyDb(handles).select().from(t.financialEvents).where(eq(t.financialEvents.id, input.commandId)).limit(1);
-      if (check.length > 0 && check[0].workspaceId === context.workspaceId && check[0].meaning === "correct_opening_card_position") {
-        if (
-          check[0].amountPaise === input.targetAmountPaise &&
-          check[0].creditCardId === input.creditCardId &&
-          check[0].billingCycleId === input.billingCycleId
-        ) {
-          return { eventId: input.commandId };
-        }
+    const t = tables(tx);
+    const existingEvent = await anyDb(tx).select().from(t.financialEvents).where(eq(t.financialEvents.id, input.commandId)).limit(1);
+    if (existingEvent.length > 0) {
+      if (existingEvent[0].workspaceId !== context.workspaceId) {
+        throw new DomainError("idempotency_conflict", "Command ID conflict");
       }
-      throw new DomainError("idempotency_conflict", "Command ID conflict");
+      if (existingEvent[0].meaning !== "correct_opening_card_position") {
+        throw new DomainError("idempotency_conflict", "commandId exists with different meaning");
+      }
+      if (
+        existingEvent[0].amountPaise !== input.targetAmountPaise ||
+        existingEvent[0].creditCardId !== input.creditCardId ||
+        existingEvent[0].billingCycleId !== input.billingCycleId
+      ) {
+        throw new DomainError("idempotency_conflict", "commandId exists with different payload");
+      }
+      return { eventId: input.commandId };
     }
-    throw err;
-  }
 
-  return { eventId: input.commandId };
+    const occurredOn = isoDate(input.occurredOn);
+    const snapshot = await loadSnapshot(tx, context.workspaceId, occurredOn);
+
+    const batch = correctCardOpeningDomain(
+      {
+        commandId: input.commandId,
+        creditCardId: input.creditCardId,
+        billingCycleId: input.billingCycleId,
+        targetAmountPaise: paise(input.targetAmountPaise),
+        occurredOn,
+        capturedAt: input.capturedAt,
+      },
+      snapshot,
+    );
+
+    if (batch.events.length === 0) {
+      return { eventId: null };
+    }
+
+    try {
+      await persistBatch(tx, context.workspaceId, batch);
+    } catch (caught) {
+      const err = caught as { message?: string; code?: string };
+      if (err.message?.includes("UNIQUE") || err.code === "23505") {
+        const check = await anyDb(tx).select().from(t.financialEvents).where(eq(t.financialEvents.id, input.commandId)).limit(1);
+        if (check.length > 0 && check[0].workspaceId === context.workspaceId && check[0].meaning === "correct_opening_card_position") {
+          if (
+            check[0].amountPaise === input.targetAmountPaise &&
+            check[0].creditCardId === input.creditCardId &&
+            check[0].billingCycleId === input.billingCycleId
+          ) {
+            return { eventId: input.commandId };
+          }
+        }
+        throw new DomainError("idempotency_conflict", "Command ID conflict");
+      }
+      throw err;
+    }
+
+    return { eventId: input.commandId };
+  });
 }
