@@ -284,6 +284,48 @@ export function assertConservation(
     return;
   }
 
+  if (meaning === "apply_opening_card_position" || meaning === "correct_opening_card_position") {
+    if (accountDeltas(batch) !== paise(0)) {
+      throw new DomainError("conservation_opening", "Opening card position cannot move cash");
+    }
+    if (expenseSum(batch) !== paise(0) || incomeSum(batch) !== paise(0)) {
+      throw new DomainError("conservation_opening", "Opening card position cannot create PnL");
+    }
+    if (claimPortion(batch) !== paise(0)) {
+      throw new DomainError("conservation_opening", "Opening card position cannot create claims");
+    }
+    return;
+  }
+
+  if (meaning === "apply_opening_claim" || meaning === "correct_opening_claim") {
+    if (accountDeltas(batch) !== paise(0)) {
+      throw new DomainError("conservation_opening", "Opening claim cannot move cash");
+    }
+    if (expenseSum(batch) !== paise(0) || incomeSum(batch) !== paise(0)) {
+      throw new DomainError("conservation_opening", "Opening claim cannot create PnL");
+    }
+    if (cardDeltas(batch) !== paise(0)) {
+      throw new DomainError("conservation_opening", "Opening claim cannot move card liability");
+    }
+    return;
+  }
+
+  if (meaning === "apply_opening_reservation" || meaning === "correct_opening_reservation") {
+    if (accountDeltas(batch) !== paise(0)) {
+      throw new DomainError("conservation_opening", "Opening reservation cannot move cash");
+    }
+    if (expenseSum(batch) !== paise(0) || incomeSum(batch) !== paise(0)) {
+      throw new DomainError("conservation_opening", "Opening reservation cannot create PnL");
+    }
+    if (cardDeltas(batch) !== paise(0)) {
+      throw new DomainError("conservation_opening", "Opening reservation cannot move card liability");
+    }
+    if (claimPortion(batch) !== paise(0)) {
+      throw new DomainError("conservation_opening", "Opening reservation cannot create claims");
+    }
+    return;
+  }
+
   if (meaning === "surplus_resolution") {
     if (accountDeltas(batch) !== paise(0)) {
       throw new DomainError(

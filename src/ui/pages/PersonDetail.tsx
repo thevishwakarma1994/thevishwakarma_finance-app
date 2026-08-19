@@ -1,17 +1,16 @@
-import { useEffect, useState, type FormEvent } from "react";
-import { formatInr, parseInr } from "../../domain/money/inr.js";
+import { useEffect, useState } from "react";
+import { formatInr } from "../../domain/money/inr.js";
 import { paise } from "../../domain/money/paise.js";
-import { todayKolkata } from "../../domain/calendar/kolkata.js";
 import {
   ApiError,
   fetchPerson,
-  previewOrCommitOpening,
   updatePerson,
   type PersonDetail as PersonDetailData,
 } from "../apiClient.js";
 import { PageHeader, Sheet, Skeleton } from "../chrome.js";
 import { OverflowIcon } from "../icons.js";
 import type { AddIntent } from "./Add.js";
+import { OpeningClaimForm } from "../components/OpeningForms.js";
 
 type Props = {
   personId: string;
@@ -35,10 +34,6 @@ export function PersonDetail({ personId, onBack, onCapture }: Props) {
   const [notesOpen, setNotesOpen] = useState(false);
   const [openingOpen, setOpeningOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [openingAmount, setOpeningAmount] = useState("");
-  const [openingDirection, setOpeningDirection] = useState<"they_owe_user" | "user_owes_them">(
-    "they_owe_user",
-  );
   const [notes, setNotes] = useState("");
 
   function load() {
@@ -59,24 +54,6 @@ export function PersonDetail({ personId, onBack, onCapture }: Props) {
       });
   }, [personId]);
 
-  async function onOpening(event: FormEvent) {
-    event.preventDefault();
-    setError(null);
-    try {
-      await previewOrCommitOpening({
-        personId,
-        effectiveOn: todayKolkata(),
-        direction: openingDirection,
-        amountPaise: parseInr(openingAmount),
-        commit: true,
-      });
-      setOpeningAmount("");
-      setOpeningOpen(false);
-      await load();
-    } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "Could not save opening");
-    }
-  }
 
   const oweThem = (data?.netPaise ?? 0) < 0;
 
@@ -132,6 +109,18 @@ export function PersonDetail({ personId, onBack, onCapture }: Props) {
               >
                 {oweThem ? "They paid me" : "I paid them"}
               </button>
+
+              {(() => {
+                const hasNormal = data.history.some(t => !t.meaning.includes("opening"));
+                const hasBase = data.history.some(t => t.meaning === "apply_opening_claim");
+                if (!hasNormal && !hasBase) {
+                  return <button className="secondary" type="button" onClick={() => setOpeningOpen(true)}>Set opening balance</button>;
+                }
+                if (!hasNormal && hasBase) {
+                  return <button className="secondary" type="button" onClick={() => setOpeningOpen(true)}>Correct opening balance</button>;
+                }
+                return null;
+              })()}
             </div>
             <button className="text-action" type="button" onClick={() => setHistoryOpen((open) => !open)}>
               {historyOpen ? "Hide history" : "History"}
@@ -230,32 +219,16 @@ export function PersonDetail({ personId, onBack, onCapture }: Props) {
       ) : null}
       {openingOpen ? (
         <Sheet title="Opening position" onClose={() => setOpeningOpen(false)}>
-          <form className="stack" onSubmit={(event) => void onOpening(event)}>
-            <label>
-              Direction
-              <select
-                value={openingDirection}
-                onChange={(event) =>
-                  setOpeningDirection(event.target.value as "they_owe_user" | "user_owes_them")
-                }
-              >
-                <option value="they_owe_user">They owe you</option>
-                <option value="user_owes_them">You owe them</option>
-              </select>
-            </label>
-            <label>
-              Amount (INR)
-              <input
-                inputMode="decimal"
-                value={openingAmount}
-                onChange={(event) => setOpeningAmount(event.target.value)}
-                required
-              />
-            </label>
-            <button className="secondary" type="submit">
-              Save opening
-            </button>
-          </form>
+          <OpeningClaimForm
+            personId={personId}
+            isCorrection={data?.history.some(t => t.meaning === "apply_opening_claim") ?? false}
+            claimId={data?.openClaims.find(c => c.kind === "direct_loan" || c.kind === "borrowing")?.id}
+            currentAmountPaise={data?.openClaims.find(c => c.kind === "direct_loan" || c.kind === "borrowing")?.openAmountPaise ?? 0}
+            onDone={() => {
+              setOpeningOpen(false);
+              load();
+            }}
+          />
         </Sheet>
       ) : null}
     </>

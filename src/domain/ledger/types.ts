@@ -15,6 +15,12 @@ export const EVENT_MEANINGS = [
   "borrow",
   "settlement_out",
   "surplus_resolution",
+  "apply_opening_card_position",
+  "correct_opening_card_position",
+  "apply_opening_claim",
+  "correct_opening_claim",
+  "apply_opening_reservation",
+  "correct_opening_reservation",
 ] as const;
 
 export type EventMeaning = (typeof EVENT_MEANINGS)[number];
@@ -81,7 +87,6 @@ export const CLAIM_KINDS = [
   "shared_bill",
   "direct_loan",
   "borrowing",
-  "opening",
   "surplus_payable",
 ] as const;
 export type ClaimKind = (typeof CLAIM_KINDS)[number];

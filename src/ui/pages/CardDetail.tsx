@@ -13,6 +13,7 @@ import {
 import { ErrorState, PageHeader, Sheet, Skeleton } from "../chrome.js";
 import { OverflowIcon } from "../icons.js";
 import type { AddIntent } from "./Add.js";
+import { OpeningCardDebtForm } from "../components/OpeningForms.js";
 
 type Props = {
   cardId: string;
@@ -27,6 +28,7 @@ type Props = {
 export function CardDetail({ cardId, onBack, onOpenCycle, onCapture }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [openingFormOpen, setOpeningFormOpen] = useState(false);
   const [rename, setRename] = useState("");
   const [ownerPersonId, setOwnerPersonId] = useState("");
   const [people, setPeople] = useState<PersonListItem[]>([]);
@@ -99,6 +101,18 @@ export function CardDetail({ cardId, onBack, onOpenCycle, onCapture }: Props) {
               >
                 Add purchase
               </button>
+              
+              {(() => {
+                const hasNormal = data.transactions.some(t => !t.meaning.includes("opening"));
+                const baseEvent = data.transactions.find(t => t.meaning === "apply_opening_card_position");
+                if (!hasNormal && !baseEvent) {
+                  return <button className="secondary" type="button" onClick={() => setOpeningFormOpen(true)}>Set opening debt</button>;
+                }
+                if (!hasNormal && baseEvent) {
+                  return <button className="secondary" type="button" onClick={() => setOpeningFormOpen(true)}>Correct opening debt</button>;
+                }
+                return null;
+              })()}
             </div>
             <p className="section-label">Cycles</p>
             {data.cycles.length === 0 ? <p className="muted">No cycles yet.</p> : null}
@@ -183,6 +197,21 @@ export function CardDetail({ cardId, onBack, onOpenCycle, onCapture }: Props) {
               Archive
             </button>
           </form>
+        </Sheet>
+      ) : null}
+      
+      {openingFormOpen && data && dueCycle ? (
+        <Sheet title="Opening Debt" onClose={() => setOpeningFormOpen(false)}>
+          <OpeningCardDebtForm
+            cardId={cardId}
+            cycleId={dueCycle.id}
+            isCorrection={data.transactions.some(t => t.meaning === "apply_opening_card_position")}
+            currentAmountPaise={data.outstandingPaise}
+            onDone={() => {
+              setOpeningFormOpen(false);
+              fetchCard(cardId).then(card => setData(card));
+            }}
+          />
         </Sheet>
       ) : null}
     </>

@@ -17,8 +17,7 @@ function kindRank(kind: ClaimKind): number {
   if (kind === "card_share") return 0;
   if (kind === "shared_bill") return 1;
   if (kind === "direct_loan" || kind === "borrowing") return 2;
-  if (kind === "opening") return 3;
-  return 4;
+  return 3;
 }
 
 function sortKey(claim: SuggestableClaim): string {

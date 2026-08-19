@@ -117,7 +117,7 @@ function applyPersonOpening(
     input.direction === "they_owe_user"
       ? buildReceivableClaim({
           personId: person.id,
-          kind: "opening",
+          kind: "direct_loan",
           amountPaise: input.amountPaise,
           originatingEventId: null,
           openingPositionId: opening.id,
@@ -125,7 +125,7 @@ function applyPersonOpening(
         })
       : buildPayableClaim({
           personId: person.id,
-          kind: "opening",
+          kind: "borrowing",
           amountPaise: input.amountPaise,
           originatingEventId: null,
           openingPositionId: opening.id,

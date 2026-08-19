@@ -35,19 +35,27 @@ export type Category = {
   archivedAt: string | null;
 };
 
+export type EventMeaning =
+  | "spend_card"
+  | "spend_account"
+  | "transfer"
+  | "income"
+  | "split"
+  | "borrow"
+  | "lend"
+  | "settlement_in"
+  | "settlement_out"
+  | "pay_obligation"
+  | "apply_opening_card_position"
+  | "correct_opening_card_position"
+  | "apply_opening_claim"
+  | "correct_opening_claim"
+  | "apply_opening_reservation"
+  | "correct_opening_reservation";
+
 export type ActivityEvent = {
   id: string;
-  meaning:
-    | "income"
-    | "spend_account"
-    | "transfer"
-    | "spend_card"
-    | "pay_obligation"
-    | "split"
-    | "lend"
-    | "borrow"
-    | "settlement_in"
-    | "settlement_out";
+  meaning: EventMeaning;
   occurredOn: string;
   amountPaise: number;
   accountName: string | null;
@@ -883,4 +891,28 @@ export function simulateAffordability(body: {
     method: "POST",
     body: JSON.stringify(body),
   });
+}
+
+export function applyOpeningCard(body: { commandId: string; occurredOn: string; capturedAt: string; creditCardId: string; billingCycleId: string; amountPaise: number }) {
+  return request<{ eventId: string | null }>("/api/commands/opening/card", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function correctOpeningCard(body: { commandId: string; occurredOn: string; capturedAt: string; creditCardId: string; billingCycleId: string; targetAmountPaise: number }) {
+  return request<{ eventId: string | null }>("/api/commands/opening/card/correct", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function applyOpeningClaim(body: { commandId: string; occurredOn: string; capturedAt: string; personId: string; direction: "they_owe_user" | "user_owes_them"; amountPaise: number }) {
+  return request<{ eventId: string | null }>("/api/commands/opening/claim", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function correctOpeningClaim(body: { commandId: string; occurredOn: string; capturedAt: string; claimId: string; targetAmountPaise: number }) {
+  return request<{ eventId: string | null }>("/api/commands/opening/claim/correct", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function applyOpeningReservation(body: { commandId: string; occurredOn: string; capturedAt: string; sourceAccountId: string; billingCycleId: string; amountPaise: number }) {
+  return request<{ eventId: string | null }>("/api/commands/opening/reservation", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function correctOpeningReservation(body: { commandId: string; occurredOn: string; capturedAt: string; reservationId: string; targetAmountPaise: number }) {
+  return request<{ eventId: string | null }>("/api/commands/opening/reservation/correct", { method: "POST", body: JSON.stringify(body) });
 }

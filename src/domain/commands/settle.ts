@@ -68,7 +68,6 @@ export function claimLabel(claim: LedgerClaim, snapshot: LedgerSnapshot): string
   }
   if (claim.kind === "direct_loan") return "Loan";
   if (claim.kind === "borrowing") return "Borrowing";
-  if (claim.kind === "opening") return "Opening";
   if (claim.kind === "surplus_payable") return "Surplus payable";
   return claim.kind;
 }

@@ -304,7 +304,7 @@ describe("stage 9 people claims and shared ownership", () => {
     });
     const snapshot = await loadSnapshot(ctx.handles, ctx.workspaceId);
     expect(snapshot.events).toHaveLength(before.events);
-    expect(snapshot.claims[0]?.kind).toBe("opening");
+    expect(snapshot.claims[0]?.kind).toBe("direct_loan");
     expect(snapshot.claims[0]?.originalAmountPaise).toBe(800_000);
     expect(snapshot.openings.some((opening) => opening.kind === "person")).toBe(true);
     expect(snapshot.postings.some((posting) => posting.pnl)).toBe(false);

@@ -28,6 +28,9 @@ import { createCategory, updateCategory } from "../../app/categories.js";
 import { createCard, updateCard } from "../../app/cards.js";
 import { createPerson, updatePerson } from "../../app/people.js";
 import { ensureObligationInstances } from "../../app/ensureObligationInstances.js";
+import { applyOpeningCard, correctOpeningCard } from "../../app/openingCard.js";
+import { applyOpeningClaim, correctOpeningClaim } from "../../app/openingClaim.js";
+import { applyOpeningReservation, correctOpeningReservation } from "../../app/openingReservation.js";
 import type { DbHandles } from "../../db/client.js";
 import { mapError } from "../auth/guard.js";
 
@@ -359,6 +362,90 @@ commandRoutes.post("/commands/pay-obligation", async (c) => {
 commandRoutes.post("/commands/skip-obligation", async (c) => {
   try {
     return c.json(await skipObligation(c.get("handles"), { workspaceId: c.get("workspaceId") }, await c.req.json()));
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+commandRoutes.post("/commands/opening/card", async (c) => {
+  try {
+    const body = (await c.req.json()) as Record<string, unknown>;
+    const result = await applyOpeningCard(c.get("handles"), { workspaceId: c.get("workspaceId") }, {
+      ...body,
+      capturedAt: typeof body.capturedAt === "string" ? body.capturedAt : utcNowIso(),
+    });
+    return c.json(result);
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+commandRoutes.post("/commands/opening/card/correct", async (c) => {
+  try {
+    const body = (await c.req.json()) as Record<string, unknown>;
+    const result = await correctOpeningCard(c.get("handles"), { workspaceId: c.get("workspaceId") }, {
+      ...body,
+      capturedAt: typeof body.capturedAt === "string" ? body.capturedAt : utcNowIso(),
+    });
+    return c.json(result);
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+commandRoutes.post("/commands/opening/claim", async (c) => {
+  try {
+    const body = (await c.req.json()) as Record<string, unknown>;
+    const result = await applyOpeningClaim(c.get("handles"), { workspaceId: c.get("workspaceId") }, {
+      ...body,
+      capturedAt: typeof body.capturedAt === "string" ? body.capturedAt : utcNowIso(),
+    });
+    return c.json(result);
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+commandRoutes.post("/commands/opening/claim/correct", async (c) => {
+  try {
+    const body = (await c.req.json()) as Record<string, unknown>;
+    const result = await correctOpeningClaim(c.get("handles"), { workspaceId: c.get("workspaceId") }, {
+      ...body,
+      capturedAt: typeof body.capturedAt === "string" ? body.capturedAt : utcNowIso(),
+    });
+    return c.json(result);
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+commandRoutes.post("/commands/opening/reservation", async (c) => {
+  try {
+    const body = (await c.req.json()) as Record<string, unknown>;
+    const result = await applyOpeningReservation(c.get("handles"), { workspaceId: c.get("workspaceId") }, {
+      ...body,
+      capturedAt: typeof body.capturedAt === "string" ? body.capturedAt : utcNowIso(),
+    });
+    return c.json(result);
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+commandRoutes.post("/commands/opening/reservation/correct", async (c) => {
+  try {
+    const body = (await c.req.json()) as Record<string, unknown>;
+    const result = await correctOpeningReservation(c.get("handles"), { workspaceId: c.get("workspaceId") }, {
+      ...body,
+      capturedAt: typeof body.capturedAt === "string" ? body.capturedAt : utcNowIso(),
+    });
+    return c.json(result);
   } catch (error) {
     const mapped = mapError(error);
     return c.json(mapped.body, mapped.status);
