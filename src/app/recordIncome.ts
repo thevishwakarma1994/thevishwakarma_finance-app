@@ -3,14 +3,16 @@ import { eq } from "drizzle-orm";
 import { isoDate } from "../domain/calendar/isoDate.js";
 import { paise } from "../domain/money/paise.js";
 import { recordIncome as recordIncomeDomain } from "../domain/commands/recordIncome.js";
+import { buildExpectedFundingCycle } from "../domain/funding/cycles.js";
 import { loadSnapshot } from "../db/loadSnapshot.js";
 import { persistBatch } from "../db/persistBatch.js";
 import { tables, anyDb, queryGet } from "../db/exec.js";
 import type { DbHandles } from "../db/client.js";
 import type { WorkspaceContext } from "./context.js";
+import { persistExpectedFundingCycle } from "./salaryPolicy.js";
 import { assertWorkspaceOwned } from "./ownership.js";
-import { DomainError } from "../domain/ledger/types.js";
-import { withFundingCycleWriteLock } from "../db/salaryWriteLock.js";
+import { DomainError, type FundingCycleRecord, type LedgerSnapshot } from "../domain/ledger/types.js";
+import { withWorkspaceSalaryWriteLock } from "../db/salaryWriteLock.js";
 
 const inputSchema = z.object({
   commandId: z.string().min(1).optional(),
@@ -21,8 +23,33 @@ const inputSchema = z.object({
   kind: z.enum(["salary", "other"]),
   notes: z.string().nullable().optional(),
   fundingCycleId: z.string().min(1).optional().or(z.literal("")),
+  expectedYear: z.number().int().optional(),
+  expectedMonth: z.number().int().min(1).max(12).optional(),
   commit: z.boolean().default(true),
 });
+
+type IncomeInput = z.infer<typeof inputSchema>;
+
+type CycleIdentity = {
+  fundingCycleId?: string;
+  expectedYear?: number;
+  expectedMonth?: number;
+};
+
+function cycleIdentity(input: IncomeInput): CycleIdentity | null {
+  const fundingCycleId = input.fundingCycleId || undefined;
+  const hasYear = input.expectedYear !== undefined;
+  const hasMonth = input.expectedMonth !== undefined;
+  if (hasYear !== hasMonth) {
+    throw new DomainError("invalid_salary_schedule", "Expected salary period needs both year and month");
+  }
+  if (!fundingCycleId && !hasYear) return null;
+  return {
+    fundingCycleId,
+    expectedYear: input.expectedYear,
+    expectedMonth: input.expectedMonth,
+  };
+}
 
 export async function recordIncome(
   handles: DbHandles,
@@ -30,11 +57,10 @@ export async function recordIncome(
   raw: unknown,
 ) {
   const input = inputSchema.parse(raw);
-  const fundingCycleId = input.fundingCycleId || undefined;
+  const identity = input.kind === "salary" ? cycleIdentity(input) : null;
 
   const run = async (tx: DbHandles) => {
-    const refs: { type: "account" | "cycle"; id: string }[] = [{ type: "account", id: input.accountId }];
-    await assertWorkspaceOwned(tx, context.workspaceId, refs);
+    await assertWorkspaceOwned(tx, context.workspaceId, [{ type: "account", id: input.accountId }]);
 
     const t = tables(tx);
     if (input.commandId) {
@@ -44,12 +70,25 @@ export async function recordIncome(
         .where(eq(t.financialEvents.id, input.commandId))
         .limit(1);
       if (existingEvent.length > 0) {
-        return replayOrConflict(tx, context.workspaceId, input, existingEvent[0]!);
+        return replayOrConflict(tx, context.workspaceId, input, existingEvent[0]!, identity);
       }
     }
 
     const occurredOn = isoDate(input.occurredOn);
-    const snapshot = await loadSnapshot(tx, context.workspaceId, occurredOn);
+    let snapshot = await loadSnapshot(tx, context.workspaceId, occurredOn);
+    let resolvedCycle: FundingCycleRecord | undefined;
+
+    if (identity) {
+      const cycle = await resolveSalaryCycle(tx, context.workspaceId, snapshot, identity, input.commit);
+      resolvedCycle = cycle;
+      if (!snapshot.fundingCycles.some((item) => item.id === cycle.id)) {
+        snapshot = {
+          ...snapshot,
+          fundingCycles: [...snapshot.fundingCycles, cycle],
+        };
+      }
+    }
+
     const result = recordIncomeDomain(
       {
         commandId: input.commandId,
@@ -59,7 +98,7 @@ export async function recordIncome(
         accountId: input.accountId,
         kind: input.kind,
         notes: input.notes,
-        fundingCycleId,
+        fundingCycleId: resolvedCycle?.id,
       },
       snapshot,
     );
@@ -76,7 +115,7 @@ export async function recordIncome(
             .where(eq(t.financialEvents.id, input.commandId))
             .limit(1);
           if (check.length > 0) {
-            return replayOrConflict(tx, context.workspaceId, input, check[0]!);
+            return replayOrConflict(tx, context.workspaceId, input, check[0]!, identity);
           }
         }
         throw err;
@@ -90,17 +129,58 @@ export async function recordIncome(
     };
   };
 
-  if (input.commit && input.kind === "salary" && fundingCycleId) {
-    return withFundingCycleWriteLock(handles, context.workspaceId, fundingCycleId, run);
+  if (input.commit && identity) {
+    return withWorkspaceSalaryWriteLock(handles, context.workspaceId, run);
   }
   return run(handles);
+}
+
+async function resolveSalaryCycle(
+  handles: DbHandles,
+  workspaceId: string,
+  snapshot: LedgerSnapshot,
+  identity: CycleIdentity,
+  commit: boolean,
+): Promise<FundingCycleRecord> {
+  if (identity.fundingCycleId) {
+    const existing = snapshot.fundingCycles.find((cycle) => cycle.id === identity.fundingCycleId);
+    if (!existing) {
+      throw new DomainError("cycle_not_found", "Salary period not found");
+    }
+    if (
+      identity.expectedYear !== undefined &&
+      (existing.year !== identity.expectedYear || existing.month !== identity.expectedMonth)
+    ) {
+      throw new DomainError("cycle_not_found", "Salary period does not match the selected month");
+    }
+    return existing;
+  }
+
+  const year = identity.expectedYear!;
+  const month = identity.expectedMonth!;
+  const existing = snapshot.fundingCycles.find((cycle) => cycle.year === year && cycle.month === month);
+  if (existing) return existing;
+
+  if (!commit) {
+    const overlay = buildExpectedFundingCycle(snapshot.incomePolicies, year, month);
+    if (!overlay) {
+      throw new DomainError(
+        "invalid_salary_schedule",
+        "That salary period is not covered by the current schedule",
+      );
+    }
+    return overlay;
+  }
+
+  return persistExpectedFundingCycle(handles, workspaceId, snapshot, year, month);
 }
 
 async function replayOrConflict(
   handles: DbHandles,
   workspaceId: string,
-  input: z.infer<typeof inputSchema>,
+  input: IncomeInput,
   existing: { workspaceId: string; meaning: string; amountPaise: number; accountId: string | null; occurredOn: string },
+  identity: CycleIdentity | null,
 ) {
   if (existing.workspaceId !== workspaceId) {
     throw new DomainError("idempotency_conflict", "Command ID conflict");
@@ -112,13 +192,16 @@ async function replayOrConflict(
   const postings = await anyDb(handles).select().from(t.postings).where(eq(t.postings.eventId, input.commandId)).limit(8);
   const salaryPosting = postings.find((row: { pnl: string | null }) => row.pnl === "income_salary" || row.pnl === "income_other");
   const existingKind = salaryPosting?.pnl === "income_salary" ? "salary" : salaryPosting?.pnl === "income_other" ? "other" : null;
-  // financial_events has no funding_cycle_id column; the receipt↔cycle link lives on
-  // funding_cycles.salary_event_id. Recover it so payload identity includes the cycle.
   const linkedCycle = input.commandId
-    ? await queryGet<{ id: string; workspaceId: string }>(
+    ? await queryGet<{ id: string; workspaceId: string; year: number; month: number }>(
         handles,
         anyDb(handles)
-          .select({ id: t.fundingCycles.id, workspaceId: t.fundingCycles.workspaceId })
+          .select({
+            id: t.fundingCycles.id,
+            workspaceId: t.fundingCycles.workspaceId,
+            year: t.fundingCycles.year,
+            month: t.fundingCycles.month,
+          })
           .from(t.fundingCycles)
           .where(eq(t.fundingCycles.salaryEventId, input.commandId)),
       )
@@ -127,15 +210,33 @@ async function replayOrConflict(
     throw new DomainError("idempotency_conflict", "Command ID conflict");
   }
   const existingFundingCycleId = linkedCycle?.id ?? null;
-  const fundingCycleId = input.fundingCycleId || null;
+  const replayedCycleId = await replayedCycleIdFor(handles, workspaceId, identity, linkedCycle);
   if (
     existing.amountPaise !== input.amountPaise ||
     existing.accountId !== input.accountId ||
     existing.occurredOn !== input.occurredOn ||
-    existingFundingCycleId !== fundingCycleId ||
+    existingFundingCycleId !== replayedCycleId ||
     existingKind !== input.kind
   ) {
     throw new DomainError("idempotency_conflict", "commandId exists with different payload");
   }
   return { preview: null, eventId: input.commandId, committed: true };
+}
+
+async function replayedCycleIdFor(
+  handles: DbHandles,
+  workspaceId: string,
+  identity: CycleIdentity | null,
+  linkedCycle: { id: string; year: number; month: number } | undefined,
+): Promise<string | null> {
+  if (!identity) return null;
+  if (identity.fundingCycleId) return identity.fundingCycleId;
+  if (linkedCycle && linkedCycle.year === identity.expectedYear && linkedCycle.month === identity.expectedMonth) {
+    return linkedCycle.id;
+  }
+  const snapshot = await loadSnapshot(handles, workspaceId);
+  const match = snapshot.fundingCycles.find(
+    (cycle) => cycle.year === identity.expectedYear && cycle.month === identity.expectedMonth,
+  );
+  return match?.id ?? null;
 }

@@ -9,7 +9,7 @@ import { home } from "../../src/db/reads.js";
 import { financialEvents, fundingCycles, incomePolicies, postings } from "../../src/db/schema.js";
 import { applyOpening } from "../../src/app/applyOpening.js";
 import { recordIncome } from "../../src/app/recordIncome.js";
-import { applySalaryPolicy, salarySchedule } from "../../src/app/salaryPolicy.js";
+import { applySalaryPolicy } from "../../src/app/salaryPolicy.js";
 import { simulateAffordability } from "../../src/app/simulateAffordability.js";
 
 const capturedAt = "2026-08-16T10:00:00.000Z";
@@ -121,26 +121,18 @@ describe("stage 12 home and salary persistence", () => {
       windowEndDay: 8,
       effectiveFrom: "2020-01-01",
     });
-    const schedule = await salarySchedule(
-      ctx.handles,
-      { workspaceId: ctx.workspaceId },
-      isoDate("2026-08-05"),
-    );
-    const cycleId =
-      schedule.receivableCycles.find((cycle) => cycle.year === 2026 && cycle.month === 8)?.fundingCycleId ??
-      schedule.nextExpected?.fundingCycleId;
-    expect(cycleId).toBeTruthy();
     await recordIncome(ctx.handles, { workspaceId: ctx.workspaceId }, {
       occurredOn: "2026-08-05",
       capturedAt,
       accountId: ctx.hdfcId,
       amountPaise: 7_920_000,
       kind: "salary",
-      fundingCycleId: cycleId,
+      expectedYear: 2026,
+      expectedMonth: 8,
       commit: true,
     });
     const cycle = ctx.handles.db.select().from(fundingCycles).where(eq(fundingCycles.workspaceId, ctx.workspaceId)).all()
-      .find((row) => row.id === cycleId);
+      .find((row) => row.year === 2026 && row.month === 8);
     expect(cycle?.actualArrivalOn).toBe("2026-08-05");
     expect(cycle?.actualAmountPaise).toBe(7_920_000);
     expect(cycle?.year).toBe(2026);
@@ -152,7 +144,8 @@ describe("stage 12 home and salary persistence", () => {
         accountId: ctx.hdfcId,
         amountPaise: 7_920_000,
         kind: "salary",
-        fundingCycleId: cycleId,
+        expectedYear: 2026,
+        expectedMonth: 8,
         commit: true,
       }),
     ).rejects.toThrow(/already has a salary/);

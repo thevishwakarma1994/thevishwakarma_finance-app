@@ -2,7 +2,7 @@ import { paise } from "../money/paise.js";
 import { formatInrDelta } from "../money/inr.js";
 import { newId } from "../ids.js";
 import { assertConservation } from "../conservation/validate.js";
-import { isoDate, type IsoDate } from "../calendar/isoDate.js";
+import { type IsoDate } from "../calendar/isoDate.js";
 import type { Paise } from "../money/paise.js";
 import {
   DomainError,
@@ -12,7 +12,7 @@ import {
   type Posting,
   type ProposedBatch,
 } from "../ledger/types.js";
-import { policyAsOf } from "../funding/cycles.js";
+import { policyForSalaryMonth } from "../funding/cycles.js";
 
 export type RecordIncomeInput = {
   commandId?: string;
@@ -50,10 +50,7 @@ export function recordIncome(
     if (existing.salaryEventId) {
       throw new DomainError("already_received", "This salary period already has a salary event");
     }
-    const monthStart = isoDate(
-      `${String(existing.year).padStart(4, "0")}-${String(existing.month).padStart(2, "0")}-01`,
-    );
-    const policy = policyAsOf(snapshot.incomePolicies, monthStart);
+    const policy = policyForSalaryMonth(snapshot.incomePolicies, existing.year, existing.month);
     if (!policy) {
       throw new DomainError("invalid_salary_schedule", "That salary period is not covered by the current schedule");
     }

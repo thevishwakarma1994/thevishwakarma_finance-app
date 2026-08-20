@@ -5,11 +5,12 @@ import { anyDb, queryGet, tables } from "./exec.js";
 import { withPostgresTransaction, withSqliteImmediateTransaction } from "./tx.js";
 
 /**
- * Serialize salary-policy version writes for one workspace.
+ * Serialize salary-policy version writes and cycle materialization for one workspace.
  * Lock order: the `workspaces` row first, then income_policies / funding_cycles
  * rows touched inside the same transaction.
  *
- * Receipts lock the funding-cycle row instead, so they do not invert this order.
+ * Scheduled salary receipts take this lock when they may insert a funding cycle,
+ * so they never invert lock order against policy versioning.
  */
 export async function withWorkspaceSalaryWriteLock<T>(
   handles: DbHandles,

@@ -6,7 +6,11 @@ import {
   planSalaryPolicyVersion,
   validateSalaryPolicyInput,
 } from "../../src/domain/commands/salaryPolicy.js";
-import { incomePolicyFixture } from "./fixtures.js";
+import {
+  materializeFundingCycles,
+  policyForSalaryMonth,
+} from "../../src/domain/funding/cycles.js";
+import { fundingCycleFixture, incomePolicyFixture } from "./fixtures.js";
 
 describe("salary policy versioning", () => {
   it("accepts a 4/5/8 arrival window", () => {
@@ -66,7 +70,7 @@ describe("salary policy versioning", () => {
     expect(plan.update).toBeNull();
   });
 
-  it("updates in place when the effective-from date is unchanged", () => {
+  it("updates in place when the effective-from date is unchanged and unused", () => {
     const current = incomePolicyFixture({
       id: "policy-aug",
       expectedAmountPaise: paise(7_920_000),
@@ -83,5 +87,92 @@ describe("salary policy versioning", () => {
     expect(plan.insert).toBeNull();
     expect(plan.update?.id).toBe("policy-aug");
     expect(plan.update?.expectedAmountPaise).toBe(8_200_000);
+  });
+
+  it("rejects a same-effectiveFrom edit after a dependent cycle exists", () => {
+    const current = incomePolicyFixture({
+      id: "policy-aug",
+      expectedAmountPaise: paise(7_920_000),
+      effectiveFrom: isoDate("2026-08-01"),
+    });
+    try {
+      planSalaryPolicyVersion(
+        [current],
+        {
+          expectedAmountPaise: paise(8_200_000),
+          windowStartDay: 4,
+          typicalDay: 5,
+          windowEndDay: 8,
+          effectiveFrom: isoDate("2026-08-01"),
+        },
+        [fundingCycleFixture({ year: 2026, month: 8 })],
+      );
+      throw new Error("expected policy_version_in_use");
+    } catch (error) {
+      expect(error).toBeInstanceOf(DomainError);
+      expect((error as DomainError).code).toBe("policy_version_in_use");
+    }
+  });
+
+  it("still versions a later effectiveFrom when historical cycles exist", () => {
+    const current = incomePolicyFixture({
+      id: "policy-aug",
+      expectedAmountPaise: paise(7_920_000),
+      effectiveFrom: isoDate("2026-08-01"),
+    });
+    const plan = planSalaryPolicyVersion(
+      [current],
+      {
+        expectedAmountPaise: paise(8_200_000),
+        windowStartDay: 4,
+        typicalDay: 5,
+        windowEndDay: 8,
+        effectiveFrom: isoDate("2027-01-01"),
+      },
+      [fundingCycleFixture({ year: 2026, month: 8 }), fundingCycleFixture({ year: 2026, month: 9 })],
+    );
+    expect(plan.close).toEqual({ id: "policy-aug", effectiveTo: "2026-12-31" });
+    expect(plan.insert?.effectiveFrom).toBe("2027-01-01");
+  });
+});
+
+describe("V1 mid-month effectiveFrom eligibility", () => {
+  const window = { windowStartDay: 4, typicalDay: 5, windowEndDay: 8 };
+
+  it("applies to the current month when effectiveFrom is on or before month start", () => {
+    const beforeWindow = incomePolicyFixture({
+      ...window,
+      id: "before-window",
+      effectiveFrom: isoDate("2026-08-01"),
+    });
+    expect(policyForSalaryMonth([beforeWindow], 2026, 8)?.id).toBe("before-window");
+    const cycles = materializeFundingCycles([beforeWindow], [], isoDate("2026-08-05"));
+    expect(cycles.some((cycle) => cycle.year === 2026 && cycle.month === 8)).toBe(true);
+  });
+
+  it("skips the current month when effectiveFrom falls during the arrival window", () => {
+    const during = incomePolicyFixture({
+      ...window,
+      id: "during-window",
+      effectiveFrom: isoDate("2026-08-05"),
+    });
+    expect(policyForSalaryMonth([during], 2026, 8)).toBeNull();
+    expect(policyForSalaryMonth([during], 2026, 9)?.id).toBe("during-window");
+    const cycles = materializeFundingCycles([during], [], isoDate("2026-08-05"));
+    expect(cycles.some((cycle) => cycle.year === 2026 && cycle.month === 8)).toBe(false);
+    expect(cycles.some((cycle) => cycle.year === 2026 && cycle.month === 9)).toBe(true);
+  });
+
+  it("skips the current month when effectiveFrom is after the arrival window", () => {
+    const after = incomePolicyFixture({
+      ...window,
+      id: "after-window",
+      effectiveFrom: isoDate("2026-08-10"),
+    });
+    expect(policyForSalaryMonth([after], 2026, 8)).toBeNull();
+    expect(policyForSalaryMonth([after], 2026, 9)?.id).toBe("after-window");
+    const cycles = materializeFundingCycles([after], [], isoDate("2026-08-10"));
+    expect(cycles.some((cycle) => cycle.year === 2026 && cycle.month === 8)).toBe(false);
+    expect(cycles.some((cycle) => cycle.year === 2026 && cycle.month === 9)).toBe(true);
   });
 });

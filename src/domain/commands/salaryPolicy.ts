@@ -1,8 +1,8 @@
 import { isoDate, type IsoDate } from "../calendar/isoDate.js";
-import { dayBefore } from "../funding/cycles.js";
+import { dayBefore, fundingCyclesCoveredByPolicy } from "../funding/cycles.js";
 import { paise, type Paise } from "../money/paise.js";
 import { newId } from "../ids.js";
-import { DomainError, type IncomePolicy } from "../ledger/types.js";
+import { DomainError, type FundingCycleRecord, type IncomePolicy } from "../ledger/types.js";
 
 export type SalaryPolicyInput = {
   expectedAmountPaise: Paise;
@@ -55,11 +55,18 @@ export function validateSalaryPolicyInput(input: {
 export function planSalaryPolicyVersion(
   existing: IncomePolicy[],
   input: SalaryPolicyInput,
+  persistedCycles: FundingCycleRecord[] = [],
 ): SalaryPolicyVersionPlan {
   validateSalaryPolicyInput(input);
   const sorted = [...existing].sort((left, right) => left.effectiveFrom.localeCompare(right.effectiveFrom));
   const sameStart = sorted.find((policy) => policy.effectiveFrom === input.effectiveFrom);
   if (sameStart) {
+    if (fundingCyclesCoveredByPolicy(sameStart, persistedCycles).length > 0) {
+      throw new DomainError(
+        "policy_version_in_use",
+        "This schedule already has expected salary periods. Choose a later effective-from date.",
+      );
+    }
     return {
       close: null,
       insert: null,

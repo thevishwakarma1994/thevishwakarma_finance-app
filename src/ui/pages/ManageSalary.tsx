@@ -188,6 +188,7 @@ export function ManageSalary({ onBack }: Props) {
               <input type="date" value={effectiveFrom} onChange={(event) => setEffectiveFrom(event.target.value)} required />
             </label>
             <p className="muted">Earlier months keep the previous expected amount.</p>
+            <p className="muted">Applies from the next eligible salary period.</p>
             <button className="primary" type="submit">
               Save schedule
             </button>

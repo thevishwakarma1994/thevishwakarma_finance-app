@@ -1,3 +1,4 @@
+import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
 import { isoDate } from "../../src/domain/calendar/isoDate.js";
 import { DomainError } from "../../src/domain/ledger/types.js";
@@ -8,9 +9,9 @@ import { applyMigrations, getSoleWorkspaceId, LEGACY_WORKSPACE_NAME } from "../.
 import { applyPostgresMigrations, truncatePostgresData } from "../../src/db/pg/migrate.js";
 import { openPostgresDatabase } from "../../src/db/pg/client.js";
 import { loadSnapshot } from "../../src/db/loadSnapshot.js";
-import { anyDb, tables } from "../../src/db/exec.js";
+import { anyDb, queryAll, tables } from "../../src/db/exec.js";
 import { applyOpening } from "../../src/app/applyOpening.js";
-import { applySalaryPolicy, salarySchedule } from "../../src/app/salaryPolicy.js";
+import { applySalaryPolicy, ensureExpectedFundingCycle, salarySchedule } from "../../src/app/salaryPolicy.js";
 import { recordIncome } from "../../src/app/recordIncome.js";
 import { policyAsOf } from "../../src/domain/funding/cycles.js";
 
@@ -89,6 +90,38 @@ async function cycleFor(
       : null);
 }
 
+async function fundingRows(handles: DbHandles, workspaceId: string) {
+  const t = tables(handles);
+  const rows = await queryAll<{
+    id: string;
+    year: number;
+    month: number;
+    expectedWindowStart: string;
+    expectedWindowEnd: string;
+    expectedAmountSnapshot: number;
+    actualArrivalOn: string | null;
+    actualAmountPaise: number | null;
+    salaryEventId: string | null;
+  }>(
+    handles,
+    anyDb(handles)
+      .select({
+        id: t.fundingCycles.id,
+        year: t.fundingCycles.year,
+        month: t.fundingCycles.month,
+        expectedWindowStart: t.fundingCycles.expectedWindowStart,
+        expectedWindowEnd: t.fundingCycles.expectedWindowEnd,
+        expectedAmountSnapshot: t.fundingCycles.expectedAmountSnapshot,
+        actualArrivalOn: t.fundingCycles.actualArrivalOn,
+        actualAmountPaise: t.fundingCycles.actualAmountPaise,
+        salaryEventId: t.fundingCycles.salaryEventId,
+      })
+      .from(t.fundingCycles)
+      .where(eq(t.fundingCycles.workspaceId, workspaceId)),
+  );
+  return [...rows].sort((left, right) => left.year - right.year || left.month - right.month || left.id.localeCompare(right.id));
+}
+
 describe("phase 16b salary policy", () => {
   const contexts: SqliteHandles[] = [];
   afterEach(() => {
@@ -126,12 +159,68 @@ describe("phase 16b salary policy", () => {
     ).rejects.toSatisfy((error) => isDomain(error, "invalid_salary_schedule"));
   });
 
+  it("allows a same-effectiveFrom edit before any dependent cycle exists", async () => {
+    const ctx = await seedSqlite();
+    contexts.push(ctx.handles);
+    await applySalaryPolicy(ctx.handles, { workspaceId: ctx.workspaceId }, AUG);
+    const before = await loadSnapshot(ctx.handles, ctx.workspaceId, isoDate("2026-08-05"));
+    expect(before.fundingCycles).toHaveLength(0);
+
+    await applySalaryPolicy(ctx.handles, { workspaceId: ctx.workspaceId }, {
+      ...AUG,
+      expectedAmountPaise: 8_200_000,
+    });
+    const schedule = await salarySchedule(ctx.handles, { workspaceId: ctx.workspaceId }, isoDate("2026-08-05"));
+    expect(schedule.policy?.expectedAmountPaise).toBe(8_200_000);
+    expect((await loadSnapshot(ctx.handles, ctx.workspaceId)).fundingCycles).toHaveLength(0);
+  });
+
+  it("rejects a same-effectiveFrom edit after one unreceived cycle exists", async () => {
+    const ctx = await seedSqlite();
+    contexts.push(ctx.handles);
+    await applySalaryPolicy(ctx.handles, { workspaceId: ctx.workspaceId }, AUG);
+    await ensureExpectedFundingCycle(ctx.handles, ctx.workspaceId, 2026, 8);
+    const before = await fundingRows(ctx.handles, ctx.workspaceId);
+    expect(before).toHaveLength(1);
+
+    await expect(
+      applySalaryPolicy(ctx.handles, { workspaceId: ctx.workspaceId }, {
+        ...AUG,
+        expectedAmountPaise: 8_200_000,
+      }),
+    ).rejects.toSatisfy((error) => isDomain(error, "policy_version_in_use"));
+    expect(await fundingRows(ctx.handles, ctx.workspaceId)).toEqual(before);
+  });
+
+  it("rejects a same-effectiveFrom edit after several unreceived cycles exist and preserves snapshots", async () => {
+    const ctx = await seedSqlite();
+    contexts.push(ctx.handles);
+    await applySalaryPolicy(ctx.handles, { workspaceId: ctx.workspaceId }, AUG);
+    await ensureExpectedFundingCycle(ctx.handles, ctx.workspaceId, 2026, 8);
+    await ensureExpectedFundingCycle(ctx.handles, ctx.workspaceId, 2026, 9);
+    await ensureExpectedFundingCycle(ctx.handles, ctx.workspaceId, 2026, 10);
+    const before = await fundingRows(ctx.handles, ctx.workspaceId);
+    expect(before).toHaveLength(3);
+
+    await expect(
+      applySalaryPolicy(ctx.handles, { workspaceId: ctx.workspaceId }, {
+        ...AUG,
+        expectedAmountPaise: 8_200_000,
+      }),
+    ).rejects.toSatisfy((error) => isDomain(error, "policy_version_in_use"));
+    expect(await fundingRows(ctx.handles, ctx.workspaceId)).toEqual(before);
+    expect(before.every((row) => row.expectedAmountSnapshot === 7_920_000)).toBe(true);
+  });
+
   it("versions a later expected amount without rewriting the old cycle snapshot", async () => {
     const ctx = await seedSqlite();
     contexts.push(ctx.handles);
     await applySalaryPolicy(ctx.handles, { workspaceId: ctx.workspaceId }, AUG);
-    const august = await cycleFor(ctx.handles, ctx.workspaceId, "2026-08-05", 2026, 8);
-    expect(august?.expectedAmountPaise).toBe(7_920_000);
+    await ensureExpectedFundingCycle(ctx.handles, ctx.workspaceId, 2026, 8);
+    const beforeAugust = (await fundingRows(ctx.handles, ctx.workspaceId)).find(
+      (row) => row.year === 2026 && row.month === 8,
+    );
+    expect(beforeAugust?.expectedAmountSnapshot).toBe(7_920_000);
 
     await applySalaryPolicy(ctx.handles, { workspaceId: ctx.workspaceId }, {
       expectedAmountPaise: 8_200_000,
@@ -147,9 +236,41 @@ describe("phase 16b salary policy", () => {
     expect(policyAsOf(snapshot.incomePolicies, isoDate("2027-01-05"))?.expectedAmountPaise).toBe(8_200_000);
 
     const stillAugust = snapshot.fundingCycles.find((cycle) => cycle.year === 2026 && cycle.month === 8);
-    expect(stillAugust?.expectedAmountSnapshot).toBe(7_920_000);
+    expect(stillAugust).toEqual({
+      id: beforeAugust!.id,
+      year: 2026,
+      month: 8,
+      expectedWindowStart: beforeAugust!.expectedWindowStart,
+      expectedWindowEnd: beforeAugust!.expectedWindowEnd,
+      expectedAmountSnapshot: 7_920_000,
+      actualArrivalOn: null,
+      actualAmountPaise: null,
+      salaryEventId: null,
+    });
     const january = await cycleFor(ctx.handles, ctx.workspaceId, "2027-01-05", 2027, 1);
     expect(january?.expectedAmountPaise).toBe(8_200_000);
+  });
+
+  it("uses the next eligible month when effectiveFrom is mid-month", async () => {
+    const ctx = await seedSqlite();
+    contexts.push(ctx.handles);
+    await applySalaryPolicy(ctx.handles, { workspaceId: ctx.workspaceId }, {
+      ...AUG,
+      effectiveFrom: "2026-08-05",
+    });
+    const during = await salarySchedule(ctx.handles, { workspaceId: ctx.workspaceId }, isoDate("2026-08-05"));
+    expect(during.receivableCycles.some((cycle) => cycle.year === 2026 && cycle.month === 8)).toBe(false);
+    expect(during.receivableCycles.some((cycle) => cycle.year === 2026 && cycle.month === 9)).toBe(true);
+
+    const ctx2 = await seedSqlite();
+    contexts.push(ctx2.handles);
+    await applySalaryPolicy(ctx2.handles, { workspaceId: ctx2.workspaceId }, {
+      ...AUG,
+      effectiveFrom: "2026-08-10",
+    });
+    const after = await salarySchedule(ctx2.handles, { workspaceId: ctx2.workspaceId }, isoDate("2026-08-10"));
+    expect(after.receivableCycles.some((cycle) => cycle.year === 2026 && cycle.month === 8)).toBe(false);
+    expect(after.nextExpected?.month).toBe(9);
   });
 
   it("rejects cross-workspace use of another workspace's funding cycle", async () => {
@@ -167,11 +288,10 @@ describe("phase 16b salary policy", () => {
       .run(acc2, ws2);
 
     await applySalaryPolicy(ctx.handles, { workspaceId: ctx.workspaceId }, AUG);
-    const schedule = await salarySchedule(ctx.handles, { workspaceId: ctx.workspaceId }, isoDate("2026-08-05"));
+    const persisted = await ensureExpectedFundingCycle(ctx.handles, ctx.workspaceId, 2026, 8);
     const otherSchedule = await salarySchedule(ctx.handles, { workspaceId: ws2 }, isoDate("2026-08-05"));
     expect(otherSchedule.policy).toBeNull();
     expect(otherSchedule.receivableCycles).toHaveLength(0);
-    expect(schedule.nextExpected?.fundingCycleId).toBeTruthy();
 
     await applyOpening(ctx.handles, { workspaceId: ws2 }, {
       accountId: acc2,
@@ -186,7 +306,7 @@ describe("phase 16b salary policy", () => {
         accountId: acc2,
         amountPaise: 7_920_000,
         kind: "salary",
-        fundingCycleId: schedule.nextExpected!.fundingCycleId,
+        fundingCycleId: persisted.id,
         commit: true,
       }),
     ).rejects.toSatisfy((error) => isDomain(error, "cycle_not_found"));

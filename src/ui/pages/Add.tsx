@@ -111,6 +111,10 @@ function monthLabel(year: number, month: number): string {
   return DateTime.fromObject({ year, month, day: 1 }, { zone: KOLKATA }).toFormat("MMMM");
 }
 
+function salaryPeriodKey(cycle: { year: number; month: number }): string {
+  return `${cycle.year}-${String(cycle.month).padStart(2, "0")}`;
+}
+
 export function AddChooser({
   onPick,
   onClose,
@@ -168,13 +172,18 @@ export function Add({ intent, defaults, onDone, onClose, onBackToChooser }: Prop
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [salarySchedule, setSalarySchedule] = useState<SalaryScheduleView | null>(null);
-  const [fundingCycleId, setFundingCycleId] = useState("");
+  const [salaryPeriod, setSalaryPeriod] = useState("");
   const commandIdRef = useRef<string | null>(null);
 
   function commandId() {
     if (!commandIdRef.current) commandIdRef.current = crypto.randomUUID();
     return commandIdRef.current;
   }
+
+  const selectedSalaryCycle = salarySchedule?.receivableCycles.find(
+    (cycle) => salaryPeriodKey(cycle) === salaryPeriod,
+  );
+  const scheduledSalary = intent === "income" && kind === "salary" && Boolean(selectedSalaryCycle);
 
   const selectedCard = cards.find((card) => card.id === cardId);
   const payableCycles = coming.filter((item) => item.cardId === cardId);
@@ -215,7 +224,7 @@ export function Add({ intent, defaults, onDone, onClose, onBackToChooser }: Prop
           setSalarySchedule(schedule);
           const nextCycle = schedule.nextExpected ?? schedule.receivableCycles[0] ?? null;
           if (nextCycle) {
-            setFundingCycleId(nextCycle.fundingCycleId);
+            setSalaryPeriod(salaryPeriodKey(nextCycle));
             setAmount((current) => current || String(nextCycle.expectedAmountPaise / 100));
           }
         }
@@ -261,7 +270,9 @@ export function Add({ intent, defaults, onDone, onClose, onBackToChooser }: Prop
         amountPaise,
         accountId,
         kind,
-        fundingCycleId: kind === "salary" && fundingCycleId ? fundingCycleId : undefined,
+        fundingCycleId: kind === "salary" ? selectedSalaryCycle?.fundingCycleId ?? undefined : undefined,
+        expectedYear: kind === "salary" ? selectedSalaryCycle?.year : undefined,
+        expectedMonth: kind === "salary" ? selectedSalaryCycle?.month : undefined,
         commit,
       });
     }
@@ -396,7 +407,7 @@ export function Add({ intent, defaults, onDone, onClose, onBackToChooser }: Prop
         onBack={formBack}
         footer={
           <button className="primary" type="button" disabled={busy} onClick={() => void onConfirm()}>
-            {busy ? "Saving…" : intent === "income" && kind === "salary" && fundingCycleId ? "Confirm received" : "Confirm"}
+            {busy ? "Saving…" : intent === "income" && kind === "salary" && selectedSalaryCycle ? "Confirm received" : "Confirm"}
           </button>
         }
       >
@@ -427,9 +438,6 @@ export function Add({ intent, defaults, onDone, onClose, onBackToChooser }: Prop
     intent === "expense" ||
     (intent === "card_spend" && ownership === "mine") ||
     (showSplitFields && Boolean(userShare.trim()));
-
-  const selectedSalaryCycle = salarySchedule?.receivableCycles.find((cycle) => cycle.fundingCycleId === fundingCycleId);
-  const scheduledSalary = intent === "income" && kind === "salary" && Boolean(selectedSalaryCycle);
 
   return (
     <Sheet
@@ -720,9 +728,9 @@ export function Add({ intent, defaults, onDone, onClose, onBackToChooser }: Prop
               {kind === "salary" && (salarySchedule?.receivableCycles.length ?? 0) > 0 ? (
                 <label>
                   For expected period
-                  <select value={fundingCycleId} onChange={(event) => setFundingCycleId(event.target.value)}>
+                  <select value={salaryPeriod} onChange={(event) => setSalaryPeriod(event.target.value)}>
                     {salarySchedule!.receivableCycles.map((cycle) => (
-                      <option key={cycle.fundingCycleId} value={cycle.fundingCycleId}>
+                      <option key={salaryPeriodKey(cycle)} value={salaryPeriodKey(cycle)}>
                         {monthLabel(cycle.year, cycle.month)}
                         {cycle.status === "salary_delayed" ? " · not in yet" : ""}
                       </option>

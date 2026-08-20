@@ -16,7 +16,7 @@ import { loadSnapshot } from "../../src/db/loadSnapshot.js";
 import { anyDb, tables } from "../../src/db/exec.js";
 import { applyOpening } from "../../src/app/applyOpening.js";
 import { recordIncome } from "../../src/app/recordIncome.js";
-import { applySalaryPolicy, salarySchedule } from "../../src/app/salaryPolicy.js";
+import { applySalaryPolicy } from "../../src/app/salaryPolicy.js";
 import { simulateAffordability } from "../../src/app/simulateAffordability.js";
 
 const capturedAt = "2026-08-16T10:00:00.000Z";
@@ -52,21 +52,12 @@ async function seedSqlite() {
   return { handles, workspaceId, hdfcId: hdfc.id };
 }
 
-async function cycleId(
-  handles: Parameters<typeof salarySchedule>[0],
-  workspaceId: string,
-  asOf: string,
+function cycleOf(
+  snapshot: { fundingCycles: Array<{ year: number; month: number; id: string; actualArrivalOn: string | null; actualAmountPaise: number | null; salaryEventId: string | null }> },
   year: number,
   month: number,
 ) {
-  const schedule = await salarySchedule(handles, { workspaceId }, isoDate(asOf));
-  const match =
-    schedule.receivableCycles.find((cycle) => cycle.year === year && cycle.month === month) ??
-    (schedule.nextExpected?.year === year && schedule.nextExpected.month === month
-      ? schedule.nextExpected
-      : null);
-  if (!match) throw new Error(`Missing funding cycle ${year}-${month} as of ${asOf}`);
-  return match.fundingCycleId;
+  return snapshot.fundingCycles.find((cycle) => cycle.year === year && cycle.month === month);
 }
 
 describe("phase 16b salary receipt", () => {
@@ -79,7 +70,6 @@ describe("phase 16b salary receipt", () => {
     const ctx = await seedSqlite();
     contexts.push(ctx.handles);
     await applySalaryPolicy(ctx.handles, { workspaceId: ctx.workspaceId }, POLICY);
-    const fundingCycleId = await cycleId(ctx.handles, ctx.workspaceId, "2026-08-05", 2026, 8);
     const result = await recordIncome(ctx.handles, { workspaceId: ctx.workspaceId }, {
       commandId: "cmd-salary-aug",
       occurredOn: "2026-08-05",
@@ -87,79 +77,81 @@ describe("phase 16b salary receipt", () => {
       accountId: ctx.hdfcId,
       amountPaise: 8_020_000,
       kind: "salary",
-      fundingCycleId,
+      expectedYear: 2026,
+      expectedMonth: 8,
       commit: true,
     });
     expect(result.eventId).toBe("cmd-salary-aug");
     const snapshot = await loadSnapshot(ctx.handles, ctx.workspaceId, isoDate("2026-08-05"));
     expect(snapshot.accounts.find((account) => account.id === ctx.hdfcId)?.balancePaise).toBe(10_020_000);
     expect(snapshot.postings.filter((posting) => posting.pnl === "income_salary").reduce((sum, posting) => sum + posting.amountPaise, 0)).toBe(8_020_000);
-    const cycle = snapshot.fundingCycles.find((item) => item.id === fundingCycleId);
+    const cycle = cycleOf(snapshot, 2026, 8);
     expect(cycle?.actualAmountPaise).toBe(8_020_000);
     expect(cycle?.actualArrivalOn).toBe("2026-08-05");
     expect(cycle?.salaryEventId).toBe("cmd-salary-aug");
     expect(snapshot.events.filter((event) => event.meaning === "income")).toHaveLength(1);
+    expect(snapshot.fundingCycles).toHaveLength(1);
   });
 
   it("supports an early receipt before the window opens", async () => {
     const ctx = await seedSqlite();
     contexts.push(ctx.handles);
     await applySalaryPolicy(ctx.handles, { workspaceId: ctx.workspaceId }, POLICY);
-    const fundingCycleId = await cycleId(ctx.handles, ctx.workspaceId, "2026-08-01", 2026, 8);
     await recordIncome(ctx.handles, { workspaceId: ctx.workspaceId }, {
       occurredOn: "2026-08-01",
       capturedAt,
       accountId: ctx.hdfcId,
       amountPaise: 7_920_000,
       kind: "salary",
-      fundingCycleId,
+      expectedYear: 2026,
+      expectedMonth: 8,
       commit: true,
     });
     const early = await loadSnapshot(ctx.handles, ctx.workspaceId, isoDate("2026-08-01"));
-    expect(early.fundingCycles.find((cycle) => cycle.id === fundingCycleId)?.actualArrivalOn).toBe("2026-08-01");
+    expect(cycleOf(early, 2026, 8)?.actualArrivalOn).toBe("2026-08-01");
   });
 
   it("supports an on-time receipt on the typical day", async () => {
     const ctx = await seedSqlite();
     contexts.push(ctx.handles);
     await applySalaryPolicy(ctx.handles, { workspaceId: ctx.workspaceId }, POLICY);
-    const fundingCycleId = await cycleId(ctx.handles, ctx.workspaceId, "2026-08-05", 2026, 8);
     await recordIncome(ctx.handles, { workspaceId: ctx.workspaceId }, {
       occurredOn: "2026-08-05",
       capturedAt,
       accountId: ctx.hdfcId,
       amountPaise: 7_920_000,
       kind: "salary",
-      fundingCycleId,
+      expectedYear: 2026,
+      expectedMonth: 8,
       commit: true,
     });
     const onTime = await loadSnapshot(ctx.handles, ctx.workspaceId, isoDate("2026-08-05"));
-    expect(onTime.fundingCycles.find((cycle) => cycle.id === fundingCycleId)?.actualArrivalOn).toBe("2026-08-05");
+    expect(cycleOf(onTime, 2026, 8)?.actualArrivalOn).toBe("2026-08-05");
   });
 
   it("supports a late same-month receipt after the window closes", async () => {
     const ctx = await seedSqlite();
     contexts.push(ctx.handles);
     await applySalaryPolicy(ctx.handles, { workspaceId: ctx.workspaceId }, POLICY);
-    const fundingCycleId = await cycleId(ctx.handles, ctx.workspaceId, "2026-08-20", 2026, 8);
     await recordIncome(ctx.handles, { workspaceId: ctx.workspaceId }, {
       occurredOn: "2026-08-20",
       capturedAt,
       accountId: ctx.hdfcId,
       amountPaise: 7_920_000,
       kind: "salary",
-      fundingCycleId,
+      expectedYear: 2026,
+      expectedMonth: 8,
       commit: true,
     });
     const late = await loadSnapshot(ctx.handles, ctx.workspaceId, isoDate("2026-08-20"));
-    expect(late.fundingCycles.find((cycle) => cycle.id === fundingCycleId)?.actualArrivalOn).toBe("2026-08-20");
+    expect(cycleOf(late, 2026, 8)?.actualArrivalOn).toBe("2026-08-20");
   });
 
-  it("keeps a late cross-month receipt on the selected September cycle", async () => {
+  it("keeps a late cross-month receipt on the selected September cycle without a prior GET", async () => {
     const ctx = await seedSqlite();
     contexts.push(ctx.handles);
     await applySalaryPolicy(ctx.handles, { workspaceId: ctx.workspaceId }, POLICY);
-    const septemberId = await cycleId(ctx.handles, ctx.workspaceId, "2026-09-05", 2026, 9);
+    expect((await loadSnapshot(ctx.handles, ctx.workspaceId)).fundingCycles).toHaveLength(0);
     await recordIncome(ctx.handles, { workspaceId: ctx.workspaceId }, {
       commandId: "cmd-sep-late",
       occurredOn: "2026-10-02",
@@ -167,17 +159,19 @@ describe("phase 16b salary receipt", () => {
       accountId: ctx.hdfcId,
       amountPaise: 7_920_000,
       kind: "salary",
-      fundingCycleId: septemberId,
+      expectedYear: 2026,
+      expectedMonth: 9,
       commit: true,
     });
     const snapshot = await loadSnapshot(ctx.handles, ctx.workspaceId, isoDate("2026-10-02"));
     const event = snapshot.events.find((item) => item.id === "cmd-sep-late");
     expect(event?.occurredOn).toBe("2026-10-02");
-    const september = snapshot.fundingCycles.find((cycle) => cycle.id === septemberId);
+    const september = cycleOf(snapshot, 2026, 9);
     expect(september?.year).toBe(2026);
     expect(september?.month).toBe(9);
     expect(september?.actualArrivalOn).toBe("2026-10-02");
     expect(september?.salaryEventId).toBe("cmd-sep-late");
+    expect(cycleOf(snapshot, 2026, 10)).toBeUndefined();
   });
 
   it("still records ordinary salary when no schedule exists", async () => {
@@ -200,14 +194,14 @@ describe("phase 16b salary receipt", () => {
     const ctx = await seedSqlite();
     contexts.push(ctx.handles);
     await applySalaryPolicy(ctx.handles, { workspaceId: ctx.workspaceId }, POLICY);
-    const fundingCycleId = await cycleId(ctx.handles, ctx.workspaceId, "2026-08-05", 2026, 8);
     await recordIncome(ctx.handles, { workspaceId: ctx.workspaceId }, {
       occurredOn: "2026-08-05",
       capturedAt,
       accountId: ctx.hdfcId,
       amountPaise: 7_920_000,
       kind: "salary",
-      fundingCycleId,
+      expectedYear: 2026,
+      expectedMonth: 8,
       commit: true,
     });
     await expect(
@@ -217,7 +211,8 @@ describe("phase 16b salary receipt", () => {
         accountId: ctx.hdfcId,
         amountPaise: 7_920_000,
         kind: "salary",
-        fundingCycleId,
+        expectedYear: 2026,
+        expectedMonth: 8,
         commit: true,
       }),
     ).rejects.toSatisfy((error) => isDomain(error, "already_received"));
@@ -227,7 +222,6 @@ describe("phase 16b salary receipt", () => {
     const ctx = await seedSqlite();
     contexts.push(ctx.handles);
     await applySalaryPolicy(ctx.handles, { workspaceId: ctx.workspaceId }, POLICY);
-    const fundingCycleId = await cycleId(ctx.handles, ctx.workspaceId, "2026-08-05", 2026, 8);
     const payload = {
       commandId: "cmd-salary-idem",
       occurredOn: "2026-08-05",
@@ -235,7 +229,8 @@ describe("phase 16b salary receipt", () => {
       accountId: ctx.hdfcId,
       amountPaise: 8_020_000,
       kind: "salary" as const,
-      fundingCycleId,
+      expectedYear: 2026,
+      expectedMonth: 8,
       commit: true,
     };
     const first = await recordIncome(ctx.handles, { workspaceId: ctx.workspaceId }, payload);
@@ -251,9 +246,13 @@ describe("phase 16b salary receipt", () => {
     await expect(recordIncome(ctx.handles, { workspaceId: ctx.workspaceId }, { ...payload, occurredOn: "2026-08-06" })).rejects.toSatisfy(
       (error) => isDomain(error, "idempotency_conflict"),
     );
-    await expect(recordIncome(ctx.handles, { workspaceId: ctx.workspaceId }, { ...payload, fundingCycleId: undefined })).rejects.toSatisfy(
-      (error) => isDomain(error, "idempotency_conflict"),
-    );
+    await expect(
+      recordIncome(ctx.handles, { workspaceId: ctx.workspaceId }, {
+        ...payload,
+        expectedYear: undefined,
+        expectedMonth: undefined,
+      }),
+    ).rejects.toSatisfy((error) => isDomain(error, "idempotency_conflict"));
   });
 
   it("does not treat expected salary as liquid cash or current STS", async () => {
@@ -294,14 +293,14 @@ describe("phase 16b salary receipt", () => {
     const september = afford.cycleProjections.find((cycle: { month: number; expectedIncome: number }) => cycle.month === 9);
     expect(september?.expectedIncome).toBe(0);
 
-    const septemberId = delayed.fundingCycles.find((cycle) => cycle.year === 2026 && cycle.month === 9)!.id;
     await recordIncome(ctx.handles, { workspaceId: ctx.workspaceId }, {
       occurredOn: "2026-09-12",
       capturedAt,
       accountId: ctx.hdfcId,
       amountPaise: 7_920_000,
       kind: "salary",
-      fundingCycleId: septemberId,
+      expectedYear: 2026,
+      expectedMonth: 9,
       commit: true,
     });
     const received = evaluateSafeToSpend(
@@ -356,7 +355,6 @@ describePg("phase 16b salary receipt (postgres)", { timeout: pgTimeoutMs }, () =
   it("links a late cross-month receipt and replays the same commandId", async () => {
     const ctx = await setupPg();
     await applySalaryPolicy(handles!, { workspaceId: ctx.workspaceId }, POLICY);
-    const fundingCycleId = await cycleId(handles!, ctx.workspaceId, "2026-09-05", 2026, 9);
     const payload = {
       commandId: "cmd-pg-sep-late",
       occurredOn: "2026-10-02",
@@ -364,14 +362,15 @@ describePg("phase 16b salary receipt (postgres)", { timeout: pgTimeoutMs }, () =
       accountId: ctx.hdfcId,
       amountPaise: 8_020_000,
       kind: "salary" as const,
-      fundingCycleId,
+      expectedYear: 2026,
+      expectedMonth: 9,
       commit: true,
     };
     await recordIncome(handles!, { workspaceId: ctx.workspaceId }, payload);
     await recordIncome(handles!, { workspaceId: ctx.workspaceId }, payload);
     const snapshot = await loadSnapshot(handles!, ctx.workspaceId, isoDate("2026-10-02"));
     expect(snapshot.events.filter((event) => event.meaning === "income")).toHaveLength(1);
-    const cycle = snapshot.fundingCycles.find((item) => item.id === fundingCycleId);
+    const cycle = cycleOf(snapshot, 2026, 9);
     expect(cycle?.month).toBe(9);
     expect(cycle?.actualArrivalOn).toBe("2026-10-02");
     expect(cycle?.actualAmountPaise).toBe(8_020_000);

@@ -19,7 +19,7 @@ import { loadSnapshot } from "../../src/db/loadSnapshot.js";
 import { anyDb, tables } from "../../src/db/exec.js";
 import { applyOpening } from "../../src/app/applyOpening.js";
 import { recordIncome } from "../../src/app/recordIncome.js";
-import { applySalaryPolicy, salarySchedule } from "../../src/app/salaryPolicy.js";
+import { applySalaryPolicy, ensureExpectedFundingCycle } from "../../src/app/salaryPolicy.js";
 
 const capturedAt = "2026-08-16T10:00:00.000Z";
 const postgresUrl = process.env.TEST_DATABASE_URL?.trim() ?? "";
@@ -60,13 +60,6 @@ async function seedOpening(handles: DbHandles) {
   return { workspaceId, hdfcId: hdfc.id };
 }
 
-async function augustCycleId(handles: DbHandles, workspaceId: string) {
-  const schedule = await salarySchedule(handles, { workspaceId }, isoDate("2026-08-05"));
-  const cycle = schedule.receivableCycles.find((item) => item.year === 2026 && item.month === 8) ?? schedule.nextExpected;
-  if (!cycle) throw new Error("Expected August cycle");
-  return cycle.fundingCycleId;
-}
-
 describe("phase 16b salary concurrency (sqlite two connections)", () => {
   const cleanup: Array<{ handles: SqliteHandles[]; dir: string }> = [];
 
@@ -91,7 +84,6 @@ describe("phase 16b salary concurrency (sqlite two connections)", () => {
   it("allows only one salary receipt for the same funding cycle", async () => {
     const ctx = await dualSqlite();
     await applySalaryPolicy(ctx.a, { workspaceId: ctx.workspaceId }, AUG);
-    const fundingCycleId = await augustCycleId(ctx.a, ctx.workspaceId);
     const results = await Promise.allSettled([
       recordIncome(ctx.a, { workspaceId: ctx.workspaceId }, {
         commandId: "cmd-salary-a",
@@ -100,7 +92,8 @@ describe("phase 16b salary concurrency (sqlite two connections)", () => {
         accountId: ctx.hdfcId,
         amountPaise: 8_020_000,
         kind: "salary",
-        fundingCycleId,
+        expectedYear: 2026,
+        expectedMonth: 8,
         commit: true,
       }),
       recordIncome(ctx.b, { workspaceId: ctx.workspaceId }, {
@@ -110,7 +103,8 @@ describe("phase 16b salary concurrency (sqlite two connections)", () => {
         accountId: ctx.hdfcId,
         amountPaise: 7_920_000,
         kind: "salary",
-        fundingCycleId,
+        expectedYear: 2026,
+        expectedMonth: 8,
         commit: true,
       }),
     ]);
@@ -121,7 +115,7 @@ describe("phase 16b salary concurrency (sqlite two connections)", () => {
     expect(isDomain((losses[0] as PromiseRejectedResult).reason, "already_received")).toBe(true);
     const snapshot = await loadSnapshot(ctx.a, ctx.workspaceId, isoDate("2026-08-05"));
     expect(snapshot.events.filter((event) => event.meaning === "income")).toHaveLength(1);
-    const cycle = snapshot.fundingCycles.find((item) => item.id === fundingCycleId);
+    const cycle = snapshot.fundingCycles.find((item) => item.year === 2026 && item.month === 8);
     expect(cycle?.salaryEventId).toBeTruthy();
   });
 
@@ -148,6 +142,26 @@ describe("phase 16b salary concurrency (sqlite two connections)", () => {
       expect(august.expectedAmountPaise).toBe(7_920_000);
       expect(january.expectedAmountPaise).toBe(8_200_000);
     }
+  });
+
+  it("rejects competing same-effectiveFrom edits after a dependent cycle exists", async () => {
+    const ctx = await dualSqlite();
+    await applySalaryPolicy(ctx.a, { workspaceId: ctx.workspaceId }, AUG);
+    await ensureExpectedFundingCycle(ctx.a, ctx.workspaceId, 2026, 8);
+    const results = await Promise.allSettled([
+      applySalaryPolicy(ctx.a, { workspaceId: ctx.workspaceId }, { ...AUG, expectedAmountPaise: 8_200_000 }),
+      applySalaryPolicy(ctx.b, { workspaceId: ctx.workspaceId }, { ...AUG, expectedAmountPaise: 8_500_000 }),
+    ]);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(2);
+    expect(
+      results
+        .filter((result) => result.status === "rejected")
+        .every((result) => isDomain((result as PromiseRejectedResult).reason, "policy_version_in_use")),
+    ).toBe(true);
+    const snapshot = await loadSnapshot(ctx.a, ctx.workspaceId, isoDate("2026-08-05"));
+    expect(snapshot.incomePolicies).toHaveLength(1);
+    expect(snapshot.incomePolicies[0]?.expectedAmountPaise).toBe(7_920_000);
+    expect(snapshot.fundingCycles.find((cycle) => cycle.month === 8)?.expectedAmountSnapshot).toBe(7_920_000);
   });
 });
 
@@ -193,7 +207,6 @@ describePg("phase 16b salary concurrency (postgres)", { timeout: pgTimeoutMs }, 
   it("allows only one salary receipt for the same funding cycle", async () => {
     const ctx = await setupPg();
     await applySalaryPolicy(handles!, { workspaceId: ctx.workspaceId }, AUG);
-    const fundingCycleId = await augustCycleId(handles!, ctx.workspaceId);
     const results = await Promise.allSettled([
       recordIncome(handles!, { workspaceId: ctx.workspaceId }, {
         commandId: "cmd-pg-salary-a",
@@ -202,7 +215,8 @@ describePg("phase 16b salary concurrency (postgres)", { timeout: pgTimeoutMs }, 
         accountId: ctx.hdfcId,
         amountPaise: 8_020_000,
         kind: "salary",
-        fundingCycleId,
+        expectedYear: 2026,
+        expectedMonth: 8,
         commit: true,
       }),
       recordIncome(handles!, { workspaceId: ctx.workspaceId }, {
@@ -212,7 +226,8 @@ describePg("phase 16b salary concurrency (postgres)", { timeout: pgTimeoutMs }, 
         accountId: ctx.hdfcId,
         amountPaise: 7_920_000,
         kind: "salary",
-        fundingCycleId,
+        expectedYear: 2026,
+        expectedMonth: 8,
         commit: true,
       }),
     ]);

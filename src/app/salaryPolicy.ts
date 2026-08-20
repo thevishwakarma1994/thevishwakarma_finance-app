@@ -1,9 +1,8 @@
-import { and, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { isoDate } from "../domain/calendar/isoDate.js";
 import { todayKolkata } from "../domain/calendar/kolkata.js";
 import {
-  buildFundingCycle,
+  buildExpectedFundingCycle,
   enrichFundingCycles,
   materializeFundingCycles,
   policyAsOf,
@@ -16,13 +15,14 @@ import {
   validateSalaryPolicyInput,
 } from "../domain/commands/salaryPolicy.js";
 import type { FundingCycleRecord, IncomePolicy } from "../domain/ledger/types.js";
+import { DomainError } from "../domain/ledger/types.js";
 import { loadSnapshot } from "../db/loadSnapshot.js";
 import { persistBatch } from "../db/persistBatch.js";
-import { tables, anyDb, queryAll, queryRun } from "../db/exec.js";
+import { tables, anyDb, queryRun } from "../db/exec.js";
 import { withWorkspaceSalaryWriteLock } from "../db/salaryWriteLock.js";
 import type { DbHandles } from "../db/client.js";
 import type { WorkspaceContext } from "./context.js";
-import type { IsoDate } from "../domain/calendar/isoDate.js";
+import { eq, and } from "drizzle-orm";
 
 const policyInputSchema = z.object({
   expectedAmountPaise: z.number().int().positive(),
@@ -43,13 +43,17 @@ export async function applySalaryPolicy(
 
   return withWorkspaceSalaryWriteLock(handles, context.workspaceId, async (tx) => {
     const snapshot = await loadSnapshot(tx, context.workspaceId, effectiveFrom);
-    const plan = planSalaryPolicyVersion(snapshot.incomePolicies, {
-      expectedAmountPaise: paise(input.expectedAmountPaise),
-      windowStartDay: input.windowStartDay,
-      typicalDay: input.typicalDay,
-      windowEndDay: input.windowEndDay,
-      effectiveFrom,
-    });
+    const plan = planSalaryPolicyVersion(
+      snapshot.incomePolicies,
+      {
+        expectedAmountPaise: paise(input.expectedAmountPaise),
+        windowStartDay: input.windowStartDay,
+        typicalDay: input.typicalDay,
+        windowEndDay: input.windowEndDay,
+        effectiveFrom,
+      },
+      snapshot.fundingCycles,
+    );
 
     const t = tables(tx);
     if (plan.close) {
@@ -91,8 +95,6 @@ export async function applySalaryPolicy(
       );
     }
 
-    const after = await loadSnapshot(tx, context.workspaceId, effectiveFrom);
-    await syncExpectedFundingCycles(tx, context.workspaceId, after, effectiveFrom);
     return { policyId: plan.update?.id ?? plan.insert?.id ?? null };
   });
 }
@@ -103,13 +105,9 @@ export async function salarySchedule(
   asOf = todayKolkata(),
 ) {
   const occurredOn = isoDate(asOf);
-  await withWorkspaceSalaryWriteLock(handles, context.workspaceId, async (tx) => {
-    const snapshot = await loadSnapshot(tx, context.workspaceId, occurredOn);
-    await syncExpectedFundingCycles(tx, context.workspaceId, snapshot, occurredOn);
-  });
-
   const snapshot = await loadSnapshot(handles, context.workspaceId, occurredOn);
   const policy = policyAsOf(snapshot.incomePolicies, occurredOn);
+  const persistedIds = new Set(snapshot.fundingCycles.map((cycle) => cycle.id));
   const materialized = materializeFundingCycles(snapshot.incomePolicies, snapshot.fundingCycles, occurredOn);
   const cycles = enrichFundingCycles(materialized, occurredOn);
   const receivable = cycles.filter(
@@ -139,15 +137,71 @@ export async function salarySchedule(
           effectiveFrom: policy.effectiveFrom,
         }
       : null,
-    nextExpected: next ? presentCycle(next, snapshot.incomePolicies) : null,
-    receivableCycles: receivable.map((cycle) => presentCycle(cycle, snapshot.incomePolicies)),
+    nextExpected: next ? presentCycle(next, snapshot.incomePolicies, persistedIds) : null,
+    receivableCycles: receivable.map((cycle) => presentCycle(cycle, snapshot.incomePolicies, persistedIds)),
   };
 }
 
-function presentCycle(cycle: ReturnType<typeof enrichFundingCycles>[number], policies: IncomePolicy[]) {
+/**
+ * Persist the expected funding cycle for one year/month if missing.
+ * Write-path only: salary receipt and explicit ensure. Never called from GET.
+ */
+export async function ensureExpectedFundingCycle(
+  handles: DbHandles,
+  workspaceId: string,
+  year: number,
+  month: number,
+): Promise<FundingCycleRecord> {
+  return withWorkspaceSalaryWriteLock(handles, workspaceId, async (tx) => {
+    const snapshot = await loadSnapshot(tx, workspaceId);
+    return persistExpectedFundingCycle(tx, workspaceId, snapshot, year, month);
+  });
+}
+
+export async function persistExpectedFundingCycle(
+  handles: DbHandles,
+  workspaceId: string,
+  snapshot: Awaited<ReturnType<typeof loadSnapshot>>,
+  year: number,
+  month: number,
+): Promise<FundingCycleRecord> {
+  const existing = snapshot.fundingCycles.find((cycle) => cycle.year === year && cycle.month === month);
+  if (existing) return existing;
+  const created = buildExpectedFundingCycle(snapshot.incomePolicies, year, month);
+  if (!created) {
+    throw new DomainError(
+      "invalid_salary_schedule",
+      "That salary period is not covered by the current schedule",
+    );
+  }
+  try {
+    await persistBatch(handles, workspaceId, {
+      events: [],
+      postings: [],
+      openings: [],
+      fundingCycles: [created],
+    });
+    return created;
+  } catch (caught) {
+    const err = caught as { message?: string; code?: string };
+    if (!(err.message?.includes("UNIQUE") || err.code === "23505")) {
+      throw err;
+    }
+    const retried = await loadSnapshot(handles, workspaceId);
+    const winner = retried.fundingCycles.find((cycle) => cycle.year === year && cycle.month === month);
+    if (!winner) throw caught;
+    return winner;
+  }
+}
+
+function presentCycle(
+  cycle: ReturnType<typeof enrichFundingCycles>[number],
+  policies: IncomePolicy[],
+  persistedIds: Set<string>,
+) {
   const policy = policyAsOf(policies, cycle.expectedWindowStart);
   return {
-    fundingCycleId: cycle.id,
+    fundingCycleId: persistedIds.has(cycle.id) ? cycle.id : null,
     year: cycle.year,
     month: cycle.month,
     typicalOn: typicalOnForCycle(cycle, policy),
@@ -156,88 +210,4 @@ function presentCycle(cycle: ReturnType<typeof enrichFundingCycles>[number], pol
     expectedAmountPaise: cycle.expectedAmountSnapshot,
     status: cycle.status,
   };
-}
-
-async function syncExpectedFundingCycles(
-  handles: DbHandles,
-  workspaceId: string,
-  snapshot: Awaited<ReturnType<typeof loadSnapshot>>,
-  asOf: IsoDate,
-) {
-  const materialized = materializeFundingCycles(snapshot.incomePolicies, snapshot.fundingCycles, asOf);
-  const existingByKey = new Map<string, FundingCycleRecord>(
-    snapshot.fundingCycles.map((cycle) => [`${cycle.year}-${cycle.month}`, cycle]),
-  );
-  const toInsert: FundingCycleRecord[] = [];
-  for (const cycle of materialized) {
-    const key = `${cycle.year}-${cycle.month}`;
-    if (!existingByKey.has(key)) {
-      toInsert.push(cycle);
-    }
-  }
-  if (toInsert.length > 0) {
-    try {
-      await persistBatch(handles, workspaceId, {
-        events: [],
-        postings: [],
-        openings: [],
-        fundingCycles: toInsert,
-      });
-    } catch (caught) {
-      const err = caught as { message?: string; code?: string };
-      if (!(err.message?.includes("UNIQUE") || err.code === "23505")) {
-        throw err;
-      }
-    }
-  }
-
-  const t = tables(handles);
-  const persisted = await queryAll<{
-    id: string;
-    year: number;
-    month: number;
-    expectedWindowStart: string;
-    expectedWindowEnd: string;
-    expectedAmountSnapshot: number;
-    salaryEventId: string | null;
-  }>(
-    handles,
-    anyDb(handles)
-      .select({
-        id: t.fundingCycles.id,
-        year: t.fundingCycles.year,
-        month: t.fundingCycles.month,
-        expectedWindowStart: t.fundingCycles.expectedWindowStart,
-        expectedWindowEnd: t.fundingCycles.expectedWindowEnd,
-        expectedAmountSnapshot: t.fundingCycles.expectedAmountSnapshot,
-        salaryEventId: t.fundingCycles.salaryEventId,
-      })
-      .from(t.fundingCycles)
-      .where(and(eq(t.fundingCycles.workspaceId, workspaceId), isNull(t.fundingCycles.salaryEventId))),
-  );
-
-  for (const row of persisted) {
-    const monthStart = isoDate(`${String(row.year).padStart(4, "0")}-${String(row.month).padStart(2, "0")}-01`);
-    const policy = policyAsOf(snapshot.incomePolicies, monthStart);
-    if (!policy) continue;
-    const rebuilt = buildFundingCycle(policy, row.year, row.month);
-    if (
-      rebuilt.expectedWindowStart === row.expectedWindowStart &&
-      rebuilt.expectedWindowEnd === row.expectedWindowEnd &&
-      rebuilt.expectedAmountSnapshot === row.expectedAmountSnapshot
-    ) {
-      continue;
-    }
-    await queryRun(
-      handles,
-      anyDb(handles)
-        .update(t.fundingCycles)
-        .set({
-          expectedWindowStart: rebuilt.expectedWindowStart,
-          expectedWindowEnd: rebuilt.expectedWindowEnd,
-          expectedAmountSnapshot: rebuilt.expectedAmountSnapshot,
-        })
-        .where(and(eq(t.fundingCycles.id, row.id), eq(t.fundingCycles.workspaceId, workspaceId))),
-    );
-  }
 }

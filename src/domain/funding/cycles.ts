@@ -20,6 +20,36 @@ export function policyAsOf(policies: IncomePolicy[], asOf: IsoDate): IncomePolic
   );
 }
 
+/** Month-start is the V1 eligibility instant for a salary cycle. */
+export function salaryMonthStart(year: number, month: number): IsoDate {
+  return isoDate(kolkataCivilDate(year, month, 1));
+}
+
+export function policyForSalaryMonth(
+  policies: IncomePolicy[],
+  year: number,
+  month: number,
+): IncomePolicy | null {
+  return policyAsOf(policies, salaryMonthStart(year, month));
+}
+
+export function buildExpectedFundingCycle(
+  policies: IncomePolicy[],
+  year: number,
+  month: number,
+): FundingCycleRecord | null {
+  const policy = policyForSalaryMonth(policies, year, month);
+  if (!policy) return null;
+  return buildFundingCycle(policy, year, month);
+}
+
+export function fundingCyclesCoveredByPolicy(
+  policy: IncomePolicy,
+  cycles: FundingCycleRecord[],
+): FundingCycleRecord[] {
+  return cycles.filter((cycle) => policyForSalaryMonth([policy], cycle.year, cycle.month)?.id === policy.id);
+}
+
 export function fundingWindow(policy: IncomePolicy, year: number, month: number): {
   start: IsoDate;
   end: IsoDate;
@@ -94,10 +124,8 @@ export function materializeFundingCycles(
   while (compareYearMonth(cursor, end) <= 0) {
     const key = `${cursor.year}-${cursor.month}`;
     if (!byKey.has(key)) {
-      const windowStart = kolkataCivilDate(cursor.year, cursor.month, 1);
-      const policy = policyAsOf(policies, isoDate(windowStart));
-      if (policy) {
-        const created = buildFundingCycle(policy, cursor.year, cursor.month);
+      const created = buildExpectedFundingCycle(policies, cursor.year, cursor.month);
+      if (created) {
         byKey.set(key, created);
         result.push(created);
       }

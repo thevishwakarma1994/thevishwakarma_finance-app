@@ -138,8 +138,8 @@ describe("salary schedule UI", () => {
     });
     render(<ManageSalary onBack={() => undefined} />);
     await waitFor(() => expect(screen.getByText("Not configured")).toBeTruthy());
-    expect(screen.getByRole("button", { name: "Add schedule" })).toBeTruthy();
-    expect(screen.getByText("HDFC")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Add schedule" }));
+    expect(screen.getByText("Applies from the next eligible salary period.")).toBeTruthy();
   });
 
   it("shows the configured salary schedule", async () => {

@@ -402,6 +402,8 @@ export function previewOrCommitIncome(body: {
   kind: "salary" | "other";
   notes?: string | null;
   fundingCycleId?: string;
+  expectedYear?: number;
+  expectedMonth?: number;
   commit: boolean;
 }) {
   return request<CommandResult>("/api/commands/income", {
@@ -774,7 +776,7 @@ export function fetchHome(asOf?: string) {
 }
 
 export type SalaryReceivableCycle = {
-  fundingCycleId: string;
+  fundingCycleId: string | null;
   year: number;
   month: number;
   typicalOn: string;

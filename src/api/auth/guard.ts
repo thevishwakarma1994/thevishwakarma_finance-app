@@ -101,7 +101,8 @@ export function mapError(
             error.code === "payment_exceeds_outstanding" ||
             error.code === "idempotency_conflict" ||
             error.code === "already_received" ||
-            error.code === "duplicate_salary"
+            error.code === "duplicate_salary" ||
+            error.code === "policy_version_in_use"
           ? 409
           : error.code === "account_not_found" ||
               error.code === "category_not_found" ||
