@@ -4,11 +4,19 @@ import { paise } from "../../domain/money/paise.js";
 import { ApiError, fetchTransactionDetail, type TransactionDetailView } from "../apiClient.js";
 import { ErrorState, PageHeader, Skeleton } from "../chrome.js";
 import { ExpenseCorrectionForm } from "./ExpenseCorrectionForm.js";
+import { OtherIncomeCorrectionForm } from "./OtherIncomeCorrectionForm.js";
 
 type Props = {
   eventId: string;
   onBack: () => void;
 };
+
+function detailTitle(detail: TransactionDetailView): string {
+  if (detail.meaning === "income") {
+    return detail.notes ?? "Income";
+  }
+  return detail.merchant ?? (detail.categories.map((category) => category.name).join(", ") || "Spending");
+}
 
 function sideSummary(side: TransactionDetailView["history"][number]["previous"]): string {
   const categories = side.categories.map((category) => category.name).join(", ");
@@ -62,7 +70,12 @@ export function TransactionDetail({ eventId, onBack }: Props) {
                 <p className="hero-number">{formatInr(paise(detail.amountPaise))}</p>
                 {detail.corrected ? <span className="corrected-badge">Corrected</span> : null}
               </div>
-              <p>{detail.merchant ?? detail.categories.map((category) => category.name).join(", ") ?? "Spending"}</p>
+              {detail.correctionCount > 0 ? (
+                <p className="muted">
+                  {detail.correctionCount === 1 ? "1 correction" : `${detail.correctionCount} corrections`}
+                </p>
+              ) : null}
+              <p>{detailTitle(detail)}</p>
               <p className="muted">
                 {[detail.occurredOn, detail.accountName, detail.categories.map((category) => category.name).join(", ")]
                   .filter(Boolean)
@@ -97,14 +110,25 @@ export function TransactionDetail({ eventId, onBack }: Props) {
         ) : null}
       </main>
       {correcting && detail ? (
-        <ExpenseCorrectionForm
-          detail={detail}
-          onClose={() => setCorrecting(false)}
-          onSaved={() => {
-            setCorrecting(false);
-            setReloadKey((value) => value + 1);
-          }}
-        />
+        detail.correctionFamily === "other_income" ? (
+          <OtherIncomeCorrectionForm
+            detail={detail}
+            onClose={() => setCorrecting(false)}
+            onSaved={() => {
+              setCorrecting(false);
+              setReloadKey((value) => value + 1);
+            }}
+          />
+        ) : (
+          <ExpenseCorrectionForm
+            detail={detail}
+            onClose={() => setCorrecting(false)}
+            onSaved={() => {
+              setCorrecting(false);
+              setReloadKey((value) => value + 1);
+            }}
+          />
+        )
       ) : null}
     </>
   );

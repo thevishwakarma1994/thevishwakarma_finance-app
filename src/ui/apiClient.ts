@@ -250,6 +250,7 @@ export type TransactionDetailView = {
   corrected: boolean;
   correctionCount: number;
   canCorrect: boolean;
+  correctionFamily: "expense" | "other_income" | null;
   refusalReason: string | null;
   rootEventId: string;
   targetEventId: string;
@@ -505,6 +506,23 @@ export function previewOrCommitExpenseCorrection(body: {
   commit: boolean;
 }) {
   return request<ExpenseCorrectionResult>("/api/commands/expense/correct", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function previewOrCommitOtherIncomeCorrection(body: {
+  commandId: string;
+  rootEventId: string;
+  targetEventId: string;
+  amountPaise: number;
+  destinationAccountId: string;
+  occurredOn: string;
+  notes?: string | null;
+  reason?: string | null;
+  commit: boolean;
+}) {
+  return request<ExpenseCorrectionResult>("/api/commands/income/correct", {
     method: "POST",
     body: JSON.stringify(body),
   });
