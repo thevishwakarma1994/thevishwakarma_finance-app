@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { customType, index, integer, pgTable, text, uniqueIndex } from "drizzle-orm/pg-core";
+import { check, customType, foreignKey, index, integer, pgTable, text, uniqueIndex } from "drizzle-orm/pg-core";
 import { fromStoredPaise } from "../storedPaise.js";
 import { paise as toPaise } from "../../domain/money/paise.js";
 
@@ -187,6 +187,7 @@ export const financialEvents = pgTable(
     reversalOfEventId: text("reversal_of_event_id"),
   },
   (table) => [
+    uniqueIndex("financial_events_workspace_id").on(table.workspaceId, table.id),
     index("events_workspace_occurred").on(table.workspaceId, table.occurredOn),
     index("events_workspace_meaning_occurred").on(table.workspaceId, table.meaning, table.occurredOn),
     index("events_card_cycle").on(table.creditCardId, table.billingCycleId),
@@ -495,18 +496,10 @@ export const transactionCorrections = pgTable(
       .notNull()
       .references(() => workspaces.id),
     commandId: text("command_id").notNull(),
-    rootEventId: text("root_event_id")
-      .notNull()
-      .references(() => financialEvents.id),
-    targetEventId: text("target_event_id")
-      .notNull()
-      .references(() => financialEvents.id),
-    reversalEventId: text("reversal_event_id")
-      .notNull()
-      .references(() => financialEvents.id),
-    replacementEventId: text("replacement_event_id")
-      .notNull()
-      .references(() => financialEvents.id),
+    rootEventId: text("root_event_id").notNull(),
+    targetEventId: text("target_event_id").notNull(),
+    reversalEventId: text("reversal_event_id").notNull(),
+    replacementEventId: text("replacement_event_id").notNull(),
     correctedOn: text("corrected_on").notNull(),
     capturedAt: text("captured_at").notNull(),
     reason: text("reason"),
@@ -523,6 +516,31 @@ export const transactionCorrections = pgTable(
     ),
     index("transaction_corrections_workspace_replacement").on(table.workspaceId, table.replacementEventId),
     index("transaction_corrections_workspace_corrected_on").on(table.workspaceId, table.correctedOn),
+    check("transaction_corrections_root_not_reversal", sql`${table.rootEventId} <> ${table.reversalEventId}`),
+    check("transaction_corrections_root_not_replacement", sql`${table.rootEventId} <> ${table.replacementEventId}`),
+    check("transaction_corrections_target_not_reversal", sql`${table.targetEventId} <> ${table.reversalEventId}`),
+    check("transaction_corrections_target_not_replacement", sql`${table.targetEventId} <> ${table.replacementEventId}`),
+    check("transaction_corrections_reversal_not_replacement", sql`${table.reversalEventId} <> ${table.replacementEventId}`),
+    foreignKey({
+      name: "transaction_corrections_root_event_workspace_fk",
+      columns: [table.workspaceId, table.rootEventId],
+      foreignColumns: [financialEvents.workspaceId, financialEvents.id],
+    }),
+    foreignKey({
+      name: "transaction_corrections_target_event_workspace_fk",
+      columns: [table.workspaceId, table.targetEventId],
+      foreignColumns: [financialEvents.workspaceId, financialEvents.id],
+    }),
+    foreignKey({
+      name: "transaction_corrections_reversal_event_workspace_fk",
+      columns: [table.workspaceId, table.reversalEventId],
+      foreignColumns: [financialEvents.workspaceId, financialEvents.id],
+    }),
+    foreignKey({
+      name: "transaction_corrections_replacement_event_workspace_fk",
+      columns: [table.workspaceId, table.replacementEventId],
+      foreignColumns: [financialEvents.workspaceId, financialEvents.id],
+    }),
   ],
 );
 

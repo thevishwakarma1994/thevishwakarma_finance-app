@@ -8,6 +8,7 @@ export {
   isCurrentEffectiveLeaf,
   firstCorrectionMapping,
   nextCorrectionMapping,
+  assertCorrectionRoleIds,
   assertNewCorrectionLink,
   assertAcyclicCorrectionChain,
 } from "./chain.js";
@@ -20,6 +21,18 @@ export {
   type CorrectionIneligibilityReason,
 } from "./eligibility.js";
 export { replayCorrectionOrConflict, correctionPayloadMatches } from "./idempotency.js";
+export {
+  canonicalizeCorrectionPayload,
+  canonicalizeExpenseCorrectionPayload,
+  canonicalizeOtherIncomeCorrectionPayload,
+  correctionPayloadsEqual,
+  newCorrectionArtifactIds,
+  normalizeCorrectionText,
+  type CanonicalCorrectionPayload,
+  type CanonicalExpenseCorrectionPayload,
+  type CanonicalOtherIncomeCorrectionPayload,
+  type ExpenseCorrectionAllocation,
+} from "./payload.js";
 export { snapshotAfterReversal } from "./overlay.js";
 export {
   correctionsEffectiveAsOf,

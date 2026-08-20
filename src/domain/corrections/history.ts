@@ -2,7 +2,14 @@ import type { IsoDate } from "../calendar/isoDate.js";
 import type { FinancialEvent, Posting } from "../ledger/types.js";
 import type { TransactionCorrectionRecord } from "./types.js";
 
-/** Calendar-date cutoff: a correction is effective when `correctedOn <= asOf`. */
+/**
+ * 16C0/16C1 historical contract — not general ledger reconstruction.
+ *
+ * `asOf` only hides reversal/replacement artifacts whose `correctedOn` is after
+ * the cutoff. Unrelated ordinary events are not filtered by occurredOn.
+ * 16C1 must not correct dates or cross months. Do not treat this as as-of
+ * time-travel for the rest of the ledger.
+ */
 export function correctionsEffectiveAsOf(
   corrections: readonly TransactionCorrectionRecord[],
   asOf: IsoDate | string,

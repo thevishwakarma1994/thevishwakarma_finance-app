@@ -1,4 +1,4 @@
-import type { FinancialEvent, LedgerSnapshot, Posting } from "../ledger/types.js";
+import { DomainError, type FinancialEvent, type LedgerSnapshot, type Posting } from "../ledger/types.js";
 import {
   correctionCount,
   correctionHistory,
@@ -68,7 +68,7 @@ export function transactionDetailFromSnapshot(
     const reversalEvent = snapshot.events.find((event) => event.id === correction.reversalEventId);
     const replacementEvent = snapshot.events.find((event) => event.id === correction.replacementEventId);
     if (!targetEvent || !reversalEvent || !replacementEvent) {
-      throw new Error("Correction history is missing events");
+      throw new DomainError("transaction_not_correctable", "This transaction cannot be corrected");
     }
     return { correction, targetEvent, reversalEvent, replacementEvent };
   });

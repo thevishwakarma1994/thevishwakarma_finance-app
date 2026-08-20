@@ -79,6 +79,8 @@ export function assertAcyclicCorrectionChain(
     if (
       seenEvents.has(item.reversalEventId) ||
       seenEvents.has(item.replacementEventId) ||
+      item.rootEventId === item.reversalEventId ||
+      item.rootEventId === item.replacementEventId ||
       item.replacementEventId === item.targetEventId ||
       item.reversalEventId === item.targetEventId ||
       item.reversalEventId === item.replacementEventId
@@ -115,6 +117,23 @@ export function nextCorrectionMapping(
   };
 }
 
+export function assertCorrectionRoleIds(input: {
+  rootEventId: string;
+  targetEventId: string;
+  reversalEventId: string;
+  replacementEventId: string;
+}): void {
+  if (
+    input.rootEventId === input.reversalEventId ||
+    input.rootEventId === input.replacementEventId ||
+    input.targetEventId === input.reversalEventId ||
+    input.targetEventId === input.replacementEventId ||
+    input.reversalEventId === input.replacementEventId
+  ) {
+    throw new DomainError("transaction_not_correctable", "This transaction cannot be corrected");
+  }
+}
+
 export function assertNewCorrectionLink(
   corrections: readonly TransactionCorrectionRecord[],
   input: {
@@ -124,6 +143,7 @@ export function assertNewCorrectionLink(
     replacementEventId: string;
   },
 ): void {
+  assertCorrectionRoleIds(input);
   const chain = correctionsForRoot(corrections, input.rootEventId);
   assertAcyclicCorrectionChain(chain, input.rootEventId);
   const expected = nextCorrectionMapping(corrections, input.rootEventId);

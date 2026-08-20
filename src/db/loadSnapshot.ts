@@ -182,6 +182,8 @@ export async function loadSnapshot(
       capturedAt: row.capturedAt,
       reason: row.reason,
     }));
+    // asOf hides future correction artifacts only (reversal/replacement with
+    // correctedOn > asOf). It is not a general historical ledger reconstruction.
     const visibleLedger = excludeFutureCorrectionArtifacts(eventRows, postingRows, loadedCorrections, asOf);
     const visibleEventRows = visibleLedger.events;
     const visiblePostingRows = visibleLedger.postings;
