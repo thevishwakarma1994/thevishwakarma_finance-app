@@ -3,19 +3,23 @@ import { DomainError } from "../domain/ledger/types.js";
 import type { DbHandles } from "./handles.js";
 import { anyDb, queryGet, tables } from "./exec.js";
 import { withPostgresTransaction, withSqliteImmediateTransaction } from "./tx.js";
+import { withCreditCardWriteLock } from "./cardWriteLock.js";
 
 function uniqueSortedAccountIds(accountIds: readonly string[]): string[] {
   return [...new Set(accountIds.filter((id) => id.length > 0))].sort((left, right) => left.localeCompare(right));
 }
 
 /**
- * Serialize writers that move account cash so they cannot race a later
- * expense/income correction on the same rows.
+ * Project-wide financial lock graph — never invert:
+ * 1. workspace lock, when needed (salary policy / salary receipt)
+ * 2. credit-card lock, when needed
+ * 3. account locks sorted lexicographically
  *
- * Lock order when this helper is used alone: accounts by lexical id.
+ * Never: account → card, account → workspace, card → workspace.
+ *
  * Combined with an existing card lock: card row first (already held), then
  * these account rows. Combined with the workspace salary lock: workspace row
- * first, then these account rows. Never invert those orders.
+ * first, then these account rows.
  *
  * Postgres: `SELECT … FOR UPDATE` on the sorted account ids inside one
  * transaction. SQLite: `BEGIN IMMEDIATE` plus ownership SELECTs. Nested
@@ -38,6 +42,39 @@ export async function withAccountWriteLocks<T>(
     await lockPostgresAccounts(txHandles, workspaceId, ids);
     return fn(txHandles);
   });
+}
+
+/**
+ * Card-funded writers that also move account cash: card row first, then
+ * accounts by lexical id. Do not call this after an account lock.
+ */
+export async function withCardThenAccountWriteLocks<T>(
+  handles: DbHandles,
+  workspaceId: string,
+  creditCardId: string,
+  accountIds: readonly string[],
+  fn: (txHandles: DbHandles) => T | Promise<T>,
+): Promise<T> {
+  return withCreditCardWriteLock(handles, workspaceId, creditCardId, (txHandles) =>
+    withAccountWriteLocks(txHandles, workspaceId, accountIds, fn),
+  );
+}
+
+/**
+ * Billing-cycle reservation/surplus writers take card → accounts.
+ * Non-card writers take accounts only.
+ */
+export async function withOptionalCardThenAccountWriteLocks<T>(
+  handles: DbHandles,
+  workspaceId: string,
+  creditCardId: string | null,
+  accountIds: readonly string[],
+  fn: (txHandles: DbHandles) => T | Promise<T>,
+): Promise<T> {
+  if (creditCardId) {
+    return withCardThenAccountWriteLocks(handles, workspaceId, creditCardId, accountIds, fn);
+  }
+  return withAccountWriteLocks(handles, workspaceId, accountIds, fn);
 }
 
 async function lockSqliteAccounts(

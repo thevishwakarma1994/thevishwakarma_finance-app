@@ -7,8 +7,7 @@ import { persistBatch } from "../db/persistBatch.js";
 import type { DbHandles } from "../db/client.js";
 import type { WorkspaceContext } from "./context.js";
 import { assertWorkspaceOwned } from "./ownership.js";
-import { withCreditCardWriteLock } from "../db/cardWriteLock.js";
-import { withAccountWriteLocks } from "../db/accountWriteLock.js";
+import { withCardThenAccountWriteLocks } from "../db/accountWriteLock.js";
 
 const inputSchema = z.object({
   occurredOn: z.string(),
@@ -62,7 +61,11 @@ export async function payCard(handles: DbHandles, context: WorkspaceContext, raw
   if (!input.commit) {
     return run(handles);
   }
-  return withCreditCardWriteLock(handles, context.workspaceId, input.creditCardId, (tx) =>
-    withAccountWriteLocks(tx, context.workspaceId, [input.accountId], run),
+  return withCardThenAccountWriteLocks(
+    handles,
+    context.workspaceId,
+    input.creditCardId,
+    [input.accountId],
+    run,
   );
 }

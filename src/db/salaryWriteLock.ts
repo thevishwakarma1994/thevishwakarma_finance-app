@@ -6,11 +6,10 @@ import { withPostgresTransaction, withSqliteImmediateTransaction } from "./tx.js
 
 /**
  * Serialize salary-policy version writes and cycle materialization for one workspace.
- * Lock order: the `workspaces` row first, then income_policies / funding_cycles
- * rows touched inside the same transaction.
  *
- * Scheduled salary receipts take this lock when they may insert a funding cycle,
- * so they never invert lock order against policy versioning.
+ * Project-wide lock graph: workspace first, then accounts when a salary
+ * receipt also moves cash. Never lock accounts (or a card) and then the
+ * workspace row.
  */
 export async function withWorkspaceSalaryWriteLock<T>(
   handles: DbHandles,

@@ -10,7 +10,7 @@ import type { DbHandles } from "../db/client.js";
 import type { WorkspaceContext } from "./context.js";
 import { assertWorkspaceOwned } from "./ownership.js";
 import { DomainError } from "../domain/ledger/types.js";
-import { withCreditCardWriteLock } from "../db/cardWriteLock.js";
+import { withOptionalCardThenAccountWriteLocks } from "../db/accountWriteLock.js";
 
 const applyInputSchema = z.object({
   commandId: z.string().min(1),
@@ -33,12 +33,13 @@ export async function applyOpeningReservation(
     context.workspaceId,
     input,
   );
-  if (creditCardId) {
-    return withCreditCardWriteLock(handles, context.workspaceId, creditCardId, (tx) =>
-      runApplyOpeningReservation(tx, context, input),
-    );
-  }
-  return runApplyOpeningReservation(handles, context, input);
+  return withOptionalCardThenAccountWriteLocks(
+    handles,
+    context.workspaceId,
+    creditCardId,
+    [input.sourceAccountId],
+    (tx) => runApplyOpeningReservation(tx, context, input),
+  );
 }
 
 async function creditCardIdForOpeningReservationApply(
@@ -155,27 +156,29 @@ export async function correctOpeningReservation(
   raw: unknown,
 ) {
   const input = correctInputSchema.parse(raw);
-  const creditCardId = await creditCardIdForBillingCycleReservation(
+  const plan = await lockPlanForOpeningReservationCorrect(
     handles,
     context.workspaceId,
     input.reservationId,
   );
-  if (creditCardId) {
-    return withCreditCardWriteLock(handles, context.workspaceId, creditCardId, (tx) =>
-      runCorrectOpeningReservation(tx, context, input),
-    );
-  }
-  return runCorrectOpeningReservation(handles, context, input);
+  return withOptionalCardThenAccountWriteLocks(
+    handles,
+    context.workspaceId,
+    plan.creditCardId,
+    [plan.sourceAccountId],
+    (tx) => runCorrectOpeningReservation(tx, context, input),
+  );
 }
 
-async function creditCardIdForBillingCycleReservation(
+async function lockPlanForOpeningReservationCorrect(
   handles: DbHandles,
   workspaceId: string,
   reservationId: string,
-): Promise<string | null> {
+): Promise<{ creditCardId: string | null; sourceAccountId: string }> {
   const t = tables(handles);
   const reservation = await queryGet<{
     workspaceId: string;
+    sourceAccountId: string;
     obligationRefType: string;
     obligationRefId: string;
   }>(
@@ -183,6 +186,7 @@ async function creditCardIdForBillingCycleReservation(
     anyDb(handles)
       .select({
         workspaceId: t.reservations.workspaceId,
+        sourceAccountId: t.reservations.sourceAccountId,
         obligationRefType: t.reservations.obligationRefType,
         obligationRefId: t.reservations.obligationRefId,
       })
@@ -193,7 +197,7 @@ async function creditCardIdForBillingCycleReservation(
     throw new DomainError("reservation_not_found", "Reservation not found");
   }
   if (reservation.obligationRefType !== "billing_cycle") {
-    return null;
+    return { creditCardId: null, sourceAccountId: reservation.sourceAccountId };
   }
   const cycle = await queryGet<{ workspaceId: string; creditCardId: string }>(
     handles,
@@ -208,7 +212,7 @@ async function creditCardIdForBillingCycleReservation(
   if (!cycle || cycle.workspaceId !== workspaceId) {
     throw new DomainError("cycle_not_found", "Billing cycle not found");
   }
-  return cycle.creditCardId;
+  return { creditCardId: cycle.creditCardId, sourceAccountId: reservation.sourceAccountId };
 }
 
 async function runCorrectOpeningReservation(
