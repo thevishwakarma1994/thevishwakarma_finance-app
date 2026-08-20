@@ -3,7 +3,7 @@ import { createApp } from "../../src/api/app.js";
 import { originAllowed } from "../../src/api/auth/guard.js";
 import { openMemoryDatabase } from "../../src/db/client.js";
 import { applyMigrations } from "../../src/db/migrate.js";
-import { isSpaFallbackPath, serverBindHostname } from "../../src/http/listen.js";
+import { isSpaFallbackPath, pwaShellCacheControl, serverBindHostname } from "../../src/http/listen.js";
 
 const originalEnv = {
   NODE_ENV: process.env.NODE_ENV,
@@ -37,6 +37,17 @@ describe("production HTTP bind and SPA fallback", () => {
     expect(isSpaFallbackPath("/icons/icon-192.png")).toBe(false);
     expect(isSpaFallbackPath("/icons/icon-512.png")).toBe(false);
     expect(isSpaFallbackPath("/assets/index.js")).toBe(false);
+  });
+
+  it("disables HTTP cache for the PWA shell and service worker", () => {
+    expect(pwaShellCacheControl("/")).toBe("no-cache");
+    expect(pwaShellCacheControl("/activity")).toBe("no-cache");
+    expect(pwaShellCacheControl("/index.html")).toBe("no-cache");
+    expect(pwaShellCacheControl("/sw.js")).toBe("no-cache");
+    expect(pwaShellCacheControl("/registerSW.js")).toBe("no-cache");
+    expect(pwaShellCacheControl("/manifest.webmanifest")).toBe("no-cache");
+    expect(pwaShellCacheControl("/assets/index-hash.js")).toBeNull();
+    expect(pwaShellCacheControl("/icons/icon-192.png")).toBeNull();
   });
 });
 

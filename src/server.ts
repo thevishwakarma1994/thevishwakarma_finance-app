@@ -7,7 +7,12 @@ import { applyMigrations } from "./db/migrate.js";
 import { describeDatabaseConfig, resolveDatabaseConfig } from "./db/env.js";
 import { createApp } from "./api/app.js";
 import { assertFirebaseAdminConfig } from "./api/auth/firebaseAdmin.js";
-import { isApiOrHealthPath, isSpaFallbackPath, serverBindHostname } from "./http/listen.js";
+import {
+  isApiOrHealthPath,
+  isSpaFallbackPath,
+  pwaShellCacheControl,
+  serverBindHostname,
+} from "./http/listen.js";
 
 assertFirebaseAdminConfig();
 
@@ -29,12 +34,20 @@ if (production) {
       await next();
       return;
     }
+    const cacheControl = pwaShellCacheControl(c.req.path);
+    if (cacheControl) {
+      c.header("Cache-Control", cacheControl);
+    }
     return serveStatic({ root: dist })(c, next);
   });
   app.get("*", async (c, next) => {
     if (!isSpaFallbackPath(c.req.path)) {
       await next();
       return;
+    }
+    const cacheControl = pwaShellCacheControl(c.req.path);
+    if (cacheControl) {
+      c.header("Cache-Control", cacheControl);
     }
     const index = path.join(dist, "index.html");
     return c.html(fs.readFileSync(index, "utf8"));

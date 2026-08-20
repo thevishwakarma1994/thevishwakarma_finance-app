@@ -3,6 +3,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { webAppManifest } from "../../src/pwa/webManifest.js";
 
+const mainTsx = fs.readFileSync(path.join(process.cwd(), "src/ui/main.tsx"), "utf8");
+
 const iconsDir = path.join(process.cwd(), "public", "icons");
 
 function pngSize(filePath: string): { width: number; height: number } {
@@ -37,6 +39,11 @@ describe("PWA installability config", () => {
     expect(mask192?.src).toBe("icons/icon-maskable-192.png");
     expect(mask512?.src).toBe("icons/icon-maskable-512.png");
     expect(mask512?.type).toBe("image/png");
+  });
+
+  it("registers the service worker immediately so deploys replace a stale shell", () => {
+    expect(mainTsx).toContain("registerProductionServiceWorker");
+    expect(mainTsx).not.toContain("virtual:pwa-register");
   });
 
   it("ships valid PNG files at the declared sizes", () => {

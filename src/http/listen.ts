@@ -13,6 +13,24 @@ export function isApiOrHealthPath(pathname: string): boolean {
 }
 
 /**
+ * Service worker, manifest, and HTML shell must revalidate.
+ * Hashed `/assets/*` files can stay cacheable; an HTTP-cached `/sw.js`
+ * keeps installed PWAs on a previous frontend after a new deploy.
+ */
+export function pwaShellCacheControl(pathname: string): string | null {
+  if (
+    pathname === "/sw.js" ||
+    pathname === "/registerSW.js" ||
+    pathname === "/manifest.webmanifest" ||
+    pathname === "/index.html" ||
+    isSpaFallbackPath(pathname)
+  ) {
+    return "no-cache";
+  }
+  return null;
+}
+
+/**
  * Frontend routes without a file extension may use index.html.
  * Manifest, service worker, icons, and hashed assets must 404 if missing
  * rather than returning the SPA shell.

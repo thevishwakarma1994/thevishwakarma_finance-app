@@ -8,7 +8,7 @@ services:
     runtime: node
     plan: free
     region: oregon
-    branch: stage-15-postgres
+    branch: main
     buildCommand: pnpm install --frozen-lockfile --prod=false && pnpm build
     startCommand: pnpm start
     healthCheckPath: /health
