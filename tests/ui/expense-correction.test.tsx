@@ -246,6 +246,10 @@ describe("expense correction UI", () => {
     await waitFor(() => {
       expect(document.querySelector("[data-screen='expense-correction-form']")).toBeTruthy();
     });
+    expect(document.querySelector("[data-screen='other-income-correction-form']")).toBeNull();
+    expect(screen.getByLabelText("Category")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Add category" })).toBeTruthy();
+    expect(screen.getByLabelText("Merchant")).toBeTruthy();
     expect(document.querySelector("input[type='date']")).toBeNull();
     expect(screen.queryByLabelText(/date/i)).toBeNull();
     const amount = document.querySelector("[data-screen='expense-correction-form'] input") as HTMLInputElement;

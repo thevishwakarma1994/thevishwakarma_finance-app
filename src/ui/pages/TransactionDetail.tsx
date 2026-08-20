@@ -11,6 +11,16 @@ type Props = {
   onBack: () => void;
 };
 
+/** Dispatch by the read-model family only — never treat canCorrect as expense. */
+export function correctionFormFamily(
+  detail: Pick<TransactionDetailView, "canCorrect" | "correctionFamily">,
+): "expense" | "other_income" | null {
+  if (!detail.canCorrect) return null;
+  if (detail.correctionFamily === "expense") return "expense";
+  if (detail.correctionFamily === "other_income") return "other_income";
+  return null;
+}
+
 function detailTitle(detail: TransactionDetailView): string {
   if (detail.meaning === "income") {
     return detail.notes ?? "Income";
@@ -99,7 +109,7 @@ export function TransactionDetail({ eventId, onBack }: Props) {
                 ))}
               </section>
             ) : null}
-            {detail.canCorrect ? (
+            {correctionFormFamily(detail) ? (
               <button className="primary" type="button" onClick={() => setCorrecting(true)}>
                 Correct transaction
               </button>
@@ -109,26 +119,25 @@ export function TransactionDetail({ eventId, onBack }: Props) {
           </div>
         ) : null}
       </main>
-      {correcting && detail ? (
-        detail.correctionFamily === "other_income" ? (
-          <OtherIncomeCorrectionForm
-            detail={detail}
-            onClose={() => setCorrecting(false)}
-            onSaved={() => {
-              setCorrecting(false);
-              setReloadKey((value) => value + 1);
-            }}
-          />
-        ) : (
-          <ExpenseCorrectionForm
-            detail={detail}
-            onClose={() => setCorrecting(false)}
-            onSaved={() => {
-              setCorrecting(false);
-              setReloadKey((value) => value + 1);
-            }}
-          />
-        )
+      {correcting && detail && correctionFormFamily(detail) === "other_income" ? (
+        <OtherIncomeCorrectionForm
+          detail={detail}
+          onClose={() => setCorrecting(false)}
+          onSaved={() => {
+            setCorrecting(false);
+            setReloadKey((value) => value + 1);
+          }}
+        />
+      ) : null}
+      {correcting && detail && correctionFormFamily(detail) === "expense" ? (
+        <ExpenseCorrectionForm
+          detail={detail}
+          onClose={() => setCorrecting(false)}
+          onSaved={() => {
+            setCorrecting(false);
+            setReloadKey((value) => value + 1);
+          }}
+        />
       ) : null}
     </>
   );

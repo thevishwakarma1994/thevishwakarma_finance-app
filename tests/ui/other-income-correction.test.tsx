@@ -259,6 +259,14 @@ describe("other-income correction UI", () => {
     await waitFor(() => {
       expect(document.querySelector("[data-screen='other-income-correction-form']")).toBeTruthy();
     });
+    expect(document.querySelector("[data-screen='expense-correction-form']")).toBeNull();
+    expect(screen.getByLabelText("Amount")).toBeTruthy();
+    expect(screen.getByLabelText("Destination account")).toBeTruthy();
+    expect(screen.getByLabelText("Notes")).toBeTruthy();
+    expect(screen.getByLabelText("Reason for correction")).toBeTruthy();
+    expect(screen.queryByLabelText("Category")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Add category" })).toBeNull();
+    expect(screen.queryByLabelText("Merchant")).toBeNull();
     expect(document.querySelector("input[type='date']")).toBeNull();
     expect(screen.queryByLabelText(/^date$/i)).toBeNull();
     const amount = document.querySelector("[data-screen='other-income-correction-form'] input") as HTMLInputElement;
@@ -315,6 +323,8 @@ describe("other-income correction UI", () => {
       expect(screen.getByText(/can’t be corrected/i)).toBeTruthy();
     });
     expect(screen.queryByRole("button", { name: "Correct transaction" })).toBeNull();
+    expect(document.querySelector("[data-screen='other-income-correction-form']")).toBeNull();
+    expect(document.querySelector("[data-screen='expense-correction-form']")).toBeNull();
   });
 
   it("shows second-correction history and consumer-safe preview errors", async () => {
@@ -385,6 +395,12 @@ describe("other-income correction UI", () => {
     fireEvent.click(screen.getByRole("button", { name: "Correct transaction" }));
     await waitFor(() => {
       expect(document.querySelector("[data-screen='other-income-correction-form']")).toBeTruthy();
+    });
+    await waitFor(() => {
+      const amount = document.querySelector("[data-screen='other-income-correction-form'] input") as HTMLInputElement;
+      const destination = document.querySelector("[data-screen='other-income-correction-form'] select") as HTMLSelectElement;
+      expect(amount.value).toBe("4500");
+      expect(destination.value).toBe("acc-pnb");
     });
     fireEvent.click(screen.getByRole("button", { name: "Preview changes" }));
     await waitFor(() => {
