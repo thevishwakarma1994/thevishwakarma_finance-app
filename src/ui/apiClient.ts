@@ -204,6 +204,64 @@ export type CommandResult = {
   committed: boolean;
 };
 
+export type ExpenseCorrectionSideView = {
+  amountPaise: number;
+  accountId: string | null;
+  accountName: string | null;
+  merchant: string | null;
+  notes: string | null;
+  occurredOn: string;
+  categories: { id: string | null; name: string; amountPaise: number }[];
+};
+
+export type ExpenseCorrectionPreview = {
+  original: ExpenseCorrectionSideView;
+  corrected: ExpenseCorrectionSideView;
+  impact: { kind: string; label: string; deltaPaise: number }[];
+  effects: { kind: string; label: string; deltaPaise: number }[];
+  classifications: { spent: number; income: number; invested: number; moved: number };
+  warnings: string[];
+  narrative: string[];
+};
+
+export type ExpenseCorrectionResult = {
+  preview: ExpenseCorrectionPreview;
+  eventId: string | null;
+  committed: boolean;
+  replayed: boolean;
+  rootEventId: string;
+  effectiveEventId: string | null;
+  correctionId: string | null;
+  reversalEventId: string | null;
+  replacementEventId: string | null;
+  corrected: boolean;
+  correctionCount: number;
+};
+
+export type TransactionDetailView = {
+  meaning: EventMeaning;
+  occurredOn: string;
+  amountPaise: number;
+  accountId: string | null;
+  accountName: string | null;
+  merchant: string | null;
+  notes: string | null;
+  categories: { id: string | null; name: string; amountPaise: number }[];
+  corrected: boolean;
+  correctionCount: number;
+  canCorrect: boolean;
+  refusalReason: string | null;
+  rootEventId: string;
+  targetEventId: string;
+  history: {
+    correctedOn: string;
+    capturedAt: string;
+    reason: string | null;
+    previous: ExpenseCorrectionSideView;
+    next: ExpenseCorrectionSideView;
+  }[];
+};
+
 class ApiError extends Error {
   readonly status: number;
   readonly code: string;
@@ -308,6 +366,10 @@ export function fetchActivity(filter: { categoryId?: string; month?: string } = 
   if (filter.month) params.set("month", filter.month);
   const query = params.toString();
   return request<{ events: ActivityEvent[] }>(`/api/activity${query ? `?${query}` : ""}`);
+}
+
+export function fetchTransactionDetail(eventId: string) {
+  return request<TransactionDetailView>(`/api/activity/${encodeURIComponent(eventId)}`);
 }
 
 export function fetchMonth() {
@@ -424,6 +486,25 @@ export function previewOrCommitExpense(body: {
   commit: boolean;
 }) {
   return request<CommandResult>("/api/commands/expense", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function previewOrCommitExpenseCorrection(body: {
+  commandId: string;
+  rootEventId: string;
+  targetEventId: string;
+  amountPaise: number;
+  sourceAccountId: string;
+  occurredOn: string;
+  allocations: { categoryId: string; amountPaise: number }[];
+  merchant?: string | null;
+  notes?: string | null;
+  reason?: string | null;
+  commit: boolean;
+}) {
+  return request<ExpenseCorrectionResult>("/api/commands/expense/correct", {
     method: "POST",
     body: JSON.stringify(body),
   });

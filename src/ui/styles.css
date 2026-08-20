@@ -671,6 +671,25 @@ select {
   margin: 0;
 }
 
+button.event {
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.corrected-badge {
+  display: inline-block;
+  margin-left: 0.4rem;
+  padding: 0.12rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  vertical-align: middle;
+  background: var(--press);
+}
+
 .event-transfer {
   border-color: var(--divider);
 }

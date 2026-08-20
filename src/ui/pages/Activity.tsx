@@ -73,7 +73,7 @@ function metaOf(event: ActivityEvent): string {
   return bits.filter(Boolean).join(" · ");
 }
 
-export function Activity() {
+export function Activity({ onOpenEvent }: { onOpenEvent: (eventId: string) => void }) {
   const [events, setEvents] = useState<ActivityEvent[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const filter = filtersFromLocation();
@@ -93,7 +93,7 @@ export function Activity() {
   return (
     <>
       <PageHeader title="Activity" />
-      <main className="page">
+      <main className="page" data-screen="activity">
         {filter.categoryId || filter.month ? (
           <p className="muted">
             Filtered
@@ -106,9 +106,19 @@ export function Activity() {
         {events?.map((event) => {
           const amount = amountOf(event);
           return (
-            <article className="event" key={event.id}>
+            <button
+              className="event link-card"
+              type="button"
+              key={event.id}
+              data-event-id={event.id}
+              data-corrected={event.corrected ? "true" : "false"}
+              onClick={() => onOpenEvent(event.id)}
+            >
               <div className="row">
-                <span className="list-row-title">{titleOf(event)}</span>
+                <span className="list-row-title">
+                  {titleOf(event)}
+                  {event.corrected ? <span className="corrected-badge">Corrected</span> : null}
+                </span>
                 <span className="amount">{amount}</span>
               </div>
               <p className="muted">{metaOf(event)}</p>
@@ -124,7 +134,7 @@ export function Activity() {
                   {formatInr(paise(consequence.amountPaise))} {consequence.label}
                 </p>
               ))}
-            </article>
+            </button>
           );
         })}
       </main>

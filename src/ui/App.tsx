@@ -7,6 +7,7 @@ import { StsExplain } from "./pages/StsExplain.js";
 import { CanISpend } from "./pages/CanISpend.js";
 import { Money } from "./pages/Money.js";
 import { Activity } from "./pages/Activity.js";
+import { TransactionDetail } from "./pages/TransactionDetail.js";
 import { Add, AddChooser, type AddDefaults, type AddIntent } from "./pages/Add.js";
 import { MonthReview } from "./pages/MonthReview.js";
 import { CardDetail } from "./pages/CardDetail.js";
@@ -145,13 +146,16 @@ export function App() {
   const personMatch = /^\/person\/([^/]+)$/.exec(current);
   const obligationMatch = /^\/obligation\/([^/]+)$/.exec(current);
   const accountMatch = /^\/account\/([^/]+)$/.exec(current);
+  const activityEventMatch = /^\/activity\/([^/]+)$/.exec(current);
   const tab = activeTab(current);
   const showFab = isRootTab(current) && addSession === null;
 
   return (
     <div className="app" data-auth-phase="ready">
-      {current === "/activity" ? (
-        <Activity />
+      {activityEventMatch?.[1] ? (
+        <TransactionDetail eventId={activityEventMatch[1]} onBack={() => navigate("/activity")} />
+      ) : current === "/activity" ? (
+        <Activity onOpenEvent={(eventId) => navigate(`/activity/${eventId}`)} />
       ) : current === "/month" ? (
         <MonthReview onOpenActivity={(href) => navigate(href)} onBack={() => navigate(monthBack)} />
       ) : current === "/people" ? (
