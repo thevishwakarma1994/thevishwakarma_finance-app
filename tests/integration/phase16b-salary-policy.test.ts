@@ -192,6 +192,39 @@ describe("phase 16b salary policy", () => {
     expect(await fundingRows(ctx.handles, ctx.workspaceId)).toEqual(before);
   });
 
+  it("rejects a same-effectiveFrom edit after a received cycle exists", async () => {
+    const ctx = await seedSqlite();
+    contexts.push(ctx.handles);
+    await applyOpening(ctx.handles, { workspaceId: ctx.workspaceId }, {
+      accountId: ctx.hdfcId,
+      effectiveOn: "2026-08-01",
+      balancePaise: 2_000_000,
+      commit: true,
+    });
+    await applySalaryPolicy(ctx.handles, { workspaceId: ctx.workspaceId }, AUG);
+    await recordIncome(ctx.handles, { workspaceId: ctx.workspaceId }, {
+      occurredOn: "2026-08-05",
+      capturedAt: "2026-08-05T04:30:00.000Z",
+      accountId: ctx.hdfcId,
+      amountPaise: 7_920_000,
+      kind: "salary",
+      expectedYear: 2026,
+      expectedMonth: 8,
+      commit: true,
+    });
+    const before = await fundingRows(ctx.handles, ctx.workspaceId);
+    expect(before).toHaveLength(1);
+    expect(before[0]?.salaryEventId).toBeTruthy();
+
+    await expect(
+      applySalaryPolicy(ctx.handles, { workspaceId: ctx.workspaceId }, {
+        ...AUG,
+        expectedAmountPaise: 8_200_000,
+      }),
+    ).rejects.toSatisfy((error) => isDomain(error, "policy_version_in_use"));
+    expect(await fundingRows(ctx.handles, ctx.workspaceId)).toEqual(before);
+  });
+
   it("rejects a same-effectiveFrom edit after several unreceived cycles exist and preserves snapshots", async () => {
     const ctx = await seedSqlite();
     contexts.push(ctx.handles);

@@ -19,7 +19,7 @@ import { loadSnapshot } from "../../src/db/loadSnapshot.js";
 import { anyDb, tables } from "../../src/db/exec.js";
 import { applyOpening } from "../../src/app/applyOpening.js";
 import { recordIncome } from "../../src/app/recordIncome.js";
-import { applySalaryPolicy, ensureExpectedFundingCycle } from "../../src/app/salaryPolicy.js";
+import { applySalaryPolicy, ensureExpectedFundingCycle, salarySchedule } from "../../src/app/salaryPolicy.js";
 
 const capturedAt = "2026-08-16T10:00:00.000Z";
 const postgresUrl = process.env.TEST_DATABASE_URL?.trim() ?? "";
@@ -162,6 +162,32 @@ describe("phase 16b salary concurrency (sqlite two connections)", () => {
     expect(snapshot.incomePolicies).toHaveLength(1);
     expect(snapshot.incomePolicies[0]?.expectedAmountPaise).toBe(7_920_000);
     expect(snapshot.fundingCycles.find((cycle) => cycle.month === 8)?.expectedAmountSnapshot).toBe(7_920_000);
+  });
+
+  it("keeps GET reads consistent with a concurrent receipt materialize", async () => {
+    const ctx = await dualSqlite();
+    await applySalaryPolicy(ctx.a, { workspaceId: ctx.workspaceId }, AUG);
+    const results = await Promise.allSettled([
+      salarySchedule(ctx.a, { workspaceId: ctx.workspaceId }, isoDate("2026-08-05")),
+      salarySchedule(ctx.b, { workspaceId: ctx.workspaceId }, isoDate("2026-10-02")),
+      recordIncome(ctx.a, { workspaceId: ctx.workspaceId }, {
+        commandId: "cmd-read-race",
+        occurredOn: "2026-08-05",
+        capturedAt,
+        accountId: ctx.hdfcId,
+        amountPaise: 8_020_000,
+        kind: "salary",
+        expectedYear: 2026,
+        expectedMonth: 8,
+        commit: true,
+      }),
+    ]);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(0);
+    const snapshot = await loadSnapshot(ctx.a, ctx.workspaceId, isoDate("2026-08-05"));
+    expect(snapshot.events.filter((event) => event.meaning === "income")).toHaveLength(1);
+    expect(snapshot.fundingCycles.filter((cycle) => cycle.year === 2026 && cycle.month === 8)).toHaveLength(1);
+    const schedule = await salarySchedule(ctx.b, { workspaceId: ctx.workspaceId }, isoDate("2026-08-05"));
+    expect(schedule.receivableCycles.some((cycle) => cycle.year === 2026 && cycle.month === 8)).toBe(false);
   });
 });
 

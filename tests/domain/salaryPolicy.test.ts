@@ -175,4 +175,17 @@ describe("V1 mid-month effectiveFrom eligibility", () => {
     expect(cycles.some((cycle) => cycle.year === 2026 && cycle.month === 8)).toBe(false);
     expect(cycles.some((cycle) => cycle.year === 2026 && cycle.month === 9)).toBe(true);
   });
+
+  it("starts at February when effectiveFrom is 15 January", () => {
+    const midJanuary = incomePolicyFixture({
+      ...window,
+      id: "jan-15",
+      effectiveFrom: isoDate("2026-01-15"),
+    });
+    expect(policyForSalaryMonth([midJanuary], 2026, 1)).toBeNull();
+    expect(policyForSalaryMonth([midJanuary], 2026, 2)?.id).toBe("jan-15");
+    const cycles = materializeFundingCycles([midJanuary], [], isoDate("2026-01-15"));
+    expect(cycles.some((cycle) => cycle.year === 2026 && cycle.month === 1)).toBe(false);
+    expect(cycles.some((cycle) => cycle.year === 2026 && cycle.month === 2)).toBe(true);
+  });
 });

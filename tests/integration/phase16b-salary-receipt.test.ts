@@ -16,7 +16,7 @@ import { loadSnapshot } from "../../src/db/loadSnapshot.js";
 import { anyDb, tables } from "../../src/db/exec.js";
 import { applyOpening } from "../../src/app/applyOpening.js";
 import { recordIncome } from "../../src/app/recordIncome.js";
-import { applySalaryPolicy } from "../../src/app/salaryPolicy.js";
+import { applySalaryPolicy, ensureExpectedFundingCycle } from "../../src/app/salaryPolicy.js";
 import { simulateAffordability } from "../../src/app/simulateAffordability.js";
 
 const capturedAt = "2026-08-16T10:00:00.000Z";
@@ -253,6 +253,245 @@ describe("phase 16b salary receipt", () => {
         expectedMonth: undefined,
       }),
     ).rejects.toSatisfy((error) => isDomain(error, "idempotency_conflict"));
+  });
+
+  it("A: ID-only exact retry succeeds", async () => {
+    const ctx = await seedSqlite();
+    contexts.push(ctx.handles);
+    await applySalaryPolicy(ctx.handles, { workspaceId: ctx.workspaceId }, POLICY);
+    const august = await ensureExpectedFundingCycle(ctx.handles, ctx.workspaceId, 2026, 8);
+    const payload = {
+      commandId: "cmd-id-only",
+      occurredOn: "2026-08-05",
+      capturedAt,
+      accountId: ctx.hdfcId,
+      amountPaise: 8_020_000,
+      kind: "salary" as const,
+      fundingCycleId: august.id,
+      commit: true,
+    };
+    expect((await recordIncome(ctx.handles, { workspaceId: ctx.workspaceId }, payload)).eventId).toBe("cmd-id-only");
+    expect((await recordIncome(ctx.handles, { workspaceId: ctx.workspaceId }, payload)).eventId).toBe("cmd-id-only");
+    expect((await loadSnapshot(ctx.handles, ctx.workspaceId)).events.filter((event) => event.meaning === "income")).toHaveLength(1);
+  });
+
+  it("B/G: year/month-only exact retry succeeds after the cycle is materialized", async () => {
+    const ctx = await seedSqlite();
+    contexts.push(ctx.handles);
+    await applySalaryPolicy(ctx.handles, { workspaceId: ctx.workspaceId }, POLICY);
+    const payload = {
+      commandId: "cmd-period-only",
+      occurredOn: "2026-08-05",
+      capturedAt,
+      accountId: ctx.hdfcId,
+      amountPaise: 8_020_000,
+      kind: "salary" as const,
+      expectedYear: 2026,
+      expectedMonth: 8,
+      commit: true,
+    };
+    expect((await recordIncome(ctx.handles, { workspaceId: ctx.workspaceId }, payload)).eventId).toBe("cmd-period-only");
+    expect((await recordIncome(ctx.handles, { workspaceId: ctx.workspaceId }, payload)).eventId).toBe("cmd-period-only");
+    const after = await loadSnapshot(ctx.handles, ctx.workspaceId);
+    expect(after.events.filter((event) => event.meaning === "income")).toHaveLength(1);
+    const materialized = cycleOf(after, 2026, 8);
+    expect(materialized?.id).toBeTruthy();
+    expect(
+      (await recordIncome(ctx.handles, { workspaceId: ctx.workspaceId }, {
+        ...payload,
+        fundingCycleId: materialized!.id,
+      })).eventId,
+    ).toBe("cmd-period-only");
+  });
+
+  it("C: ID plus matching year/month exact retry succeeds", async () => {
+    const ctx = await seedSqlite();
+    contexts.push(ctx.handles);
+    await applySalaryPolicy(ctx.handles, { workspaceId: ctx.workspaceId }, POLICY);
+    const august = await ensureExpectedFundingCycle(ctx.handles, ctx.workspaceId, 2026, 8);
+    const payload = {
+      commandId: "cmd-both",
+      occurredOn: "2026-08-05",
+      capturedAt,
+      accountId: ctx.hdfcId,
+      amountPaise: 8_020_000,
+      kind: "salary" as const,
+      fundingCycleId: august.id,
+      expectedYear: 2026,
+      expectedMonth: 8,
+      commit: true,
+    };
+    expect((await recordIncome(ctx.handles, { workspaceId: ctx.workspaceId }, payload)).eventId).toBe("cmd-both");
+    expect((await recordIncome(ctx.handles, { workspaceId: ctx.workspaceId }, payload)).eventId).toBe("cmd-both");
+  });
+
+  it("D/E: same ID with a different expected period is an idempotency conflict", async () => {
+    const ctx = await seedSqlite();
+    contexts.push(ctx.handles);
+    await applySalaryPolicy(ctx.handles, { workspaceId: ctx.workspaceId }, POLICY);
+    const august = await ensureExpectedFundingCycle(ctx.handles, ctx.workspaceId, 2026, 8);
+    const payload = {
+      commandId: "cmd-id-period-mismatch",
+      occurredOn: "2026-08-05",
+      capturedAt,
+      accountId: ctx.hdfcId,
+      amountPaise: 8_020_000,
+      kind: "salary" as const,
+      fundingCycleId: august.id,
+      expectedYear: 2026,
+      expectedMonth: 8,
+      commit: true,
+    };
+    await recordIncome(ctx.handles, { workspaceId: ctx.workspaceId }, payload);
+    await expect(
+      recordIncome(ctx.handles, { workspaceId: ctx.workspaceId }, { ...payload, expectedMonth: 9 }),
+    ).rejects.toSatisfy((error) => isDomain(error, "idempotency_conflict"));
+    await expect(
+      recordIncome(ctx.handles, { workspaceId: ctx.workspaceId }, { ...payload, expectedYear: 2027 }),
+    ).rejects.toSatisfy((error) => isDomain(error, "idempotency_conflict"));
+    expect((await loadSnapshot(ctx.handles, ctx.workspaceId)).events.filter((event) => event.meaning === "income")).toHaveLength(1);
+  });
+
+  it("F: a different fundingCycleId on retry is an idempotency conflict", async () => {
+    const ctx = await seedSqlite();
+    contexts.push(ctx.handles);
+    await applySalaryPolicy(ctx.handles, { workspaceId: ctx.workspaceId }, POLICY);
+    const august = await ensureExpectedFundingCycle(ctx.handles, ctx.workspaceId, 2026, 8);
+    const september = await ensureExpectedFundingCycle(ctx.handles, ctx.workspaceId, 2026, 9);
+    const payload = {
+      commandId: "cmd-other-cycle",
+      occurredOn: "2026-08-05",
+      capturedAt,
+      accountId: ctx.hdfcId,
+      amountPaise: 8_020_000,
+      kind: "salary" as const,
+      fundingCycleId: august.id,
+      commit: true,
+    };
+    await recordIncome(ctx.handles, { workspaceId: ctx.workspaceId }, payload);
+    await expect(
+      recordIncome(ctx.handles, { workspaceId: ctx.workspaceId }, { ...payload, fundingCycleId: september.id }),
+    ).rejects.toSatisfy((error) => isDomain(error, "idempotency_conflict"));
+  });
+
+  it("H: dropping scheduled cycle identity on retry is an idempotency conflict", async () => {
+    const ctx = await seedSqlite();
+    contexts.push(ctx.handles);
+    await applySalaryPolicy(ctx.handles, { workspaceId: ctx.workspaceId }, POLICY);
+    const payload = {
+      commandId: "cmd-drop-cycle",
+      occurredOn: "2026-08-05",
+      capturedAt,
+      accountId: ctx.hdfcId,
+      amountPaise: 8_020_000,
+      kind: "salary" as const,
+      expectedYear: 2026,
+      expectedMonth: 8,
+      commit: true,
+    };
+    await recordIncome(ctx.handles, { workspaceId: ctx.workspaceId }, payload);
+    await expect(
+      recordIncome(ctx.handles, { workspaceId: ctx.workspaceId }, {
+        ...payload,
+        expectedYear: undefined,
+        expectedMonth: undefined,
+      }),
+    ).rejects.toSatisfy((error) => isDomain(error, "idempotency_conflict"));
+  });
+
+  it("I: adding cycle identity to an originally unlinked salary is an idempotency conflict", async () => {
+    const ctx = await seedSqlite();
+    contexts.push(ctx.handles);
+    const payload = {
+      commandId: "cmd-unlinked",
+      occurredOn: "2026-08-05",
+      capturedAt,
+      accountId: ctx.hdfcId,
+      amountPaise: 8_020_000,
+      kind: "salary" as const,
+      commit: true,
+    };
+    expect((await recordIncome(ctx.handles, { workspaceId: ctx.workspaceId }, payload)).eventId).toBe("cmd-unlinked");
+    expect((await recordIncome(ctx.handles, { workspaceId: ctx.workspaceId }, payload)).eventId).toBe("cmd-unlinked");
+    await applySalaryPolicy(ctx.handles, { workspaceId: ctx.workspaceId }, POLICY);
+    const august = await ensureExpectedFundingCycle(ctx.handles, ctx.workspaceId, 2026, 8);
+    await expect(
+      recordIncome(ctx.handles, { workspaceId: ctx.workspaceId }, { ...payload, fundingCycleId: august.id }),
+    ).rejects.toSatisfy((error) => isDomain(error, "idempotency_conflict"));
+    await expect(
+      recordIncome(ctx.handles, { workspaceId: ctx.workspaceId }, { ...payload, expectedYear: 2026, expectedMonth: 8 }),
+    ).rejects.toSatisfy((error) => isDomain(error, "idempotency_conflict"));
+    expect((await loadSnapshot(ctx.handles, ctx.workspaceId)).events.filter((event) => event.meaning === "income")).toHaveLength(1);
+    expect(cycleOf(await loadSnapshot(ctx.handles, ctx.workspaceId), 2026, 8)?.salaryEventId).toBeNull();
+  });
+
+  it("J: initial ID + mismatched expected period is rejected before write", async () => {
+    const ctx = await seedSqlite();
+    contexts.push(ctx.handles);
+    await applySalaryPolicy(ctx.handles, { workspaceId: ctx.workspaceId }, POLICY);
+    const september = await ensureExpectedFundingCycle(ctx.handles, ctx.workspaceId, 2026, 9);
+    await expect(
+      recordIncome(ctx.handles, { workspaceId: ctx.workspaceId }, {
+        commandId: "cmd-mismatch-write",
+        occurredOn: "2026-10-02",
+        capturedAt,
+        accountId: ctx.hdfcId,
+        amountPaise: 8_020_000,
+        kind: "salary",
+        fundingCycleId: september.id,
+        expectedYear: 2026,
+        expectedMonth: 10,
+        commit: true,
+      }),
+    ).rejects.toSatisfy((error) => isDomain(error, "cycle_not_found"));
+    const snapshot = await loadSnapshot(ctx.handles, ctx.workspaceId);
+    expect(snapshot.events.filter((event) => event.meaning === "income")).toHaveLength(0);
+    expect(cycleOf(snapshot, 2026, 9)?.salaryEventId).toBeNull();
+  });
+
+  it("K: the same raw commandId in another workspace is a generic idempotency conflict", async () => {
+    const ctx = await seedSqlite();
+    contexts.push(ctx.handles);
+    const ws2 = newId();
+    const acc2 = newId();
+    ctx.handles.sqlite
+      .prepare("INSERT INTO workspaces (id, name, created_at) VALUES (?, ?, '2026-08-01')")
+      .run(ws2, "Other");
+    ctx.handles.sqlite
+      .prepare(
+        "INSERT INTO accounts (id, workspace_id, kind, display_name, status, created_at) VALUES (?, ?, 'bank', 'SBI', 'active', '2026-08-01')",
+      )
+      .run(acc2, ws2);
+    await applyOpening(ctx.handles, { workspaceId: ws2 }, {
+      accountId: acc2,
+      effectiveOn: "2026-08-01",
+      balancePaise: 1_000_000,
+      commit: true,
+    });
+    await recordIncome(ctx.handles, { workspaceId: ctx.workspaceId }, {
+      commandId: "cmd-shared",
+      occurredOn: "2026-08-05",
+      capturedAt,
+      accountId: ctx.hdfcId,
+      amountPaise: 8_020_000,
+      kind: "salary",
+      commit: true,
+    });
+    await expect(
+      recordIncome(ctx.handles, { workspaceId: ws2 }, {
+        commandId: "cmd-shared",
+        occurredOn: "2026-08-05",
+        capturedAt,
+        accountId: acc2,
+        amountPaise: 8_020_000,
+        kind: "salary",
+        commit: true,
+      }),
+    ).rejects.toSatisfy((error) => {
+      if (!isDomain(error, "idempotency_conflict")) return false;
+      expect((error as DomainError).message.toLowerCase()).not.toMatch(/hdfc|foreign|workspace|cycle|account/);
+      return true;
+    });
   });
 
   it("does not treat expected salary as liquid cash or current STS", async () => {

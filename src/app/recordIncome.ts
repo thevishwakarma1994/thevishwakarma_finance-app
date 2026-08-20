@@ -209,34 +209,38 @@ async function replayOrConflict(
   if (linkedCycle && linkedCycle.workspaceId !== workspaceId) {
     throw new DomainError("idempotency_conflict", "Command ID conflict");
   }
-  const existingFundingCycleId = linkedCycle?.id ?? null;
-  const replayedCycleId = await replayedCycleIdFor(handles, workspaceId, identity, linkedCycle);
   if (
     existing.amountPaise !== input.amountPaise ||
     existing.accountId !== input.accountId ||
     existing.occurredOn !== input.occurredOn ||
-    existingFundingCycleId !== replayedCycleId ||
     existingKind !== input.kind
   ) {
     throw new DomainError("idempotency_conflict", "commandId exists with different payload");
   }
+  assertReplayCycleIdentity(linkedCycle ?? null, identity);
   return { preview: null, eventId: input.commandId, committed: true };
 }
 
-async function replayedCycleIdFor(
-  handles: DbHandles,
-  workspaceId: string,
-  identity: CycleIdentity | null,
-  linkedCycle: { id: string; year: number; month: number } | undefined,
-): Promise<string | null> {
-  if (!identity) return null;
-  if (identity.fundingCycleId) return identity.fundingCycleId;
-  if (linkedCycle && linkedCycle.year === identity.expectedYear && linkedCycle.month === identity.expectedMonth) {
-    return linkedCycle.id;
+function assertReplayCycleIdentity(
+  original: { id: string; year: number; month: number } | null,
+  retry: CycleIdentity | null,
+): void {
+  if (!original) {
+    if (retry) {
+      throw new DomainError("idempotency_conflict", "commandId exists with different payload");
+    }
+    return;
   }
-  const snapshot = await loadSnapshot(handles, workspaceId);
-  const match = snapshot.fundingCycles.find(
-    (cycle) => cycle.year === identity.expectedYear && cycle.month === identity.expectedMonth,
-  );
-  return match?.id ?? null;
+  if (!retry) {
+    throw new DomainError("idempotency_conflict", "commandId exists with different payload");
+  }
+  if (retry.fundingCycleId !== undefined && retry.fundingCycleId !== original.id) {
+    throw new DomainError("idempotency_conflict", "commandId exists with different payload");
+  }
+  if (retry.expectedYear !== undefined && retry.expectedYear !== original.year) {
+    throw new DomainError("idempotency_conflict", "commandId exists with different payload");
+  }
+  if (retry.expectedMonth !== undefined && retry.expectedMonth !== original.month) {
+    throw new DomainError("idempotency_conflict", "commandId exists with different payload");
+  }
 }
