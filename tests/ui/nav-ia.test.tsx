@@ -65,6 +65,7 @@ const homeBody = {
   salaryStatus: null,
   salaryWindowStart: null,
   salaryWindowEnd: null,
+  salaryTypicalOn: null,
   expectedSalaryPaise: 0,
   delayed: false,
   incomePolicyConfigured: false,
@@ -303,7 +304,7 @@ describe("UX Stage B navigation and IA", () => {
     await waitFor(() => screen.getByRole("heading", { name: "Home" }));
     fireEvent.click(screen.getByRole("button", { name: "Salary schedule not configured" }));
     await waitFor(() => screen.getByRole("heading", { name: "Salary" }));
-    expect(screen.getByText("Not configured in the app yet")).toBeTruthy();
+    expect(screen.getByText("Not configured")).toBeTruthy();
   });
 
   it("K — Sign out is not on Home or Money headers", async () => {

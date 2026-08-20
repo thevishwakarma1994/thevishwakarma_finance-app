@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { DateTime } from "luxon";
+import { KOLKATA } from "../../domain/calendar/kolkata.js";
 import { formatInr } from "../../domain/money/inr.js";
 import { paise } from "../../domain/money/paise.js";
 import { ApiError, fetchHome, type HomeView } from "../apiClient.js";
@@ -17,18 +19,22 @@ type Props = {
   onOpenMoney: () => void;
 };
 
+function formatDayMonth(iso: string): string {
+  return DateTime.fromISO(iso, { zone: KOLKATA }).toFormat("d MMM");
+}
+
 function salaryCopy(home: HomeView): string {
   if (!home.incomePolicyConfigured) {
     return "Salary schedule not configured";
   }
-  if (home.delayed) {
-    return `Salary expected ${home.salaryWindowStart ?? ""}–${home.salaryWindowEnd ?? ""} has not arrived`;
+  if (home.delayed || home.salaryStatus === "salary_delayed") {
+    return "Salary hasn't arrived yet";
   }
   if (home.salaryStatus === "window_open_unreceived") {
-    return `Salary window ${home.salaryWindowStart ?? ""}–${home.salaryWindowEnd ?? ""} · not in yet`;
+    return "Salary expected now";
   }
-  if (home.salaryWindowStart) {
-    return `Next salary window ${home.salaryWindowStart}–${home.salaryWindowEnd}`;
+  if (home.salaryTypicalOn) {
+    return `Expected around ${formatDayMonth(home.salaryTypicalOn)}`;
   }
   return "Salary schedule not configured";
 }

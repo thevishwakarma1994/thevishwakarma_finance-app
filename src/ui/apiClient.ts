@@ -395,11 +395,13 @@ export function previewOrCommitOpening(body: {
 }
 
 export function previewOrCommitIncome(body: {
+  commandId?: string;
   occurredOn: string;
   amountPaise: number;
   accountId: string;
   kind: "salary" | "other";
   notes?: string | null;
+  fundingCycleId?: string;
   commit: boolean;
 }) {
   return request<CommandResult>("/api/commands/income", {
@@ -747,6 +749,7 @@ export type HomeView = {
   salaryStatus: string | null;
   salaryWindowStart: string | null;
   salaryWindowEnd: string | null;
+  salaryTypicalOn: string | null;
   expectedSalaryPaise: number;
   delayed: boolean;
   incomePolicyConfigured: boolean;
@@ -768,6 +771,48 @@ export type HomeView = {
 export function fetchHome(asOf?: string) {
   const query = asOf ? `?asOf=${asOf}` : "";
   return request<HomeView>(`/api/home${query}`);
+}
+
+export type SalaryReceivableCycle = {
+  fundingCycleId: string;
+  year: number;
+  month: number;
+  typicalOn: string;
+  windowStart: string;
+  windowEnd: string;
+  expectedAmountPaise: number;
+  status: string;
+};
+
+export type SalaryScheduleView = {
+  primarySalaryAccount: { id: string; displayName: string; kind: string } | null;
+  policy: {
+    expectedAmountPaise: number;
+    windowStartDay: number;
+    typicalDay: number | null;
+    windowEndDay: number;
+    effectiveFrom: string;
+  } | null;
+  nextExpected: SalaryReceivableCycle | null;
+  receivableCycles: SalaryReceivableCycle[];
+};
+
+export function fetchSalarySchedule(asOf?: string) {
+  const query = asOf ? `?asOf=${asOf}` : "";
+  return request<SalaryScheduleView>(`/api/salary-schedule${query}`);
+}
+
+export function applySalaryPolicy(body: {
+  expectedAmountPaise: number;
+  windowStartDay: number;
+  typicalDay: number;
+  windowEndDay: number;
+  effectiveFrom: string;
+}) {
+  return request<{ policyId: string | null }>("/api/commands/salary-policy", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }
 
 export type AffordabilityView = {

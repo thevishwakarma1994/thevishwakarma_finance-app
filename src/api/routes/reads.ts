@@ -23,6 +23,7 @@ import { isoDate, type IsoDate } from "../../domain/calendar/isoDate.js";
 import { COMING_UP_FILTERS, type ComingUpFilter } from "../../domain/engine/comingUp.js";
 import { mapError } from "../auth/guard.js";
 import { listObligationTemplates } from "../../app/obligations.js";
+import { salarySchedule } from "../../app/salaryPolicy.js";
 import { ensureObligationInstances } from "../../app/ensureObligationInstances.js";
 import { todayKolkata } from "../../domain/calendar/kolkata.js";
 
@@ -227,6 +228,16 @@ readRoutes.get("/home", async (c) => {
     const asOf = requestAsOf(c);
     await prepareObligationReads(c, asOf);
     return c.json(await home(c.get("handles"), c.get("workspaceId"), asOf));
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+readRoutes.get("/salary-schedule", async (c) => {
+  try {
+    const asOf = requestAsOf(c);
+    return c.json(await salarySchedule(c.get("handles"), { workspaceId: c.get("workspaceId") }, asOf));
   } catch (error) {
     const mapped = mapError(error);
     return c.json(mapped.body, mapped.status);

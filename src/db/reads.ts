@@ -14,6 +14,7 @@ import { claimLabel } from "../domain/commands/settle.js";
 import { cardHasLifecycleActivity, deriveOpeningCardPosition } from "../domain/commands/openingCard.js";
 import { accountAvailability } from "../domain/engine/liquidity.js";
 import { evaluateSafeToSpend } from "../domain/engine/evaluateSafeToSpend.js";
+import { policyAsOf, typicalOnForCycle } from "../domain/funding/cycles.js";
 import { comingUpItems, filterComingUp, type ComingUpFilter } from "../domain/engine/comingUp.js";
 import { cycleCardLabel } from "../domain/reservations/create.js";
 import { reservedTowardCycle } from "../domain/reservations/derive.js";
@@ -929,6 +930,7 @@ export async function home(handles: DbHandles, workspaceId: string, asOf = today
     ]);
     const next = sts.fundingCycles.find((cycle) => cycle.id === sts.nextFundingCycleId);
     const active = sts.fundingCycles.find((cycle) => cycle.id === sts.activeFundingCycleId);
+    const typicalPolicy = next ? policyAsOf(snapshot.incomePolicies, next.expectedWindowStart) : null;
     return {
       asOf,
       currentCycleSafeToSpend: sts.currentCycleSafeToSpend,
@@ -939,6 +941,7 @@ export async function home(handles: DbHandles, workspaceId: string, asOf = today
       salaryStatus: next?.status ?? active?.status ?? null,
       salaryWindowStart: sts.nextExpectedIncomeWindow.start,
       salaryWindowEnd: sts.nextExpectedIncomeWindow.end,
+      salaryTypicalOn: next ? typicalOnForCycle(next, typicalPolicy) : null,
       expectedSalaryPaise: sts.nextExpectedIncomeWindow.expectedAmount,
       delayed: sts.delayedFundingCycleIds.length > 0,
       incomePolicyConfigured: sts.incomePolicyConfigured,

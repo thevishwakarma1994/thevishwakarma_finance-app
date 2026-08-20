@@ -31,6 +31,7 @@ import { ensureObligationInstances } from "../../app/ensureObligationInstances.j
 import { applyOpeningCard, correctOpeningCard } from "../../app/openingCard.js";
 import { applyOpeningClaim, correctOpeningClaim } from "../../app/openingClaim.js";
 import { applyOpeningReservation, correctOpeningReservation } from "../../app/openingReservation.js";
+import { applySalaryPolicy } from "../../app/salaryPolicy.js";
 import type { DbHandles } from "../../db/client.js";
 import { mapError } from "../auth/guard.js";
 
@@ -62,6 +63,20 @@ commandRoutes.post("/commands/income", async (c) => {
       ...body,
       capturedAt: typeof body.capturedAt === "string" ? body.capturedAt : utcNowIso(),
     });
+    return c.json(result);
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+commandRoutes.post("/commands/salary-policy", async (c) => {
+  try {
+    const result = await applySalaryPolicy(
+      c.get("handles"),
+      { workspaceId: c.get("workspaceId") },
+      await c.req.json(),
+    );
     return c.json(result);
   } catch (error) {
     const mapped = mapError(error);

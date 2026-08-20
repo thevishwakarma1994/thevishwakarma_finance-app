@@ -66,6 +66,7 @@ const homeBody = {
   salaryStatus: null,
   salaryWindowStart: null,
   salaryWindowEnd: null,
+  salaryTypicalOn: null,
   expectedSalaryPaise: 0,
   delayed: false,
   incomePolicyConfigured: false,

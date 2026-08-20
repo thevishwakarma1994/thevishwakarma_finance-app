@@ -231,3 +231,11 @@ export function expectedIncomeForProjection(cycle: LedgerFundingCycle): typeof c
   if (cycle.status === "salary_delayed") return paise(0);
   return cycle.expectedAmountSnapshot;
 }
+
+export function typicalOnForCycle(
+  cycle: Pick<FundingCycleRecord, "year" | "month" | "expectedWindowStart">,
+  policy: IncomePolicy | null,
+): IsoDate {
+  const day = policy?.typicalDay ?? isoDateParts(cycle.expectedWindowStart).day;
+  return kolkataCivilDate(cycle.year, cycle.month, day);
+}
