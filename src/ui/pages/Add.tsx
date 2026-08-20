@@ -1,7 +1,9 @@
-import { useEffect, useState, type FormEvent } from "react";
-import { formatInrDelta, parseInr } from "../../domain/money/inr.js";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { formatInr, formatInrDelta, parseInr } from "../../domain/money/inr.js";
 import { paise } from "../../domain/money/paise.js";
 import { todayKolkata } from "../../domain/calendar/kolkata.js";
+import { DateTime } from "luxon";
+import { KOLKATA } from "../../domain/calendar/kolkata.js";
 import {
   ApiError,
   fetchComingCardPayments,
@@ -20,12 +22,14 @@ import {
   previewOrCommitSplit,
   previewOrCommitTransfer,
   fetchSettlementSuggestion,
+  fetchSalarySchedule,
   type Account,
   type CardListItem,
   type Category,
   type ComingCardPayment,
   type ConsequencePreview,
   type PersonListItem,
+  type SalaryScheduleView,
 } from "../apiClient.js";
 import { RowChevron, Sheet } from "../chrome.js";
 
@@ -103,6 +107,10 @@ const CHOOSER_GROUPS: { label: string; items: { intent: AddIntent; title: string
   },
 ];
 
+function monthLabel(year: number, month: number): string {
+  return DateTime.fromObject({ year, month, day: 1 }, { zone: KOLKATA }).toFormat("MMMM");
+}
+
 export function AddChooser({
   onPick,
   onClose,
@@ -159,6 +167,14 @@ export function Add({ intent, defaults, onDone, onClose, onBackToChooser }: Prop
   const [preview, setPreview] = useState<ConsequencePreview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [salarySchedule, setSalarySchedule] = useState<SalaryScheduleView | null>(null);
+  const [fundingCycleId, setFundingCycleId] = useState("");
+  const commandIdRef = useRef<string | null>(null);
+
+  function commandId() {
+    if (!commandIdRef.current) commandIdRef.current = crypto.randomUUID();
+    return commandIdRef.current;
+  }
 
   const selectedCard = cards.find((card) => card.id === cardId);
   const payableCycles = coming.filter((item) => item.cardId === cardId);
@@ -187,20 +203,31 @@ export function Add({ intent, defaults, onDone, onClose, onBackToChooser }: Prop
       fetchCards(),
       fetchComingCardPayments(),
       fetchPeople(),
+      intent === "income" ? fetchSalarySchedule() : Promise.resolve(null),
     ])
-      .then(([accountData, categoryData, cardData, comingData, peopleData]) => {
+      .then(([accountData, categoryData, cardData, comingData, peopleData, schedule]) => {
         setAccounts(accountData.accounts);
         setCategories(categoryData.categories);
         setCards(cardData.cards);
         setComing(comingData.items);
         setPeople(peopleData.people);
+        if (schedule) {
+          setSalarySchedule(schedule);
+          const nextCycle = schedule.nextExpected ?? schedule.receivableCycles[0] ?? null;
+          if (nextCycle) {
+            setFundingCycleId(nextCycle.fundingCycleId);
+            setAmount((current) => current || String(nextCycle.expectedAmountPaise / 100));
+          }
+        }
         const firstPerson =
           peopleData.people.find((person) => person.id === defaults?.personId && person.status === "active") ??
           peopleData.people.find((person) => person.status === "active");
         const firstCard =
           cardData.cards.find((card) => card.id === defaults?.cardId) ?? cardData.cards[0];
+        const salaryAccountId = schedule?.primarySalaryAccount?.id;
         const fromAccount =
           defaults?.fromAccountId ??
+          (intent === "income" ? salaryAccountId : undefined) ??
           (intent === "card_spend" || intent === "pay_card"
             ? firstCard?.defaultPaymentAccountId
             : undefined) ??
@@ -228,7 +255,15 @@ export function Add({ intent, defaults, onDone, onClose, onBackToChooser }: Prop
   async function runCommand(commit: boolean) {
     const amountPaise = parseInr(amount);
     if (intent === "income") {
-      return previewOrCommitIncome({ occurredOn, amountPaise, accountId, kind, commit });
+      return previewOrCommitIncome({
+        commandId: commandId(),
+        occurredOn,
+        amountPaise,
+        accountId,
+        kind,
+        fundingCycleId: kind === "salary" && fundingCycleId ? fundingCycleId : undefined,
+        commit,
+      });
     }
     if (intent === "transfer") {
       return previewOrCommitTransfer({
@@ -361,7 +396,7 @@ export function Add({ intent, defaults, onDone, onClose, onBackToChooser }: Prop
         onBack={formBack}
         footer={
           <button className="primary" type="button" disabled={busy} onClick={() => void onConfirm()}>
-            {busy ? "Saving…" : "Confirm"}
+            {busy ? "Saving…" : intent === "income" && kind === "salary" && fundingCycleId ? "Confirm received" : "Confirm"}
           </button>
         }
       >
@@ -393,6 +428,9 @@ export function Add({ intent, defaults, onDone, onClose, onBackToChooser }: Prop
     (intent === "card_spend" && ownership === "mine") ||
     (showSplitFields && Boolean(userShare.trim()));
 
+  const selectedSalaryCycle = salarySchedule?.receivableCycles.find((cycle) => cycle.fundingCycleId === fundingCycleId);
+  const scheduledSalary = intent === "income" && kind === "salary" && Boolean(selectedSalaryCycle);
+
   return (
     <Sheet
       title={title}
@@ -406,8 +444,14 @@ export function Add({ intent, defaults, onDone, onClose, onBackToChooser }: Prop
       }
     >
       <form id="add-form" className="sheet-form" onSubmit={onPreview}>
+          {scheduledSalary && selectedSalaryCycle ? (
+            <p className="muted">
+              Expected {formatInr(paise(selectedSalaryCycle.expectedAmountPaise))} for{" "}
+              {monthLabel(selectedSalaryCycle.year, selectedSalaryCycle.month)}
+            </p>
+          ) : null}
           <label>
-            Amount
+            {scheduledSalary ? "Received amount" : "Amount"}
             <input
               inputMode="decimal"
               value={amount}
@@ -441,7 +485,7 @@ export function Add({ intent, defaults, onDone, onClose, onBackToChooser }: Prop
             </label>
           ) : intent !== "split" || splitSource === "account" ? (
             <label>
-              {intent === "transfer" ? "From" : "Account"}
+              {intent === "transfer" ? "From" : scheduledSalary ? "Into" : "Account"}
               <select value={accountId} onChange={(event) => setAccountId(event.target.value)}>
                 {accounts.map((account) => (
                   <option key={account.id} value={account.id}>
@@ -665,13 +709,28 @@ export function Add({ intent, defaults, onDone, onClose, onBackToChooser }: Prop
             </label>
           ) : null}
           {intent === "income" ? (
-            <label>
-              Kind
-              <select value={kind} onChange={(event) => setKind(event.target.value as "salary" | "other")}>
-                <option value="salary">Salary</option>
-                <option value="other">Other income</option>
-              </select>
-            </label>
+            <>
+              <label>
+                Kind
+                <select value={kind} onChange={(event) => setKind(event.target.value as "salary" | "other")}>
+                  <option value="salary">Salary</option>
+                  <option value="other">Other income</option>
+                </select>
+              </label>
+              {kind === "salary" && (salarySchedule?.receivableCycles.length ?? 0) > 0 ? (
+                <label>
+                  For expected period
+                  <select value={fundingCycleId} onChange={(event) => setFundingCycleId(event.target.value)}>
+                    {salarySchedule!.receivableCycles.map((cycle) => (
+                      <option key={cycle.fundingCycleId} value={cycle.fundingCycleId}>
+                        {monthLabel(cycle.year, cycle.month)}
+                        {cycle.status === "salary_delayed" ? " · not in yet" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+            </>
           ) : showCategory ? (
             <>
               <label>
@@ -696,7 +755,7 @@ export function Add({ intent, defaults, onDone, onClose, onBackToChooser }: Prop
             </label>
           ) : null}
           <label>
-            Date
+            {scheduledSalary ? "Received on" : "Date"}
             <input type="date" value={occurredOn} onChange={(event) => setOccurredOn(event.target.value)} />
           </label>
           {error ? <p className="danger">{error}</p> : null}

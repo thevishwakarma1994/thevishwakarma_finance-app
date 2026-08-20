@@ -2,27 +2,27 @@ import { paise } from "../money/paise.js";
 import { formatInrDelta } from "../money/inr.js";
 import { newId } from "../ids.js";
 import { assertConservation } from "../conservation/validate.js";
-import type { IsoDate } from "../calendar/isoDate.js";
+import { isoDate, type IsoDate } from "../calendar/isoDate.js";
 import type { Paise } from "../money/paise.js";
-import { isoDateParts } from "../calendar/isoDate.js";
 import {
   DomainError,
   type ConsequencePreview,
   type FinancialEvent,
-  type FundingCycleRecord,
   type LedgerSnapshot,
   type Posting,
   type ProposedBatch,
 } from "../ledger/types.js";
-import { buildFundingCycle, policyAsOf } from "../funding/cycles.js";
+import { policyAsOf } from "../funding/cycles.js";
 
 export type RecordIncomeInput = {
+  commandId?: string;
   occurredOn: IsoDate;
   capturedAt: string;
   amountPaise: Paise;
   accountId: string;
   kind: "salary" | "other";
   notes?: string | null;
+  fundingCycleId?: string | null;
 };
 
 export function recordIncome(
@@ -37,43 +37,35 @@ export function recordIncome(
     throw new DomainError("invalid_amount", "Income must be greater than zero");
   }
 
-  const eventId = newId();
+  const eventId = input.commandId ?? newId();
   const pnl = input.kind === "salary" ? "income_salary" : "income_other";
   let fundingCycleId: string | null = null;
-  let fundingCycles: FundingCycleRecord[] | undefined;
   let fundingCycleUpdates: ProposedBatch["fundingCycleUpdates"];
 
-  if (input.kind === "salary") {
-    const parts = isoDateParts(input.occurredOn);
-    const existing = snapshot.fundingCycles.find(
-      (cycle) => cycle.year === parts.year && cycle.month === parts.month,
+  if (input.kind === "salary" && input.fundingCycleId) {
+    const existing = snapshot.fundingCycles.find((cycle) => cycle.id === input.fundingCycleId);
+    if (!existing) {
+      throw new DomainError("cycle_not_found", "Salary period not found");
+    }
+    if (existing.salaryEventId) {
+      throw new DomainError("already_received", "This salary period already has a salary event");
+    }
+    const monthStart = isoDate(
+      `${String(existing.year).padStart(4, "0")}-${String(existing.month).padStart(2, "0")}-01`,
     );
-    if (existing?.salaryEventId) {
-      throw new DomainError("duplicate_salary", "This salary period already has a salary event");
+    const policy = policyAsOf(snapshot.incomePolicies, monthStart);
+    if (!policy) {
+      throw new DomainError("invalid_salary_schedule", "That salary period is not covered by the current schedule");
     }
-    const policy = policyAsOf(snapshot.incomePolicies, input.occurredOn);
-    if (existing) {
-      fundingCycleId = existing.id;
-      fundingCycleUpdates = [
-        {
-          id: existing.id,
-          actualArrivalOn: input.occurredOn,
-          actualAmountPaise: input.amountPaise,
-          salaryEventId: eventId,
-        },
-      ];
-    } else if (policy) {
-      const cycle = buildFundingCycle(policy, parts.year, parts.month);
-      fundingCycleId = cycle.id;
-      fundingCycles = [
-        {
-          ...cycle,
-          actualArrivalOn: input.occurredOn,
-          actualAmountPaise: input.amountPaise,
-          salaryEventId: eventId,
-        },
-      ];
-    }
+    fundingCycleId = existing.id;
+    fundingCycleUpdates = [
+      {
+        id: existing.id,
+        actualArrivalOn: input.occurredOn,
+        actualAmountPaise: input.amountPaise,
+        salaryEventId: eventId,
+      },
+    ];
   }
 
   const event: FinancialEvent = {
@@ -97,7 +89,7 @@ export function recordIncome(
 
   const postings: Posting[] = [
     {
-      id: newId(),
+      id: `${eventId}_p1`,
       eventId,
       amountPaise: input.amountPaise,
       accountId: account.id,
@@ -109,7 +101,7 @@ export function recordIncome(
       billingCycleId: null,
     },
     {
-      id: newId(),
+      id: `${eventId}_p2`,
       eventId,
       amountPaise: input.amountPaise,
       accountId: null,
@@ -126,7 +118,6 @@ export function recordIncome(
     events: [event],
     postings,
     openings: [],
-    fundingCycles,
     fundingCycleUpdates,
   };
   assertConservation("income", batch);
