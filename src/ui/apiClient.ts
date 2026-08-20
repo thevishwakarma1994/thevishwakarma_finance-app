@@ -69,6 +69,10 @@ export type ActivityEvent = {
   counterpartyName: string | null;
   otherOwned: boolean;
   personalAmountPaise: number;
+  rootEventId?: string;
+  effectiveEventId?: string;
+  corrected?: boolean;
+  correctionCount?: number;
   allocations: {
     claimId: string;
     amountPaise: number;

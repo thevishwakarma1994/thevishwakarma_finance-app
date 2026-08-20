@@ -7,6 +7,7 @@ import {
   todayKolkata,
 } from "../domain/calendar/kolkata.js";
 import { formatCardLabel } from "../domain/cycle/lifecycle.js";
+import { isoDate } from "../domain/calendar/isoDate.js";
 import { DomainError, type ClaimDirection, type LedgerBillingCycle, type LedgerSnapshot } from "../domain/ledger/types.js";
 import { personPosition } from "../domain/people/position.js";
 import { suggestAllocations, suggestableClaimsFor } from "../domain/commands/suggestAllocations.js";
@@ -22,7 +23,8 @@ import { loadSnapshot } from "./loadSnapshot.js";
 import { loadCardRule } from "./config.js";
 import type { DbHandles } from "./handles.js";
 import { anyDb, queryAll, queryGet, tables } from "./exec.js"; 
-import { fromStoredPaise } from "./storedPaise.js"; 
+import { fromStoredPaise } from "./storedPaise.js";
+import { activityIdentityFor, shouldShowInOrdinaryActivity, transactionDetailFromSnapshot } from "../domain/corrections/activity.js";
 import { addDbQueries, timedPerf, timedPerfSync } from "../perf/timing.js";
 
 export async function listAccounts(handles: DbHandles, workspaceId: string) {
@@ -111,6 +113,7 @@ export function listCategoriesFromSnapshot(snapshot: LedgerSnapshot, includeArch
 export type ActivityFilter = {
   categoryId?: string;
   month?: string;
+  asOf?: string;
 };
 
 export async function listActivity(
@@ -118,7 +121,11 @@ export async function listActivity(
   workspaceId: string,
   filter: ActivityFilter = {},
 ) {
-  const snapshot = await loadSnapshot(handles, workspaceId);
+  const snapshot = await loadSnapshot(
+    handles,
+    workspaceId,
+    filter.asOf ? isoDate(filter.asOf) : todayKolkata(),
+  );
   const accountName = new Map(snapshot.accounts.map((account) => [account.id, account.displayName]));
   const categoryName = new Map(snapshot.categories.map((category) => [category.id, category.name]));
 
@@ -136,6 +143,7 @@ export async function listActivity(
         event.meaning === "settlement_in" ||
         event.meaning === "settlement_out",
     )
+    .filter((event) => shouldShowInOrdinaryActivity(event, snapshot.transactionCorrections))
     .filter((event) => {
       if (!filter.month) return true;
       return event.occurredOn.startsWith(filter.month);
@@ -241,6 +249,7 @@ export async function listActivity(
         counterpartyName: counterparty?.name ?? shares.find((share) => !share.isUser)?.personName ?? null,
         otherOwned,
         personalAmountPaise: expensePostings.reduce((sum, posting) => sum + posting.amountPaise, 0),
+        ...activityIdentityFor(event.id, snapshot.transactionCorrections),
         allocations: settlementRows.map((row) => {
           const allocatedClaim = snapshot.claims.find((item) => item.id === row.claimId);
           const reservation = row.reservationId
@@ -297,6 +306,16 @@ export async function listActivity(
         ],
       };
     });
+}
+
+export async function transactionCorrectionDetail(
+  handles: DbHandles,
+  workspaceId: string,
+  eventId: string,
+  asOf = todayKolkata(),
+) {
+  const snapshot = await loadSnapshot(handles, workspaceId, asOf);
+  return transactionDetailFromSnapshot(snapshot, eventId);
 }
 
 async function expenseTotalForMonth(

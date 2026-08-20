@@ -23,6 +23,8 @@ import type {
   SurplusStatus,
 } from "../domain/ledger/types.js";
 import { isAccountOpeningPayload } from "../domain/ledger/types.js";
+import { excludeFutureCorrectionArtifacts } from "../domain/corrections/history.js";
+import type { TransactionCorrectionRecord } from "../domain/corrections/types.js";
 import { enrichClaim } from "../domain/claims/derive.js";
 import { enrichReservation } from "../domain/reservations/derive.js";
 import type { DbHandles } from "./handles.js";
@@ -71,6 +73,7 @@ export async function loadSnapshot(
       categoryRows,
       eventRows,
       postingRows,
+      correctionRows,
       openingRows,
       peopleRows,
       claimRows,
@@ -92,6 +95,13 @@ export async function loadSnapshot(
       () =>
         count(queryAll(handles, db.select().from(t.financialEvents).where(eq(t.financialEvents.workspaceId, workspaceId)))),
       () => count(queryAll(handles, db.select().from(t.postings).where(eq(t.postings.workspaceId, workspaceId)))),
+      () =>
+        count(
+          queryAll(
+            handles,
+            db.select().from(t.transactionCorrections).where(eq(t.transactionCorrections.workspaceId, workspaceId)),
+          ),
+        ),
       () =>
         count(
           queryAll(handles, db.select().from(t.openingPositions).where(eq(t.openingPositions.workspaceId, workspaceId))),
@@ -160,13 +170,30 @@ export async function loadSnapshot(
       };
     });
 
+    const loadedCorrections: TransactionCorrectionRecord[] = correctionRows.map((row) => ({
+      id: row.id,
+      workspaceId: row.workspaceId,
+      commandId: row.commandId,
+      rootEventId: row.rootEventId,
+      targetEventId: row.targetEventId,
+      reversalEventId: row.reversalEventId,
+      replacementEventId: row.replacementEventId,
+      correctedOn: isoDate(row.correctedOn),
+      capturedAt: row.capturedAt,
+      reason: row.reason,
+    }));
+    const visibleLedger = excludeFutureCorrectionArtifacts(eventRows, postingRows, loadedCorrections, asOf);
+    const visibleEventRows = visibleLedger.events;
+    const visiblePostingRows = visibleLedger.postings;
+    const transactionCorrections = visibleLedger.corrections;
+
     const ledgerAccounts: LedgerAccount[] = accountRows.map((row) => {
       const opening = openings.find(
         (item) => item.kind === "account" && item.subjectId === row.id,
       );
       const openingBalancePaise =
         opening && isAccountOpeningPayload(opening.payload) ? opening.payload.balancePaise : paise(0);
-      const postedPaise = postingRows
+      const postedPaise = visiblePostingRows
         .filter((posting) => posting.accountId === row.id)
         .reduce((sum, posting) => addPaise(sum, fromStoredPaise(posting.amountPaise)), paise(0));
       return {
@@ -193,7 +220,7 @@ export async function loadSnapshot(
       status: row.status as CreditCardRecord["status"],
     }));
 
-    const events = eventRows.map((row) => ({
+    const events = visibleEventRows.map((row) => ({
       id: row.id,
       meaning: row.meaning as LedgerSnapshot["events"][number]["meaning"],
       occurredOn: isoDate(row.occurredOn),
@@ -212,7 +239,7 @@ export async function loadSnapshot(
       reversalOfEventId: row.reversalOfEventId,
     }));
 
-    const ledgerPostings = postingRows.map((row) => ({
+    const ledgerPostings = visiblePostingRows.map((row) => ({
       id: row.id,
       eventId: row.eventId,
       amountPaise: fromStoredPaise(row.amountPaise),
@@ -369,6 +396,7 @@ export async function loadSnapshot(
       })),
       events,
       postings: ledgerPostings,
+      transactionCorrections,
       openings,
       incomePolicies: policyRows.map((row) => ({
         id: row.id,
