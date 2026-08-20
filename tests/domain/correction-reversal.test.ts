@@ -110,6 +110,36 @@ describe("exact transaction reversal", () => {
     expect(() => assertExactReversal(target, batch.postings, reversal.event, flipped)).toThrow(DomainError);
   });
 
+  it("requires a multiset of exact inverses when the target has duplicate postings", () => {
+    const account = accountFixture({ balancePaise: paiseOf(50_000) });
+    const snapshot = snapshotFixture({ accounts: [account] });
+    const { batch } = recordExpense(
+      {
+        occurredOn,
+        capturedAt,
+        accountId: account.id,
+        allocations: [
+          { categoryId: "cat-grocery", amountPaise: paiseOf(500) },
+          { categoryId: "cat-grocery", amountPaise: paiseOf(500) },
+        ],
+      },
+      snapshot,
+    );
+    const target = batch.events[0]!;
+    const reversal = buildTransactionReversal(target, batch.postings, capturedAt);
+    expect(reversal.postings.filter((posting) => posting.pnl === "expense")).toHaveLength(2);
+    expect(() => assertExactReversal(target, batch.postings, reversal.event, reversal.postings.slice(0, 1))).toThrow(
+      DomainError,
+    );
+    expect(() =>
+      assertExactReversal(target, batch.postings, reversal.event, [
+        ...reversal.postings,
+        { ...reversal.postings[0]!, id: "extra" },
+      ]),
+    ).toThrow(DomainError);
+    expect(() => assertExactReversal(target, batch.postings, reversal.event, reversal.postings)).not.toThrow();
+  });
+
   it("does not treat a reversal as income conservation", () => {
     const account = accountFixture({ balancePaise: paiseOf(50_000) });
     const snapshot = snapshotFixture({ accounts: [account] });

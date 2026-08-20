@@ -9,9 +9,21 @@ import { loadSnapshot } from "../../src/db/loadSnapshot.js";
 import { anyDb, tables } from "../../src/db/exec.js";
 import { applyOpening } from "../../src/app/applyOpening.js";
 import { createAccount } from "../../src/app/accounts.js";
+import { createCard } from "../../src/app/cards.js";
+import { createPerson } from "../../src/app/people.js";
 import { recordExpense } from "../../src/app/recordExpense.js";
+import { recordIncome } from "../../src/app/recordIncome.js";
+import { recordCardSpend } from "../../src/app/recordCardSpend.js";
 import { transferMoney } from "../../src/app/transferMoney.js";
+import { applyOpeningReservation } from "../../src/app/openingReservation.js";
+import { applySalaryPolicy } from "../../src/app/salaryPolicy.js";
+import { lendMoney } from "../../src/app/lendMoney.js";
+import { receiveSettlement } from "../../src/app/receiveSettlement.js";
+import { resolveSurplus } from "../../src/app/resolveSurplus.js";
+import { payCard } from "../../src/app/payCard.js";
 import { persistAtomicCorrection } from "../../src/db/persistCorrection.js";
+import { withAccountWriteLocks } from "../../src/db/accountWriteLock.js";
+import { accountAvailability } from "../../src/domain/engine/liquidity.js";
 import { buildTransactionReversal } from "../../src/domain/corrections/reversal.js";
 import { snapshotAfterReversal } from "../../src/domain/corrections/overlay.js";
 import { recordExpense as recordExpenseDomain } from "../../src/domain/commands/recordExpense.js";
@@ -183,6 +195,20 @@ async function persistCorrectionFor(
   });
 }
 
+async function persistLockedCorrectionFor(
+  handles: DbHandles,
+  workspaceId: string,
+  hdfcId: string,
+  groceryId: string,
+  targetEventId: string,
+  commandId: string,
+  amountPaise: number,
+) {
+  return withAccountWriteLocks(handles, workspaceId, [hdfcId], (tx) =>
+    persistCorrectionFor(tx, workspaceId, hdfcId, groceryId, targetEventId, commandId, amountPaise),
+  );
+}
+
 describe("phase 16c0 account-write serialization (sqlite two connections)", () => {
   const cleanup: Array<{ handles: SqliteHandles[]; dir: string }> = [];
 
@@ -236,6 +262,237 @@ describe("phase 16c0 account-write serialization (sqlite two connections)", () =
     const snapshot = await loadSnapshot(ctx.a, ctx.workspaceId);
     expect(snapshot.transactionCorrections).toHaveLength(1);
   });
+
+  it("releases the account gate after a callback throw so a later writer succeeds", async () => {
+    const ctx = await dualSqlite();
+    await expect(
+      withAccountWriteLocks(ctx.a, ctx.workspaceId, [ctx.hdfcId], async () => {
+        throw new Error("account lock boom");
+      }),
+    ).rejects.toThrow(/account lock boom/);
+    await recordExpense(ctx.b, { workspaceId: ctx.workspaceId }, {
+      occurredOn: "2026-08-01",
+      capturedAt,
+      accountId: ctx.hdfcId,
+      allocations: [{ categoryId: ctx.groceryId, amountPaise: 100_00 }],
+      commit: true,
+    });
+    const snapshot = await loadSnapshot(ctx.a, ctx.workspaceId);
+    expect(snapshot.events.filter((event) => event.meaning === "spend_account")).toHaveLength(1);
+  });
+
+  it("releases a two-account lock after a callback throw", async () => {
+    const ctx = await dualSqlite();
+    await expect(
+      withAccountWriteLocks(ctx.a, ctx.workspaceId, [ctx.hdfcId, ctx.cashId], async () => {
+        throw new Error("two account boom");
+      }),
+    ).rejects.toThrow(/two account boom/);
+    await transferMoney(ctx.b, { workspaceId: ctx.workspaceId }, {
+      occurredOn: "2026-08-01",
+      capturedAt,
+      amountPaise: 100_00,
+      fromAccountId: ctx.hdfcId,
+      toAccountId: ctx.cashId,
+      commit: true,
+    });
+  });
+
+  it("serializes a future correction-account lock against a real opening reservation", async () => {
+    const ctx = await dualSqlite();
+    const card = await createCard(ctx.a, { workspaceId: ctx.workspaceId }, {
+      displayName: "ICICI",
+      issuer: "ICICI",
+      mask: "8001",
+      statementDay: 12,
+      dueDaysAfterStatement: 18,
+      defaultPaymentAccountId: ctx.hdfcId,
+    });
+    const original = await recordExpense(ctx.a, { workspaceId: ctx.workspaceId }, {
+      occurredOn: "2026-08-01",
+      capturedAt,
+      accountId: ctx.hdfcId,
+      allocations: [{ categoryId: ctx.groceryId, amountPaise: 1_000_00 }],
+      commit: true,
+    });
+    const results = await Promise.allSettled([
+      persistLockedCorrectionFor(
+        ctx.a,
+        ctx.workspaceId,
+        ctx.hdfcId,
+        ctx.groceryId,
+        original.eventId!,
+        "corr-vs-res",
+        7_000_00,
+      ),
+      applyOpeningReservation(ctx.b, { workspaceId: ctx.workspaceId }, {
+        commandId: "res-vs-corr",
+        occurredOn: "2026-08-05",
+        capturedAt,
+        sourceAccountId: ctx.hdfcId,
+        cardId: card.id,
+        amountPaise: 5_000_00,
+      }),
+    ]);
+    const snapshot = await loadSnapshot(ctx.a, ctx.workspaceId);
+    const reserved = snapshot.reservations.reduce((sum, row) => sum + row.remainingPaise, 0);
+    const spent = snapshot.postings
+      .filter((posting) => posting.pnl === "expense")
+      .reduce((sum, posting) => sum + posting.amountPaise, 0);
+    expect(reserved + spent).toBeLessThanOrEqual(50_000_00);
+    expect(results.filter((result) => result.status === "fulfilled").length).toBeGreaterThanOrEqual(1);
+    expect(accountAvailability(snapshot, ctx.hdfcId).availablePaise).toBeGreaterThanOrEqual(0);
+  });
+
+  it("serializes surplus resolution against a locked future correction", async () => {
+    const ctx = await dualSqlite();
+    const rahul = await createPerson(ctx.a, { workspaceId: ctx.workspaceId }, { name: "Rahul" });
+    await lendMoney(ctx.a, { workspaceId: ctx.workspaceId }, {
+      occurredOn: "2026-08-01",
+      capturedAt,
+      accountId: ctx.hdfcId,
+      personId: rahul.id,
+      amountPaise: 8_000_00,
+      commit: true,
+    });
+    const claim = (await loadSnapshot(ctx.a, ctx.workspaceId)).claims[0];
+    if (!claim) throw new Error("missing claim");
+    await receiveSettlement(ctx.a, { workspaceId: ctx.workspaceId }, {
+      occurredOn: "2026-08-01",
+      capturedAt,
+      accountId: ctx.hdfcId,
+      personId: rahul.id,
+      amountPaise: 8_000_00,
+      allocations: [{ claimId: claim.id, amountPaise: 1_000_00 }],
+      commit: true,
+    });
+    const surplus = (await loadSnapshot(ctx.a, ctx.workspaceId)).surplusCases[0];
+    if (!surplus) throw new Error("missing surplus");
+    const original = await recordExpense(ctx.a, { workspaceId: ctx.workspaceId }, {
+      occurredOn: "2026-08-01",
+      capturedAt,
+      accountId: ctx.hdfcId,
+      allocations: [{ categoryId: ctx.groceryId, amountPaise: 500_00 }],
+      commit: true,
+    });
+    const results = await Promise.allSettled([
+      persistLockedCorrectionFor(
+        ctx.a,
+        ctx.workspaceId,
+        ctx.hdfcId,
+        ctx.groceryId,
+        original.eventId!,
+        "corr-vs-surplus",
+        4_000_00,
+      ),
+      resolveSurplus(ctx.b, { workspaceId: ctx.workspaceId }, {
+        surplusCaseId: surplus.id,
+        resolution: "treat_as_mine_correction",
+        confirmed: true,
+        occurredOn: "2026-08-20",
+        capturedAt: "2026-08-20T10:00:00.000Z",
+        commit: true,
+      }),
+    ]);
+    const snapshot = await loadSnapshot(ctx.a, ctx.workspaceId);
+    expect(accountAvailability(snapshot, ctx.hdfcId).availablePaise).toBeGreaterThanOrEqual(0);
+    const spent = snapshot.postings
+      .filter((posting) => posting.pnl === "expense")
+      .reduce((sum, posting) => sum + posting.amountPaise, 0);
+    const pending = snapshot.surplusCases
+      .filter((item) => item.status === "pending")
+      .reduce((sum, item) => sum + item.amountPaise, 0);
+    expect(spent + pending).toBeLessThanOrEqual(50_000_00);
+    expect(results.some((result) => result.status === "fulfilled")).toBe(true);
+  });
+
+  it("composes card→account payCard with a concurrent account writer without deadlock", async () => {
+    const ctx = await dualSqlite();
+    const card = await createCard(ctx.a, { workspaceId: ctx.workspaceId }, {
+      displayName: "Axis",
+      issuer: "Axis",
+      mask: "4321",
+      statementDay: 12,
+      dueDaysAfterStatement: 18,
+      defaultPaymentAccountId: ctx.hdfcId,
+    });
+    await recordCardSpend(ctx.a, { workspaceId: ctx.workspaceId }, {
+      occurredOn: "2026-08-05",
+      capturedAt,
+      creditCardId: card.id,
+      allocations: [{ categoryId: ctx.groceryId, amountPaise: 1_000_00 }],
+      commit: true,
+    });
+    const cycle = (await loadSnapshot(ctx.a, ctx.workspaceId)).billingCycles.find((row) => row.creditCardId === card.id);
+    if (!cycle) throw new Error("missing cycle");
+    const results = await Promise.allSettled([
+      payCard(ctx.a, { workspaceId: ctx.workspaceId }, {
+        occurredOn: "2026-08-22",
+        capturedAt,
+        creditCardId: card.id,
+        billingCycleId: cycle.id,
+        accountId: ctx.hdfcId,
+        amountPaise: 1_000_00,
+        commit: true,
+      }),
+      recordExpense(ctx.b, { workspaceId: ctx.workspaceId }, {
+        occurredOn: "2026-08-01",
+        capturedAt,
+        accountId: ctx.hdfcId,
+        allocations: [{ categoryId: ctx.groceryId, amountPaise: 2_000_00 }],
+        commit: true,
+      }),
+    ]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(2);
+    const snapshot = await loadSnapshot(ctx.a, ctx.workspaceId);
+    expect(accountAvailability(snapshot, ctx.hdfcId).availablePaise).toBeGreaterThanOrEqual(0);
+  });
+
+  it("composes workspace→account salary receipt with a concurrent account writer", async () => {
+    const ctx = await dualSqlite();
+    await applySalaryPolicy(ctx.a, { workspaceId: ctx.workspaceId }, {
+      expectedAmountPaise: 7_920_000,
+      windowStartDay: 4,
+      typicalDay: 5,
+      windowEndDay: 8,
+      effectiveFrom: "2026-08-01",
+    });
+    const results = await Promise.allSettled([
+      recordIncome(ctx.a, { workspaceId: ctx.workspaceId }, {
+        commandId: "salary-lock-comp",
+        occurredOn: "2026-08-05",
+        capturedAt,
+        accountId: ctx.hdfcId,
+        amountPaise: 8_020_000,
+        kind: "salary",
+        expectedYear: 2026,
+        expectedMonth: 8,
+        commit: true,
+      }),
+      recordExpense(ctx.b, { workspaceId: ctx.workspaceId }, {
+        occurredOn: "2026-08-01",
+        capturedAt,
+        accountId: ctx.hdfcId,
+        allocations: [{ categoryId: ctx.groceryId, amountPaise: 1_000_00 }],
+        commit: true,
+      }),
+    ]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(2);
+    const replay = await recordIncome(ctx.a, { workspaceId: ctx.workspaceId }, {
+      commandId: "salary-lock-comp",
+      occurredOn: "2026-08-05",
+      capturedAt,
+      accountId: ctx.hdfcId,
+      amountPaise: 8_020_000,
+      kind: "salary",
+      expectedYear: 2026,
+      expectedMonth: 8,
+      commit: true,
+    });
+    expect(replay.eventId).toBe("salary-lock-comp");
+    const snapshot = await loadSnapshot(ctx.a, ctx.workspaceId);
+    expect(snapshot.events.filter((event) => event.meaning === "income")).toHaveLength(1);
+  });
 });
 
 describePg("phase 16c0 account-write serialization (postgres)", { timeout: 120_000 }, () => {
@@ -287,5 +544,21 @@ describePg("phase 16c0 account-write serialization (postgres)", { timeout: 120_0
     expect(losses).toHaveLength(1);
     const snapshot = await loadSnapshot(ctx.a, ctx.workspaceId);
     expect(snapshot.transactionCorrections).toHaveLength(1);
+  });
+
+  it("releases the account gate after a callback throw so a later writer succeeds", async () => {
+    const ctx = await dualPg();
+    await expect(
+      withAccountWriteLocks(ctx.a, ctx.workspaceId, [ctx.hdfcId], async () => {
+        throw new Error("account lock boom");
+      }),
+    ).rejects.toThrow(/account lock boom/);
+    await recordExpense(ctx.b, { workspaceId: ctx.workspaceId }, {
+      occurredOn: "2026-08-01",
+      capturedAt,
+      accountId: ctx.hdfcId,
+      allocations: [{ categoryId: ctx.groceryId, amountPaise: 100_00 }],
+      commit: true,
+    });
   });
 });

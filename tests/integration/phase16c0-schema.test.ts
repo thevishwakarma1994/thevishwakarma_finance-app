@@ -53,6 +53,48 @@ describe("phase 16c0 transaction_corrections schema (sqlite)", () => {
     expect(() =>
       insert.run(newId(), workspaceId, "cmd-c", eventIds[3], eventIds[1], eventIds[1], eventIds[3]),
     ).toThrow();
+    expect(() =>
+      insert.run(newId(), workspaceId, "cmd-d", eventIds[0], eventIds[3], eventIds[0], eventIds[2]),
+    ).toThrow();
+  });
+
+  it("rejects a correction that points at another workspace's events", async () => {
+    handles = await sqliteSetup();
+    const workspaceId = await getSoleWorkspaceId(handles);
+    const otherWorkspaceId = newId();
+    handles.sqlite
+      .prepare("INSERT INTO workspaces (id, name, created_at) VALUES (?, 'other', '2026-08-01T00:00:00.000Z')")
+      .run(otherWorkspaceId);
+    const localIds = [newId(), newId(), newId()];
+    const foreignId = newId();
+    for (const id of localIds) {
+      handles.sqlite
+        .prepare(
+          `INSERT INTO financial_events (id, workspace_id, meaning, occurred_on, captured_at, amount_paise)
+           VALUES (?, ?, 'spend_account', '2026-08-01', '2026-08-01T00:00:00.000Z', 100)`,
+        )
+        .run(id, workspaceId);
+    }
+    handles.sqlite
+      .prepare(
+        `INSERT INTO financial_events (id, workspace_id, meaning, occurred_on, captured_at, amount_paise)
+         VALUES (?, ?, 'spend_account', '2026-08-01', '2026-08-01T00:00:00.000Z', 100)`,
+      )
+      .run(foreignId, otherWorkspaceId);
+    const insert = handles.sqlite.prepare(`
+      INSERT INTO transaction_corrections (
+        id, workspace_id, command_id, root_event_id, target_event_id, reversal_event_id, replacement_event_id,
+        corrected_on, captured_at, reason
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, '2026-08-20', '2026-08-20T00:00:00.000Z', null)
+    `);
+    expect(() =>
+      insert.run(newId(), workspaceId, "cmd-cross", localIds[0], localIds[0], localIds[1], foreignId),
+    ).toThrow();
+    expect(() =>
+      insert.run(newId(), otherWorkspaceId, "cmd-cross-ws", localIds[0], localIds[0], localIds[1], localIds[2]),
+    ).toThrow();
+    const count = handles.sqlite.prepare("SELECT COUNT(*) AS n FROM transaction_corrections").get() as { n: number };
+    expect(count.n).toBe(0);
   });
 });
 
@@ -115,6 +157,72 @@ describePg("phase 16c0 transaction_corrections schema (postgres)", { timeout: 60
         targetEventId: eventIds[0]!,
         reversalEventId: eventIds[2]!,
         replacementEventId: eventIds[1]!,
+        correctedOn: "2026-08-20",
+        capturedAt: "2026-08-20T00:00:00.000Z",
+        reason: null,
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("rejects a correction that points at another workspace's events", async () => {
+    handles = openPostgresDatabase(postgresUrl);
+    await applyPostgresMigrations(handles);
+    await truncatePostgresData(handles);
+    const workspaceId = newId();
+    const otherWorkspaceId = newId();
+    const t = tables(handles);
+    const db = anyDb(handles);
+    await db.insert(t.workspaces).values([
+      { id: workspaceId, name: "pg-16c0", createdAt: utcNowIso() },
+      { id: otherWorkspaceId, name: "pg-other", createdAt: utcNowIso() },
+    ]);
+    const localIds = [newId(), newId(), newId()];
+    const foreignId = newId();
+    for (const id of localIds) {
+      await db.insert(t.financialEvents).values({
+        id,
+        workspaceId,
+        meaning: "spend_account",
+        occurredOn: "2026-08-01",
+        capturedAt: "2026-08-01T00:00:00.000Z",
+        amountPaise: 100,
+        accountId: null,
+        creditCardId: null,
+        billingCycleId: null,
+        obligationInstanceId: null,
+        categoryId: null,
+        channel: null,
+        merchant: null,
+        notes: null,
+        reversalOfEventId: null,
+      });
+    }
+    await db.insert(t.financialEvents).values({
+      id: foreignId,
+      workspaceId: otherWorkspaceId,
+      meaning: "spend_account",
+      occurredOn: "2026-08-01",
+      capturedAt: "2026-08-01T00:00:00.000Z",
+      amountPaise: 100,
+      accountId: null,
+      creditCardId: null,
+      billingCycleId: null,
+      obligationInstanceId: null,
+      categoryId: null,
+      channel: null,
+      merchant: null,
+      notes: null,
+      reversalOfEventId: null,
+    });
+    await expect(
+      db.insert(t.transactionCorrections).values({
+        id: newId(),
+        workspaceId,
+        commandId: "cmd-cross",
+        rootEventId: localIds[0]!,
+        targetEventId: localIds[0]!,
+        reversalEventId: localIds[1]!,
+        replacementEventId: foreignId,
         correctedOn: "2026-08-20",
         capturedAt: "2026-08-20T00:00:00.000Z",
         reason: null,

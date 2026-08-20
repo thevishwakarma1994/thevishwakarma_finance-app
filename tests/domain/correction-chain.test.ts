@@ -72,7 +72,34 @@ describe("correction chain", () => {
     ).toThrow(DomainError);
   });
 
-  it("rejects a replacement that already exists in the chain", () => {
+  it("rejects a reversal that already exists in the chain", () => {
+    const first = correction({
+      targetEventId: "orig",
+      reversalEventId: "rev-1",
+      replacementEventId: "rep-1",
+    });
+    expect(() =>
+      assertNewCorrectionLink([first], {
+        rootEventId: "orig",
+        targetEventId: "rep-1",
+        reversalEventId: "rev-1",
+        replacementEventId: "rep-2",
+      }),
+    ).toThrow(DomainError);
+  });
+
+  it("rejects a root/replacement collision", () => {
+    expect(() =>
+      assertNewCorrectionLink([], {
+        rootEventId: "orig",
+        targetEventId: "orig",
+        reversalEventId: "rev-1",
+        replacementEventId: "orig",
+      }),
+    ).toThrow(DomainError);
+  });
+
+  it("rejects a cycle attempt that reuses the original as replacement", () => {
     const first = correction({
       targetEventId: "orig",
       reversalEventId: "rev-1",
@@ -86,6 +113,31 @@ describe("correction chain", () => {
         replacementEventId: "orig",
       }),
     ).toThrow(DomainError);
+  });
+
+  it("fails a broken persisted chain with a domain error", () => {
+    const broken = [
+      correction({
+        targetEventId: "orig",
+        reversalEventId: "rev-1",
+        replacementEventId: "rep-1",
+      }),
+      correction({
+        id: "corr-2",
+        commandId: "cmd-2",
+        targetEventId: "not-the-leaf",
+        reversalEventId: "rev-2",
+        replacementEventId: "rep-2",
+        capturedAt: "2026-08-21T10:00:00.000Z",
+      }),
+    ];
+    expect(() => correctionHistory(broken, "orig")).toThrow(DomainError);
+    try {
+      correctionHistory(broken, "orig");
+    } catch (error) {
+      expect(error).toBeInstanceOf(DomainError);
+      expect((error as DomainError).code).toBe("stale_correction_target");
+    }
   });
 });
 
