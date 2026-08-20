@@ -1,6 +1,7 @@
 import type { EntityId } from "../ids.js";
 import type { IsoDate } from "../calendar/isoDate.js";
 import type { Paise } from "../money/paise.js";
+import type { TransactionCorrectionRecord } from "../corrections/types.js";
 
 export const EVENT_MEANINGS = [
   "spend_account",
@@ -21,6 +22,7 @@ export const EVENT_MEANINGS = [
   "correct_opening_claim",
   "apply_opening_reservation",
   "correct_opening_reservation",
+  "transaction_reversal",
 ] as const;
 
 export type EventMeaning = (typeof EVENT_MEANINGS)[number];
@@ -462,6 +464,7 @@ export type LedgerSnapshot = {
   surplusCases: SurplusCaseRecord[];
   events: FinancialEvent[];
   postings: Posting[];
+  transactionCorrections: TransactionCorrectionRecord[];
   openings: OpeningPosition[];
   incomePolicies: IncomePolicy[];
   fundingCycles: FundingCycleRecord[];
@@ -493,6 +496,7 @@ export type ConsequencePreview = {
 export type ProposedBatch = {
   events: FinancialEvent[];
   postings: Posting[];
+  transactionCorrections?: TransactionCorrectionRecord[];
   openings: OpeningPosition[];
   billingCycles?: BillingCycleRecord[];
   claims?: ClaimRecord[];

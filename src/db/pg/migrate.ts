@@ -121,6 +121,7 @@ export async function applyPostgresMigrations(
 }
 
 const DATA_TABLES = [
+  "transaction_corrections",
   "obligation_instances",
   "obligation_templates",
   "funding_cycles",

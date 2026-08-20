@@ -73,6 +73,14 @@ export {
 } from "./commands/recordObligationPayment.js";
 export { generateObligationInstances, INSTANCE_GENERATION_MONTHS_BACK, INSTANCE_GENERATION_MONTHS_FORWARD } from "./obligations/generate.js";
 export { comingUpItems, filterComingUp } from "./engine/comingUp.js";
+export {
+  classifyCorrectionCandidate,
+  buildTransactionReversal,
+  assertExactReversal,
+  correctionHistory,
+  currentEffectiveLeafId,
+  snapshotAfterReversal,
+} from "./corrections/index.js";
 export { personPosition, type PersonPosition } from "./people/position.js";
 export { accountAvailability, requireAvailable } from "./engine/liquidity.js";
 export { evaluateSafeToSpend, inThisNumberTotal } from "./engine/evaluateSafeToSpend.js";

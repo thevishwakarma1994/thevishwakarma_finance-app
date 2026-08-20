@@ -21,6 +21,7 @@ export function cloneSnapshot(snapshot: LedgerSnapshot): LedgerSnapshot {
     surplusCases: snapshot.surplusCases.map((item) => ({ ...item })),
     events: snapshot.events.map((item) => ({ ...item })),
     postings: snapshot.postings.map((item) => ({ ...item })),
+    transactionCorrections: snapshot.transactionCorrections.map((item) => ({ ...item })),
     openings: snapshot.openings.map((item) => ({ ...item })),
     incomePolicies: snapshot.incomePolicies.map((item) => ({ ...item })),
     fundingCycles: snapshot.fundingCycles.map((item) => ({ ...item })),
@@ -40,6 +41,9 @@ export function applyBatchOverlay(
   const next = cloneSnapshot(snapshot);
   next.events = [...next.events, ...batch.events];
   next.postings = [...next.postings, ...batch.postings];
+  if (batch.transactionCorrections) {
+    next.transactionCorrections = [...next.transactionCorrections, ...batch.transactionCorrections];
+  }
   next.openings = [...next.openings, ...batch.openings];
   if (batch.eventShares) next.eventShares = [...next.eventShares, ...batch.eventShares];
   if (batch.settlementAllocations) {

@@ -159,6 +159,18 @@ function mappedRows(workspaceId: string, batch: ProposedBatch) {
     })),
     fundingCycleUpdates: batch.fundingCycleUpdates ?? [],
     obligationInstanceUpdates: batch.obligationInstanceUpdates ?? [],
+    transactionCorrections: (batch.transactionCorrections ?? []).map((item) => ({
+      id: item.id,
+      workspaceId,
+      commandId: item.commandId,
+      rootEventId: item.rootEventId,
+      targetEventId: item.targetEventId,
+      reversalEventId: item.reversalEventId,
+      replacementEventId: item.replacementEventId,
+      correctedOn: item.correctedOn,
+      capturedAt: item.capturedAt,
+      reason: item.reason,
+    })),
     postings: batch.postings.map((posting) => ({
       id: posting.id,
       workspaceId,
@@ -249,6 +261,9 @@ function persistBatchSqlite(handles: SqliteHandles, workspaceId: string, batch: 
         .run();
     }
     if (rows.postings.length > 0) anyDb(handles).insert(t.postings).values(rows.postings).run();
+    if (rows.transactionCorrections.length > 0) {
+      anyDb(handles).insert(t.transactionCorrections).values(rows.transactionCorrections).run();
+    }
   };
   withSqliteTransaction(handles, write);
 }
@@ -320,7 +335,27 @@ async function persistBatchPostgres(
         .where(eq(t.obligationInstances.id, patch.id));
     }
     if (rows.postings.length > 0) await db.insert(t.postings).values(rows.postings);
+    if (rows.transactionCorrections.length > 0) {
+      await db.insert(t.transactionCorrections).values(rows.transactionCorrections);
+    }
   });
+}
+
+function writePreparedBatch(handles: DbHandles, workspaceId: string, batch: ProposedBatch): Promise<void> | void {
+  if (handles.dialect === "sqlite") {
+    persistBatchSqlite(handles, workspaceId, batch);
+    return;
+  }
+  return persistBatchPostgres(handles, workspaceId, batch);
+}
+
+/** Internal persist after the caller has already validated conservation. */
+export async function persistPreparedBatch(
+  handles: DbHandles,
+  workspaceId: string,
+  batch: ProposedBatch,
+): Promise<void> {
+  await writePreparedBatch(handles, workspaceId, batch);
 }
 
 export async function persistBatch(
@@ -329,11 +364,7 @@ export async function persistBatch(
   batch: ProposedBatch,
 ): Promise<void> {
   assertPersistable(batch);
-  if (handles.dialect === "sqlite") {
-    persistBatchSqlite(handles, workspaceId, batch);
-    return;
-  }
-  await persistBatchPostgres(handles, workspaceId, batch);
+  await writePreparedBatch(handles, workspaceId, batch);
 }
 
 export type StatementConfirmationPatch = {

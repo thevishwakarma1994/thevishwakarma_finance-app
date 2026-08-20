@@ -4,6 +4,7 @@ import {
   type EventMeaning,
   type ProposedBatch,
 } from "../ledger/types.js";
+import { assertExactReversal } from "../corrections/reversal.js";
 
 function accountDeltas(batch: ProposedBatch): Paise {
   return sumPaise(
@@ -58,6 +59,25 @@ export function assertConservation(
 ): void {
   const events = batch.events.filter((event) => event.meaning === meaning);
   if (events.length === 0 && meaning !== "income" && meaning !== "spend_account") {
+    return;
+  }
+
+  if (meaning === "transaction_reversal") {
+    for (const reversal of events) {
+      if (!reversal.reversalOfEventId) {
+        throw new DomainError("conservation_reversal", "Reversal must reference its target transaction");
+      }
+      const target = batch.events.find((event) => event.id === reversal.reversalOfEventId);
+      const reversalPostings = batch.postings.filter((posting) => posting.eventId === reversal.id);
+      if (!target) {
+        throw new DomainError(
+          "conservation_reversal",
+          "Reversal conservation requires the target event in the same batch",
+        );
+      }
+      const targetPostings = batch.postings.filter((posting) => posting.eventId === target.id);
+      assertExactReversal(target, targetPostings, reversal, reversalPostings);
+    }
     return;
   }
 

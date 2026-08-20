@@ -205,6 +205,7 @@ export function snapshotFixture(overrides: Partial<LedgerSnapshot> = {}): Ledger
     surplusCases: overrides.surplusCases ?? [],
     events: overrides.events ?? [],
     postings: overrides.postings ?? [],
+    transactionCorrections: overrides.transactionCorrections ?? [],
     openings: overrides.openings ?? [],
     incomePolicies: overrides.incomePolicies ?? [incomePolicyFixture()],
     fundingCycles: overrides.fundingCycles ?? [],

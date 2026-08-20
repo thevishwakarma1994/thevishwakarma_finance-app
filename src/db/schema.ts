@@ -469,6 +469,45 @@ export const obligationInstances = sqliteTable(
   ],
 );
 
+export const transactionCorrections = sqliteTable(
+  "transaction_corrections",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id),
+    commandId: text("command_id").notNull(),
+    rootEventId: text("root_event_id")
+      .notNull()
+      .references(() => financialEvents.id),
+    targetEventId: text("target_event_id")
+      .notNull()
+      .references(() => financialEvents.id),
+    reversalEventId: text("reversal_event_id")
+      .notNull()
+      .references(() => financialEvents.id),
+    replacementEventId: text("replacement_event_id")
+      .notNull()
+      .references(() => financialEvents.id),
+    correctedOn: text("corrected_on").notNull(),
+    capturedAt: text("captured_at").notNull(),
+    reason: text("reason"),
+  },
+  (table) => [
+    uniqueIndex("transaction_corrections_command_id").on(table.commandId),
+    uniqueIndex("transaction_corrections_target_event_id").on(table.targetEventId),
+    uniqueIndex("transaction_corrections_reversal_event_id").on(table.reversalEventId),
+    uniqueIndex("transaction_corrections_replacement_event_id").on(table.replacementEventId),
+    index("transaction_corrections_workspace_root_captured").on(
+      table.workspaceId,
+      table.rootEventId,
+      table.capturedAt,
+    ),
+    index("transaction_corrections_workspace_replacement").on(table.workspaceId, table.replacementEventId),
+    index("transaction_corrections_workspace_corrected_on").on(table.workspaceId, table.correctedOn),
+  ],
+);
+
 export const schema = {
   workspaces,
   users,
@@ -492,4 +531,5 @@ export const schema = {
   fundingCycles,
   obligationTemplates,
   obligationInstances,
+  transactionCorrections,
 };
