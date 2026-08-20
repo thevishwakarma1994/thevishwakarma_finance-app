@@ -95,6 +95,21 @@ describe("canonical 16C1 correction payload", () => {
     ).toBe(false);
   });
 
+  it("normalizes blank other-income notes and reason", () => {
+    const income = canonicalizeOtherIncomeCorrectionPayload({
+      family: "other_income",
+      rootEventId: "root",
+      targetEventId: "root",
+      amountPaise: 5_000_00,
+      sourceAccountId: "acc",
+      occurredOn: "2026-08-01",
+      notes: "   ",
+      reason: undefined,
+    });
+    expect(income.notes).toBeNull();
+    expect(income.reason).toBeNull();
+  });
+
   it("does not derive reversal/replacement ids from the command id", () => {
     const first = newCorrectionArtifactIds();
     const second = newCorrectionArtifactIds();
