@@ -81,6 +81,7 @@ export {
   currentEffectiveLeafId,
   snapshotAfterReversal,
   assertEligibleExpenseCorrection,
+  assertEligibleOtherIncomeCorrection,
   expenseCorrectionRefusalCopy,
 } from "./corrections/index.js";
 export {
@@ -90,6 +91,13 @@ export {
   type ExpenseCorrectionPreview,
   type ExpenseCorrectionSideView,
 } from "./commands/correctExpense.js";
+export {
+  correctOtherIncome,
+  type CorrectOtherIncomeInput,
+  type PreparedOtherIncomeCorrection,
+  type OtherIncomeCorrectionPreview,
+  type OtherIncomeCorrectionSideView,
+} from "./commands/correctOtherIncome.js";
 export { personPosition, type PersonPosition } from "./people/position.js";
 export { accountAvailability, requireAvailable } from "./engine/liquidity.js";
 export { evaluateSafeToSpend, inThisNumberTotal } from "./engine/evaluateSafeToSpend.js";

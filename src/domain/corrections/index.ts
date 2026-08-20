@@ -15,8 +15,10 @@ export {
 export {
   classifyCorrectionCandidate,
   assertCorrectionAvailability,
+  assertCorrectionFinalLiquidity,
   assertEventIsCorrectableLeaf,
   assertEligibleExpenseCorrection,
+  assertEligibleOtherIncomeCorrection,
   expenseCorrectionRefusalCopy,
   type CorrectionEligibility,
   type CorrectionFamily,

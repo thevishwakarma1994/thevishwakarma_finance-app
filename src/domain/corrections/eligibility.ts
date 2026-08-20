@@ -1,6 +1,6 @@
 import { paise, sumPaise } from "../money/paise.js";
 import { DomainError, type FinancialEvent, type LedgerSnapshot, type Posting } from "../ledger/types.js";
-import { requireAvailable } from "../engine/liquidity.js";
+import { accountAvailability, requireAvailable } from "../engine/liquidity.js";
 import {
   correctionRootId,
   currentEffectiveLeafId,
@@ -218,16 +218,51 @@ export function expenseCorrectionRefusalCopy(reason: CorrectionIneligibilityReas
   }
 }
 
-/** 16C1 expense correction only. Other-income stays foundation-only. */
+function throwClassifiedIneligibility(classified: Extract<CorrectionEligibility, { ok: false }>): never {
+  if (classified.code === "stale_correction_target") {
+    throw new DomainError("stale_correction_target", "This transaction was already corrected");
+  }
+  throw new DomainError("transaction_not_correctable", expenseCorrectionRefusalCopy(classified.reason));
+}
+
+/** 16C1 expense correction only. */
 export function assertEligibleExpenseCorrection(event: FinancialEvent, snapshot: LedgerSnapshot): void {
   const classified = classifyCorrectionCandidate(event, snapshot);
-  if (!classified.ok) {
-    if (classified.code === "stale_correction_target") {
-      throw new DomainError("stale_correction_target", "This transaction was already corrected");
-    }
-    throw new DomainError("transaction_not_correctable", expenseCorrectionRefusalCopy(classified.reason));
-  }
+  if (!classified.ok) throwClassifiedIneligibility(classified);
   if (classified.family !== "expense") {
     throw new DomainError("transaction_not_correctable", "This transaction can’t be corrected.");
+  }
+}
+
+/** 16C2 other-income correction only. Salary remains ineligible. */
+export function assertEligibleOtherIncomeCorrection(event: FinancialEvent, snapshot: LedgerSnapshot): void {
+  const classified = classifyCorrectionCandidate(event, snapshot);
+  if (!classified.ok) throwClassifiedIneligibility(classified);
+  if (classified.family !== "other_income") {
+    throw new DomainError("transaction_not_correctable", "This transaction can’t be corrected.");
+  }
+}
+
+/**
+ * After reversal + replacement overlay, every account that lost money must
+ * still have balance >= 0 and reservation/surplus-aware available >= 0.
+ */
+export function assertCorrectionFinalLiquidity(
+  snapshot: LedgerSnapshot,
+  negativelyAffectedAccountIds: readonly string[],
+): void {
+  for (const accountId of [...new Set(negativelyAffectedAccountIds)].sort((left, right) =>
+    left.localeCompare(right),
+  )) {
+    const availability = accountAvailability(snapshot, accountId);
+    if (availability.balancePaise < 0) {
+      throw new DomainError("insufficient_available", "There is not enough money available in this account");
+    }
+    if (availability.availablePaise < 0) {
+      throw new DomainError(
+        "correction_would_use_reserved_money",
+        "This change would use money that is reserved or waiting for review",
+      );
+    }
   }
 }

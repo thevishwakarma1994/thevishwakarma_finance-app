@@ -27,6 +27,7 @@ import { fromStoredPaise } from "./storedPaise.js";
 import { activityIdentityFor, shouldShowInOrdinaryActivity, transactionDetailFromSnapshot } from "../domain/corrections/activity.js";
 import { classifyCorrectionCandidate, expenseCorrectionRefusalCopy } from "../domain/corrections/eligibility.js";
 import { expenseSideView } from "../domain/commands/correctExpense.js";
+import { otherIncomeSideView } from "../domain/commands/correctOtherIncome.js";
 import { addDbQueries, timedPerf, timedPerfSync } from "../perf/timing.js";
 
 export async function listAccounts(handles: DbHandles, workspaceId: string) {
@@ -329,9 +330,14 @@ export async function publicTransactionDetail(
   const snapshot = await loadSnapshot(handles, workspaceId, asOf);
   const detail = transactionDetailFromSnapshot(snapshot, eventId);
   if (!detail) return null;
-  const effective = expenseSideView(detail.effectiveEvent, snapshot);
+  const sideView =
+    detail.effectiveEvent.meaning === "income"
+      ? otherIncomeSideView
+      : expenseSideView;
+  const effective = sideView(detail.effectiveEvent, snapshot);
   const classified = classifyCorrectionCandidate(detail.effectiveEvent, snapshot);
-  const canCorrect = classified.ok && classified.family === "expense";
+  const canCorrect =
+    classified.ok && (classified.family === "expense" || classified.family === "other_income");
   return {
     meaning: detail.effectiveEvent.meaning,
     occurredOn: effective.occurredOn,
@@ -344,6 +350,7 @@ export async function publicTransactionDetail(
     corrected: detail.correctionCount > 0,
     correctionCount: detail.correctionCount,
     canCorrect,
+    correctionFamily: classified.ok ? classified.family : null,
     refusalReason: canCorrect
       ? null
       : classified.ok
@@ -355,8 +362,8 @@ export async function publicTransactionDetail(
       correctedOn: step.correction.correctedOn,
       capturedAt: step.correction.capturedAt,
       reason: step.correction.reason,
-      previous: expenseSideView(step.targetEvent, snapshot),
-      next: expenseSideView(step.replacementEvent, snapshot),
+      previous: sideView(step.targetEvent, snapshot),
+      next: sideView(step.replacementEvent, snapshot),
     })),
   };
 }

@@ -5,6 +5,7 @@ import { applyOpening } from "../../app/applyOpening.js";
 import { recordIncome } from "../../app/recordIncome.js";
 import { recordExpense } from "../../app/recordExpense.js";
 import { correctExpenseTransaction } from "../../app/correctExpense.js";
+import { correctOtherIncomeTransaction } from "../../app/correctOtherIncome.js";
 import { transferMoney } from "../../app/transferMoney.js";
 import { recordCardSpend } from "../../app/recordCardSpend.js";
 import { recordSplit } from "../../app/recordSplit.js";
@@ -103,6 +104,20 @@ commandRoutes.post("/commands/expense/correct", async (c) => {
   try {
     const body = (await c.req.json()) as Record<string, unknown>;
     const result = await correctExpenseTransaction(c.get("handles"), { workspaceId: c.get("workspaceId") }, {
+      ...body,
+      capturedAt: typeof body.capturedAt === "string" ? body.capturedAt : utcNowIso(),
+    });
+    return c.json(result);
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+commandRoutes.post("/commands/income/correct", async (c) => {
+  try {
+    const body = (await c.req.json()) as Record<string, unknown>;
+    const result = await correctOtherIncomeTransaction(c.get("handles"), { workspaceId: c.get("workspaceId") }, {
       ...body,
       capturedAt: typeof body.capturedAt === "string" ? body.capturedAt : utcNowIso(),
     });
