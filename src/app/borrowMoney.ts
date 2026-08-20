@@ -7,6 +7,7 @@ import { persistBatch } from "../db/persistBatch.js";
 import type { DbHandles } from "../db/client.js";
 import type { WorkspaceContext } from "./context.js";
 import { assertWorkspaceOwned } from "./ownership.js";
+import { withAccountWriteLocks } from "../db/accountWriteLock.js";
 
 const inputSchema = z.object({
   occurredOn: z.string(),
@@ -24,31 +25,38 @@ export async function borrowMoney(
   raw: unknown,
 ) {
   const input = inputSchema.parse(raw);
-  await assertWorkspaceOwned(handles, context.workspaceId, [
-    { type: "account", id: input.accountId },
-    { type: "person", id: input.personId },
-  ]);
-  const occurredOn = isoDate(input.occurredOn);
-  const snapshot = await loadSnapshot(handles, context.workspaceId, occurredOn);
-  const result = borrowMoneyDomain(
-    {
-      occurredOn,
-      capturedAt: input.capturedAt,
-      accountId: input.accountId,
-      personId: input.personId,
-      amountPaise: paise(input.amountPaise),
-      notes: input.notes,
-    },
-    snapshot,
-  );
+  const run = async (tx: DbHandles) => {
+    await assertWorkspaceOwned(tx, context.workspaceId, [
+      { type: "account", id: input.accountId },
+      { type: "person", id: input.personId },
+    ]);
+    const occurredOn = isoDate(input.occurredOn);
+    const snapshot = await loadSnapshot(tx, context.workspaceId, occurredOn);
+    const result = borrowMoneyDomain(
+      {
+        occurredOn,
+        capturedAt: input.capturedAt,
+        accountId: input.accountId,
+        personId: input.personId,
+        amountPaise: paise(input.amountPaise),
+        notes: input.notes,
+      },
+      snapshot,
+    );
 
-  if (input.commit) {
-    await persistBatch(handles, context.workspaceId, result.batch);
-  }
+    if (input.commit) {
+      await persistBatch(tx, context.workspaceId, result.batch);
+    }
 
-  return {
-    preview: result.preview,
-    eventId: result.batch.events[0]?.id ?? null,
-    committed: input.commit,
+    return {
+      preview: result.preview,
+      eventId: result.batch.events[0]?.id ?? null,
+      committed: input.commit,
+    };
   };
+
+  if (!input.commit) {
+    return run(handles);
+  }
+  return withAccountWriteLocks(handles, context.workspaceId, [input.accountId], run);
 }

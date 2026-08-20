@@ -7,6 +7,7 @@ import { persistBatch } from "../db/persistBatch.js";
 import type { DbHandles } from "../db/client.js";
 import type { WorkspaceContext } from "./context.js";
 import { assertWorkspaceOwned } from "./ownership.js";
+import { withAccountWriteLocks } from "../db/accountWriteLock.js";
 
 const inputSchema = z.object({
   occurredOn: z.string(),
@@ -32,34 +33,41 @@ export async function recordExpense(
   raw: unknown,
 ) {
   const input = inputSchema.parse(raw);
-  await assertWorkspaceOwned(handles, context.workspaceId, [
-    { type: "account", id: input.accountId },
-    ...input.allocations.map((allocation) => ({ type: "category" as const, id: allocation.categoryId })),
-  ]);
-  const snapshot = await loadSnapshot(handles, context.workspaceId);
-  const result = recordExpenseDomain(
-    {
-      occurredOn: isoDate(input.occurredOn),
-      capturedAt: input.capturedAt,
-      accountId: input.accountId,
-      allocations: input.allocations.map((allocation) => ({
-        categoryId: allocation.categoryId,
-        amountPaise: paise(allocation.amountPaise),
-      })),
-      merchant: input.merchant,
-      notes: input.notes,
-      channel: input.channel,
-    },
-    snapshot,
-  );
+  const run = async (tx: DbHandles) => {
+    await assertWorkspaceOwned(tx, context.workspaceId, [
+      { type: "account", id: input.accountId },
+      ...input.allocations.map((allocation) => ({ type: "category" as const, id: allocation.categoryId })),
+    ]);
+    const snapshot = await loadSnapshot(tx, context.workspaceId);
+    const result = recordExpenseDomain(
+      {
+        occurredOn: isoDate(input.occurredOn),
+        capturedAt: input.capturedAt,
+        accountId: input.accountId,
+        allocations: input.allocations.map((allocation) => ({
+          categoryId: allocation.categoryId,
+          amountPaise: paise(allocation.amountPaise),
+        })),
+        merchant: input.merchant,
+        notes: input.notes,
+        channel: input.channel,
+      },
+      snapshot,
+    );
 
-  if (input.commit) {
-    await persistBatch(handles, context.workspaceId, result.batch);
-  }
+    if (input.commit) {
+      await persistBatch(tx, context.workspaceId, result.batch);
+    }
 
-  return {
-    preview: result.preview,
-    eventId: result.batch.events[0]?.id ?? null,
-    committed: input.commit,
+    return {
+      preview: result.preview,
+      eventId: result.batch.events[0]?.id ?? null,
+      committed: input.commit,
+    };
   };
+
+  if (!input.commit) {
+    return run(handles);
+  }
+  return withAccountWriteLocks(handles, context.workspaceId, [input.accountId], run);
 }

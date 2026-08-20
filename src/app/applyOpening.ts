@@ -7,6 +7,7 @@ import { persistBatch } from "../db/persistBatch.js";
 import type { DbHandles } from "../db/client.js";
 import type { WorkspaceContext } from "./context.js";
 import { assertWorkspaceOwned } from "./ownership.js";
+import { withAccountWriteLocks } from "../db/accountWriteLock.js";
 
 const accountSchema = z.object({
   accountId: z.string().min(1),
@@ -23,11 +24,12 @@ export async function applyOpening(
   raw: unknown,
 ) {
   const input = inputSchema.parse(raw);
-  await assertWorkspaceOwned(handles, context.workspaceId, [
-    { type: "account", id: input.accountId },
-  ]);
-  const snapshot = await loadSnapshot(handles, context.workspaceId);
-  const result = applyOpeningDomain(
+  const run = async (tx: DbHandles) => {
+    await assertWorkspaceOwned(tx, context.workspaceId, [
+      { type: "account", id: input.accountId },
+    ]);
+    const snapshot = await loadSnapshot(tx, context.workspaceId);
+    const result = applyOpeningDomain(
           {
             accountId: input.accountId,
             effectiveOn: isoDate(input.effectiveOn),
@@ -36,13 +38,19 @@ export async function applyOpening(
           snapshot,
         );
 
-  if (input.commit) {
-    await persistBatch(handles, context.workspaceId, result.batch);
-  }
+    if (input.commit) {
+      await persistBatch(tx, context.workspaceId, result.batch);
+    }
 
-  return {
-    preview: result.preview,
-    eventId: null,
-    committed: input.commit,
+    return {
+      preview: result.preview,
+      eventId: null,
+      committed: input.commit,
+    };
   };
+
+  if (!input.commit) {
+    return run(handles);
+  }
+  return withAccountWriteLocks(handles, context.workspaceId, [input.accountId], run);
 }

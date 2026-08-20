@@ -7,6 +7,7 @@ import { persistBatch } from "../db/persistBatch.js";
 import type { DbHandles } from "../db/client.js";
 import type { WorkspaceContext } from "./context.js";
 import { assertWorkspaceOwned } from "./ownership.js";
+import { withAccountWriteLocks } from "../db/accountWriteLock.js";
 
 const inputSchema = z.object({
   occurredOn: z.string(),
@@ -25,30 +26,37 @@ export async function recordObligationPayment(
   raw: unknown,
 ) {
   const input = inputSchema.parse(raw);
-  await assertWorkspaceOwned(handles, context.workspaceId, [
-    { type: "obligation", id: input.instanceId },
-    { type: "account", id: input.accountId },
-  ]);
-  const occurredOn = isoDate(input.occurredOn);
-  const snapshot = await loadSnapshot(handles, context.workspaceId, occurredOn);
-  const result = recordObligationPaymentDomain(
-    {
-      occurredOn,
-      capturedAt: input.capturedAt,
-      instanceId: input.instanceId,
-      accountId: input.accountId,
-      amountPaise: paise(input.amountPaise),
-      notes: input.notes,
-      channel: input.channel,
-    },
-    snapshot,
-  );
-  if (input.commit) {
-    await persistBatch(handles, context.workspaceId, result.batch);
-  }
-  return {
-    preview: result.preview,
-    eventId: result.batch.events[0]?.id ?? null,
-    committed: input.commit,
+  const run = async (tx: DbHandles) => {
+    await assertWorkspaceOwned(tx, context.workspaceId, [
+      { type: "obligation", id: input.instanceId },
+      { type: "account", id: input.accountId },
+    ]);
+    const occurredOn = isoDate(input.occurredOn);
+    const snapshot = await loadSnapshot(tx, context.workspaceId, occurredOn);
+    const result = recordObligationPaymentDomain(
+      {
+        occurredOn,
+        capturedAt: input.capturedAt,
+        instanceId: input.instanceId,
+        accountId: input.accountId,
+        amountPaise: paise(input.amountPaise),
+        notes: input.notes,
+        channel: input.channel,
+      },
+      snapshot,
+    );
+    if (input.commit) {
+      await persistBatch(tx, context.workspaceId, result.batch);
+    }
+    return {
+      preview: result.preview,
+      eventId: result.batch.events[0]?.id ?? null,
+      committed: input.commit,
+    };
   };
+
+  if (!input.commit) {
+    return run(handles);
+  }
+  return withAccountWriteLocks(handles, context.workspaceId, [input.accountId], run);
 }

@@ -12,8 +12,9 @@ import { withPostgresTransaction, withSqliteImmediateTransaction } from "./tx.js
  * `refund`) against one credit card.
  *
  * Lock order: the `credit_cards` row only, taken first and held until commit.
- * Commands that also touch accounts/claims/categories do not lock those rows
- * here, so ordering stays deterministic (card, then everything else un-locked).
+ * Commands that also touch accounts nest `withAccountWriteLocks` afterwards, so
+ * ordering stays deterministic (card, then accounts by lexical id).
+ * Do not lock accounts first and then the card — that inverts this order.
  *
  * Postgres: `SELECT … FOR UPDATE` on that row inside one transaction.
  * SQLite: `BEGIN IMMEDIATE` (database write lock) plus ownership SELECT.

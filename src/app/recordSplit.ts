@@ -9,6 +9,7 @@ import type { DbHandles } from "../db/client.js";
 import type { WorkspaceContext } from "./context.js";
 import { assertWorkspaceOwned } from "./ownership.js";
 import { withCreditCardWriteLock } from "../db/cardWriteLock.js";
+import { withAccountWriteLocks } from "../db/accountWriteLock.js";
 
 const inputSchema = z.object({
   occurredOn: z.string(),
@@ -101,8 +102,11 @@ export async function recordSplit(
     };
   };
 
-  if (input.commit && input.source.type === "card") {
+  if (!input.commit) {
+    return run(handles);
+  }
+  if (input.source.type === "card") {
     return withCreditCardWriteLock(handles, context.workspaceId, input.source.creditCardId, run);
   }
-  return run(handles);
+  return withAccountWriteLocks(handles, context.workspaceId, [input.source.accountId], run);
 }

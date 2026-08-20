@@ -13,6 +13,7 @@ import { persistExpectedFundingCycle } from "./salaryPolicy.js";
 import { assertWorkspaceOwned } from "./ownership.js";
 import { DomainError, type FundingCycleRecord, type LedgerSnapshot } from "../domain/ledger/types.js";
 import { withWorkspaceSalaryWriteLock } from "../db/salaryWriteLock.js";
+import { withAccountWriteLocks } from "../db/accountWriteLock.js";
 
 const inputSchema = z.object({
   commandId: z.string().min(1).optional(),
@@ -130,7 +131,12 @@ export async function recordIncome(
   };
 
   if (input.commit && identity) {
-    return withWorkspaceSalaryWriteLock(handles, context.workspaceId, run);
+    return withWorkspaceSalaryWriteLock(handles, context.workspaceId, (tx) =>
+      withAccountWriteLocks(tx, context.workspaceId, [input.accountId], run),
+    );
+  }
+  if (input.commit) {
+    return withAccountWriteLocks(handles, context.workspaceId, [input.accountId], run);
   }
   return run(handles);
 }
