@@ -196,3 +196,38 @@ export function assertEventIsCorrectableLeaf(snapshot: LedgerSnapshot, eventId: 
   }
   return rootEventId;
 }
+
+export function expenseCorrectionRefusalCopy(reason: CorrectionIneligibilityReason): string {
+  switch (reason) {
+    case "linked_claim":
+    case "reservation":
+    case "settlement":
+    case "obligation":
+    case "surplus":
+    case "split":
+    case "card_spend":
+    case "opening":
+    case "funding_cycle":
+    case "complex_postings":
+      return "This transaction can’t be corrected because it has already affected another financial record.";
+    case "not_leaf":
+    case "is_reversal":
+      return "This transaction was already corrected";
+    default:
+      return "This transaction can’t be corrected.";
+  }
+}
+
+/** 16C1 expense correction only. Other-income stays foundation-only. */
+export function assertEligibleExpenseCorrection(event: FinancialEvent, snapshot: LedgerSnapshot): void {
+  const classified = classifyCorrectionCandidate(event, snapshot);
+  if (!classified.ok) {
+    if (classified.code === "stale_correction_target") {
+      throw new DomainError("stale_correction_target", "This transaction was already corrected");
+    }
+    throw new DomainError("transaction_not_correctable", expenseCorrectionRefusalCopy(classified.reason));
+  }
+  if (classified.family !== "expense") {
+    throw new DomainError("transaction_not_correctable", "This transaction can’t be corrected.");
+  }
+}

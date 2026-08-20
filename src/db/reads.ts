@@ -25,6 +25,8 @@ import type { DbHandles } from "./handles.js";
 import { anyDb, queryAll, queryGet, tables } from "./exec.js"; 
 import { fromStoredPaise } from "./storedPaise.js";
 import { activityIdentityFor, shouldShowInOrdinaryActivity, transactionDetailFromSnapshot } from "../domain/corrections/activity.js";
+import { classifyCorrectionCandidate, expenseCorrectionRefusalCopy } from "../domain/corrections/eligibility.js";
+import { expenseSideView } from "../domain/commands/correctExpense.js";
 import { addDbQueries, timedPerf, timedPerfSync } from "../perf/timing.js";
 
 export async function listAccounts(handles: DbHandles, workspaceId: string) {
@@ -316,6 +318,47 @@ export async function transactionCorrectionDetail(
 ) {
   const snapshot = await loadSnapshot(handles, workspaceId, asOf);
   return transactionDetailFromSnapshot(snapshot, eventId);
+}
+
+export async function publicTransactionDetail(
+  handles: DbHandles,
+  workspaceId: string,
+  eventId: string,
+  asOf = todayKolkata(),
+) {
+  const snapshot = await loadSnapshot(handles, workspaceId, asOf);
+  const detail = transactionDetailFromSnapshot(snapshot, eventId);
+  if (!detail) return null;
+  const effective = expenseSideView(detail.effectiveEvent, snapshot);
+  const classified = classifyCorrectionCandidate(detail.effectiveEvent, snapshot);
+  const canCorrect = classified.ok && classified.family === "expense";
+  return {
+    meaning: detail.effectiveEvent.meaning,
+    occurredOn: effective.occurredOn,
+    amountPaise: effective.amountPaise,
+    accountId: effective.accountId,
+    accountName: effective.accountName,
+    merchant: effective.merchant,
+    notes: effective.notes,
+    categories: effective.categories,
+    corrected: detail.correctionCount > 0,
+    correctionCount: detail.correctionCount,
+    canCorrect,
+    refusalReason: canCorrect
+      ? null
+      : classified.ok
+        ? "This transaction can’t be corrected."
+        : expenseCorrectionRefusalCopy(classified.reason),
+    rootEventId: detail.rootEvent.id,
+    targetEventId: detail.effectiveEvent.id,
+    history: detail.history.map((step) => ({
+      correctedOn: step.correction.correctedOn,
+      capturedAt: step.correction.capturedAt,
+      reason: step.correction.reason,
+      previous: expenseSideView(step.targetEvent, snapshot),
+      next: expenseSideView(step.replacementEvent, snapshot),
+    })),
+  };
 }
 
 async function expenseTotalForMonth(

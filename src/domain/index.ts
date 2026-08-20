@@ -80,7 +80,16 @@ export {
   correctionHistory,
   currentEffectiveLeafId,
   snapshotAfterReversal,
+  assertEligibleExpenseCorrection,
+  expenseCorrectionRefusalCopy,
 } from "./corrections/index.js";
+export {
+  correctExpense,
+  type CorrectExpenseInput,
+  type PreparedExpenseCorrection,
+  type ExpenseCorrectionPreview,
+  type ExpenseCorrectionSideView,
+} from "./commands/correctExpense.js";
 export { personPosition, type PersonPosition } from "./people/position.js";
 export { accountAvailability, requireAvailable } from "./engine/liquidity.js";
 export { evaluateSafeToSpend, inThisNumberTotal } from "./engine/evaluateSafeToSpend.js";

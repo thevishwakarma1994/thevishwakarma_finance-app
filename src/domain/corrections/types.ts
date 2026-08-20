@@ -7,6 +7,7 @@ export const CORRECTION_ERROR_CODES = [
   "idempotency_conflict",
   "correction_would_use_reserved_money",
   "insufficient_available",
+  "invalid_correction_date",
   "unsupported_transaction_family",
 ] as const;
 

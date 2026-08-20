@@ -16,6 +16,8 @@ export {
   classifyCorrectionCandidate,
   assertCorrectionAvailability,
   assertEventIsCorrectableLeaf,
+  assertEligibleExpenseCorrection,
+  expenseCorrectionRefusalCopy,
   type CorrectionEligibility,
   type CorrectionFamily,
   type CorrectionIneligibilityReason,

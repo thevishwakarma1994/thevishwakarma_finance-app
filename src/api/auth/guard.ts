@@ -102,7 +102,9 @@ export function mapError(
             error.code === "idempotency_conflict" ||
             error.code === "already_received" ||
             error.code === "duplicate_salary" ||
-            error.code === "policy_version_in_use"
+            error.code === "policy_version_in_use" ||
+            error.code === "stale_correction_target" ||
+            error.code === "correction_would_use_reserved_money"
           ? 409
           : error.code === "account_not_found" ||
               error.code === "category_not_found" ||

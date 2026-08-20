@@ -15,6 +15,7 @@ import {
   monthReview,
   obligationDetail,
   personDetail,
+  publicTransactionDetail,
   suggestPersonAllocations,
   listPendingSurplus,
 } from "../../db/reads.js";
@@ -71,6 +72,23 @@ readRoutes.get("/activity", async (c) => {
     return c.json({
       events: await listActivity(c.get("handles"), c.get("workspaceId"), { categoryId, month }),
     });
+  } catch (error) {
+    const mapped = mapError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+readRoutes.get("/activity/:eventId", async (c) => {
+  try {
+    const detail = await publicTransactionDetail(
+      c.get("handles"),
+      c.get("workspaceId"),
+      c.req.param("eventId"),
+    );
+    if (!detail) {
+      return c.json({ error: "not_found", message: "Transaction not found" }, 404);
+    }
+    return c.json(detail);
   } catch (error) {
     const mapped = mapError(error);
     return c.json(mapped.body, mapped.status);
